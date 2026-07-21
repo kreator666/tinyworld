@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink text-slate-100 antialiased;
+  background-image:
+    radial-gradient(ellipse 60% 40% at 15% 0%, rgba(139, 92, 246, 0.18), transparent),
+    radial-gradient(ellipse 50% 35% at 90% 100%, rgba(34, 211, 238, 0.12), transparent);
+  background-attachment: fixed;
+}
+
+/* 玻璃拟态面板 */
+@layer components {
+  .glass {
+    @apply bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl;
+  }
+  .neon-border {
+    @apply border border-neon-purple/50 shadow-neon-purple;
+  }
+  .btn-primary {
+    @apply bg-neon-grad text-white font-semibold rounded-xl px-5 py-2.5
+      hover:opacity-90 active:scale-[.98] transition shadow-neon-purple
+      disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply border border-white/15 rounded-xl px-4 py-2 text-sm text-slate-200
+      hover:border-neon-purple/60 hover:text-white transition
+      disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .tag {
+    @apply inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-white/10 bg-white/5;
+  }
+  .input {
+    @apply w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm
+      placeholder:text-slate-500 focus:outline-none focus:border-neon-purple/60;
+  }
+}
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(139, 92, 246, 0.35); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.animate-float { animation: float-y 4s ease-in-out infinite; }
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.5); }
+  70% { box-shadow: 0 0 0 14px rgba(139, 92, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+}
+.animate-pulse-ring { animation: pulse-ring 2s infinite; }
