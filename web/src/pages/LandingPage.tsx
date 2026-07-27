@@ -55,7 +55,7 @@ export default function LandingPage() {
           {/* 装饰纸娃娃 */}
           <div className="hidden lg:flex justify-center">
             <div className="glass neon-border p-8 shadow-neon-purple">
-              <PaperDoll equipped={{ head: 'head-2', skin: 'skin-1', outfit: 'outfit-1', accessory: 'acc-1' }} size="lg" />
+              <PaperDoll equipped={{ head: 'head-3', body: 'body-1', accessory: 'acc-1', pet: 'pet-1' }} size="lg" />
               <div className="mt-4 text-center text-sm text-slate-400">
                 <span className="tag border-neon-purple/40 text-neon-purple mr-2">🤖 AI 分身在线</span>
                 <span className="tag border-neon-cyan/40 text-neon-cyan">链上身份 NFT</span>

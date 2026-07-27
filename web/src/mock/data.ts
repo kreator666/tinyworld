@@ -2,28 +2,28 @@ import type { ChatSession, NFTItem, PlazaUser } from '../types'
 
 const h = (n: number) => '0x' + n.toString(16).padStart(40, 'ab12cd34ef56').slice(0, 42)
 
-// NFT 组件库:头部 / 皮肤 / 服饰 / 配饰
+// NFT 组件库:头部 / 身体 / 配饰 / 宠物(ARPG Q 版 4 插槽)
 export const nftLibrary: NFTItem[] = [
   // 头部 NFT
-  { id: 'head-1', name: '稀有头像·星尘', category: 'head', rarity: '稀有', price: 0.02, emoji: '🧑‍🎤', gradient: 'from-violet-500 to-fuchsia-500', owned: true, hash: h(1), chain: 'Polygon', count: 1 },
-  { id: 'head-2', name: '赛博朋克机甲头', category: 'head', rarity: '史诗', price: 0.08, emoji: '🤖', gradient: 'from-indigo-500 to-cyan-400', owned: true, hash: h(2), chain: 'ETH', count: 1 },
-  { id: 'head-3', name: '猫耳少女发型', category: 'head', rarity: '普通', price: 0.005, emoji: '😺', gradient: 'from-pink-400 to-rose-400', owned: false, hash: h(3), chain: 'BSC' },
+  { id: 'head-1', name: '星尘少年短发', category: 'head', rarity: '稀有', price: 0.02, emoji: '💜', gradient: 'from-violet-500 to-fuchsia-500', owned: true, hash: h(1), chain: 'Polygon', count: 1 },
+  { id: 'head-2', name: '赛博机甲头盔', category: 'head', rarity: '史诗', price: 0.08, emoji: '🤖', gradient: 'from-indigo-500 to-cyan-400', owned: true, hash: h(2), chain: 'ETH', count: 1 },
+  { id: 'head-3', name: '猫耳少女长发', category: 'head', rarity: '史诗', price: 0.06, emoji: '🐱', gradient: 'from-amber-300 to-rose-400', owned: true, hash: h(3), chain: 'Polygon', count: 1 },
   { id: 'head-4', name: '传说·虚空面具', category: 'head', rarity: '传说', price: 0.3, emoji: '👺', gradient: 'from-purple-600 to-indigo-600', owned: false, hash: h(4), chain: 'ETH' },
-  // 基底皮肤 NFT
-  { id: 'skin-1', name: '赛博皮肤·紫电', category: 'skin', rarity: '稀有', price: 0.03, emoji: '🟣', gradient: 'from-violet-600 to-purple-400', owned: true, hash: h(5), chain: 'Polygon', count: 1 },
-  { id: 'skin-2', name: '冰蓝全息皮肤', category: 'skin', rarity: '史诗', price: 0.06, emoji: '🔵', gradient: 'from-cyan-500 to-blue-500', owned: true, hash: h(6), chain: 'ETH', count: 1 },
-  { id: 'skin-3', name: '基础人类肤色', category: 'skin', rarity: '普通', price: 0.002, emoji: '🟡', gradient: 'from-amber-300 to-orange-300', owned: false, hash: h(7), chain: 'BSC' },
-  { id: 'skin-4', name: '传说·星云之躯', category: 'skin', rarity: '传说', price: 0.25, emoji: '🌌', gradient: 'from-fuchsia-600 to-cyan-400', owned: false, hash: h(8), chain: 'ETH' },
-  // 服饰装备 NFT
-  { id: 'outfit-1', name: '机械披风', category: 'outfit', rarity: '稀有', price: 0.04, emoji: '🦾', gradient: 'from-slate-500 to-indigo-500', owned: true, hash: h(9), chain: 'Polygon', count: 1 },
-  { id: 'outfit-2', name: '霓虹连帽衫', category: 'outfit', rarity: '普通', price: 0.008, emoji: '🧥', gradient: 'from-emerald-400 to-teal-500', owned: true, hash: h(10), chain: 'BSC', count: 2 },
-  { id: 'outfit-3', name: '光翼·天使之环', category: 'outfit', rarity: '传说', price: 0.4, emoji: '🪽', gradient: 'from-yellow-300 to-cyan-300', owned: false, hash: h(11), chain: 'ETH' },
-  { id: 'outfit-4', name: '暗夜忍者服', category: 'outfit', rarity: '史诗', price: 0.09, emoji: '🥷', gradient: 'from-gray-700 to-purple-700', owned: false, hash: h(12), chain: 'Polygon' },
+  // 身体 NFT
+  { id: 'body-1', name: '紫晶魔导裙', category: 'body', rarity: '史诗', price: 0.07, emoji: '👗', gradient: 'from-violet-500 to-purple-400', owned: true, hash: h(5), chain: 'Polygon', count: 1 },
+  { id: 'body-2', name: '游侠皮甲', category: 'body', rarity: '普通', price: 0.008, emoji: '🥋', gradient: 'from-emerald-500 to-lime-600', owned: true, hash: h(6), chain: 'BSC', count: 2 },
+  { id: 'body-3', name: '暗夜忍者服', category: 'body', rarity: '稀有', price: 0.03, emoji: '🥷', gradient: 'from-gray-700 to-purple-700', owned: false, hash: h(7), chain: 'Polygon' },
+  { id: 'body-4', name: '圣光骑士甲', category: 'body', rarity: '传说', price: 0.25, emoji: '🛡️', gradient: 'from-slate-300 to-amber-300', owned: false, hash: h(8), chain: 'ETH' },
   // 配饰 NFT
-  { id: 'acc-1', name: '链上徽章·OG', category: 'accessory', rarity: '稀有', price: 0.015, emoji: '🎖️', gradient: 'from-amber-400 to-yellow-500', owned: true, hash: h(13), chain: 'Polygon', count: 1 },
-  { id: 'acc-2', name: '全息眼镜', category: 'accessory', rarity: '史诗', price: 0.05, emoji: '🕶️', gradient: 'from-cyan-400 to-violet-500', owned: false, hash: h(14), chain: 'ETH' },
-  { id: 'acc-3', name: '手持光剑', category: 'accessory', rarity: '传说', price: 0.35, emoji: '⚔️', gradient: 'from-cyan-300 to-blue-600', owned: false, hash: h(15), chain: 'ETH' },
-  { id: 'acc-4', name: '像素背景·都市', category: 'accessory', rarity: '普通', price: 0.003, emoji: '🌆', gradient: 'from-indigo-400 to-purple-500', owned: false, hash: h(16), chain: 'BSC' },
+  { id: 'acc-1', name: '旅人披风', category: 'accessory', rarity: '稀有', price: 0.015, emoji: '🧣', gradient: 'from-purple-500 to-indigo-500', owned: true, hash: h(9), chain: 'Polygon', count: 1 },
+  { id: 'acc-2', name: '秘法徽章', category: 'accessory', rarity: '普通', price: 0.005, emoji: '🎖️', gradient: 'from-amber-400 to-yellow-500', owned: false, hash: h(10), chain: 'BSC' },
+  { id: 'acc-3', name: '手持光剑', category: 'accessory', rarity: '传说', price: 0.35, emoji: '⚔️', gradient: 'from-cyan-300 to-blue-600', owned: false, hash: h(11), chain: 'ETH' },
+  { id: 'acc-4', name: '光翼', category: 'accessory', rarity: '史诗', price: 0.09, emoji: '🪽', gradient: 'from-cyan-200 to-sky-400', owned: false, hash: h(12), chain: 'ETH' },
+  // 宠物 NFT
+  { id: 'pet-1', name: '橘猫「年糕」', category: 'pet', rarity: '稀有', price: 0.02, emoji: '🐈', gradient: 'from-orange-300 to-amber-500', owned: true, hash: h(13), chain: 'Polygon', count: 1 },
+  { id: 'pet-2', name: '柴犬「阿福」', category: 'pet', rarity: '普通', price: 0.006, emoji: '🐕', gradient: 'from-amber-400 to-orange-500', owned: true, hash: h(14), chain: 'BSC', count: 1 },
+  { id: 'pet-3', name: '小飞龙', category: 'pet', rarity: '传说', price: 0.28, emoji: '🐉', gradient: 'from-violet-500 to-purple-700', owned: false, hash: h(15), chain: 'ETH' },
+  { id: 'pet-4', name: '团雀', category: 'pet', rarity: '普通', price: 0.004, emoji: '🐦', gradient: 'from-sky-300 to-cyan-500', owned: false, hash: h(16), chain: 'BSC' },
 ]
 
 // 社交广场用户
@@ -40,11 +40,11 @@ export const plazaUsers: PlazaUser[] = [
 
 // 热门身份 NFT 榜单
 export const hotRanking = [
-  { rank: 1, name: '光翼·天使之环', heat: '12.4k' },
+  { rank: 1, name: '小飞龙', heat: '12.4k' },
   { rank: 2, name: '传说·虚空面具', heat: '9.8k' },
-  { rank: 3, name: '传说·星云之躯', heat: '8.1k' },
+  { rank: 3, name: '圣光骑士甲', heat: '8.1k' },
   { rank: 4, name: '手持光剑', heat: '6.7k' },
-  { rank: 5, name: '冰蓝全息皮肤', heat: '5.2k' },
+  { rank: 5, name: '猫耳少女长发', heat: '5.2k' },
 ]
 
 const now = () => new Date().toTimeString().slice(0, 5)

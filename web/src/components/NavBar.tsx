@@ -11,6 +11,10 @@ const navItems = [
 
 export default function NavBar() {
   const { connected, address, did, disconnect } = useAppStore()
+  const handleDisconnect = () => {
+    disconnect()
+    nav('/')
+  }
   const [showWallet, setShowWallet] = useState(false)
   const nav = useNavigate()
 
@@ -70,7 +74,7 @@ export default function NavBar() {
                 >
                   🟢 {address?.slice(0, 6)}...{address?.slice(-4)}
                 </button>
-                <button onClick={disconnect} className="btn-ghost !px-3 !py-1.5 text-xs">断开</button>
+                <button onClick={handleDisconnect} className="btn-ghost !px-3 !py-1.5 text-xs">断开</button>
               </div>
             ) : (
               <button onClick={() => setShowWallet(true)} className="btn-primary">连接钱包</button>

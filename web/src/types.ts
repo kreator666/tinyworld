@@ -1,7 +1,17 @@
 // 全局类型定义
 export type Rarity = '普通' | '稀有' | '史诗' | '传说'
-export type NFTCategory = 'head' | 'skin' | 'outfit' | 'accessory'
+// 纸娃娃 4 插槽:头部 / 身体 / 配饰 / 宠物(渲染层级 pet→body→accessory→head)
+export type NFTCategory = 'head' | 'body' | 'accessory' | 'pet'
 export type ChainType = 'Polygon' | 'BSC' | 'ETH'
+
+export interface WalletLogin {
+  address: string
+  signature: string
+  chainId: number
+  nonce: string
+  timestamp: number
+  provider: string
+}
 
 export interface NFTItem {
   id: string

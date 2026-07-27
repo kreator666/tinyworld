@@ -6,9 +6,9 @@ import NFTCard from '../components/NFTCard'
 const tabs: { key: NFTCategory | 'did'; label: string }[] = [
   { key: 'did', label: 'DID 主身份' },
   { key: 'head', label: '头部藏品' },
-  { key: 'skin', label: '皮肤' },
-  { key: 'outfit', label: '服饰' },
+  { key: 'body', label: '身体' },
   { key: 'accessory', label: '配饰' },
+  { key: 'pet', label: '宠物' },
 ]
 
 // 页面 6:资产背包

@@ -7,10 +7,10 @@ import PaperDoll from '../components/PaperDoll'
 import NFTCard from '../components/NFTCard'
 
 const tabs: { key: NFTCategory; label: string; desc: string }[] = [
-  { key: 'head', label: '头部', desc: '头像 / 发型 / 面部妆容' },
-  { key: 'skin', label: '皮肤', desc: '肤色 / 体型 / 基础特效' },
-  { key: 'outfit', label: '装备', desc: '上衣 / 外套 / 翅膀 / 光环' },
-  { key: 'accessory', label: '配饰', desc: '眼镜 / 挂件 / 手持 / 背景' },
+  { key: 'head', label: '头部', desc: '发型 / 头盔 / 面具' },
+  { key: 'body', label: '身体', desc: '服装 / 盔甲 / 躯干主体' },
+  { key: 'accessory', label: '配饰', desc: '披风 / 徽章 / 手持 / 光翼' },
+  { key: 'pet', label: '宠物', desc: '跟随小伙伴(显示在人物身后)' },
 ]
 
 const takenNames = ['satoshi', 'vitalik', 'aiko_02', 'neonhunter'] // 模拟已被占用名称
@@ -26,7 +26,7 @@ export default function MintWorkshop() {
 
   const [tab, setTab] = useState<NFTCategory>('head')
   const [equipped, setEquipped] = useState<Equipped>(
-    did?.equipped ?? { head: 'head-1', skin: 'skin-1', outfit: 'outfit-1', accessory: null },
+    did?.equipped ?? { head: 'head-3', body: 'body-1', accessory: null, pet: null },
   )
   const [name, setName] = useState(did?.name ?? '')
   const [bio, setBio] = useState(did?.bio ?? '')

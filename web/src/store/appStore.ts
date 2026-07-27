@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import type { AIProfile, ChatSession, DIDIdentity, Equipped, NFTCategory, NFTItem } from '../types'
+import type { AIProfile, ChatSession, DIDIdentity, Equipped, NFTCategory, NFTItem, WalletLogin } from '../types'
 import { aiReplies, initialChats, nftLibrary } from '../mock/data'
 
-export const emptyEquipped: Equipped = { head: null, skin: null, outfit: null, accessory: null }
+export const emptyEquipped: Equipped = { head: null, body: null, accessory: null, pet: null }
 
 export const defaultAIProfile: AIProfile = {
   template: '理性',
@@ -23,7 +23,8 @@ interface AppState {
   connected: boolean
   address: string | null
   provider: string | null
-  connect: (provider: string) => void
+  login: WalletLogin | null
+  connect: (login: WalletLogin) => void
   disconnect: () => void
   // DID 身份
   did: DIDIdentity | null
@@ -60,9 +61,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   connected: false,
   address: null,
   provider: null,
-  connect: (provider) =>
-    set({ connected: true, provider, address: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063' }),
-  disconnect: () => set({ connected: false, provider: null, address: null }),
+  login: null,
+  connect: (login) =>
+    set({ connected: true, provider: login.provider, address: login.address, login }),
+  disconnect: () => set({ connected: false, provider: null, address: null, login: null }),
 
   did: null,
   mintDID: (name, bio, chain, equipped) =>
