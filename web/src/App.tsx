@@ -8,6 +8,7 @@ import ProfilePage from './pages/ProfilePage'
 import PlazaPage from './pages/PlazaPage'
 import ChatPage from './pages/ChatPage'
 import BackpackPage from './pages/BackpackPage'
+import GamePage from './pages/GamePage'
 
 // 未连接钱包守卫:其余页面一律跳回首页
 function Guard({ children }: { children: ReactNode }) {
@@ -40,6 +41,7 @@ export default function App() {
             <Route path="/plaza" element={<Guard><PlazaPage /></Guard>} />
             <Route path="/chat" element={<Guard><ChatPage /></Guard>} />
             <Route path="/backpack" element={<Guard><BackpackPage /></Guard>} />
+            <Route path="/game" element={<GamePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
