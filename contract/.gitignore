@@ -2,6 +2,10 @@
 cache/
 out/
 
+# Hardhat
+artifacts/
+node_modules/
+
 # Broadcast logs（测试网/主网部署记录按需保留，可移除此行）
 broadcast/
 

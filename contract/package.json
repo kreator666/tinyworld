@@ -1,0 +1,25 @@
+{
+  "name": "did-ai-verse-contracts",
+  "private": true,
+  "version": "0.1.0",
+  "description": "DID AI Verse 合约(foundry 测试 + hardhat 部署 双工具链)",
+  "scripts": {
+    "compile": "hardhat compile",
+    "node": "hardhat node",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "seed:local": "hardhat run scripts/seed.js --network localhost",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "seed:sepolia": "hardhat run scripts/seed.js --network sepolia",
+    "deploy:amoy": "hardhat run scripts/deploy.js --network polygonAmoy",
+    "seed:amoy": "hardhat run scripts/seed.js --network polygonAmoy"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.6.1"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.0.8",
+    "dotenv": "^16.4.7",
+    "ethers": "^6.13.5",
+    "hardhat": "^2.22.17"
+  }
+}
