@@ -4,15 +4,19 @@ import { useAppStore } from '../store/appStore'
 import {
   getAvailableWallets,
   connectAndSign,
+  setActiveProvider,
   type DiscoveredWallet,
   type EIP6963ProviderDetail,
   WalletError,
 } from '../lib/wallet'
+import { ensureSepolia } from '../lib/chain'
+import { useChainStore } from '../store/chainStore'
 
 // 钱包选择弹窗: 通过 EIP-6963 发现钱包并调起 EIP-712 签名登录
 export default function WalletModal({ onClose }: { onClose: () => void }) {
   const connect = useAppStore((s) => s.connect)
   const showToast = useAppStore((s) => s.showToast)
+  const refresh = useChainStore((s) => s.refresh)
   const nav = useNavigate()
 
   const [wallets, setWallets] = useState<DiscoveredWallet[]>([])
@@ -44,6 +48,8 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
     try {
       const result = await connectAndSign(wallet.detail, wallet.name)
       setPhase('signing')
+      // 暂存 provider 供后续链上交易使用
+      setActiveProvider(wallet.detail.provider)
       connect({
         address: result.address,
         signature: result.signature,
@@ -53,9 +59,23 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
         provider: result.provider,
       })
       onClose()
-      showToast(`${wallet.name} 签名授权成功，已生成专属链上 DID 标识`)
+
+      // 强制切到 Sepolia 后刷新链上资产
+      try {
+        await ensureSepolia()
+        showToast(`${wallet.name} 已连接并切换到 Sepolia,正在读取链上资产…`)
+        await refresh(result.address as `0x${string}`)
+      } catch (err) {
+        showToast('已连接钱包,但未能切换到 Sepolia 或读取链上资产,请手动切网络后再试')
+      }
       nav('/mint')
     } catch (err) {
+      // 切链失败不算致命:已登录,但链上功能不可用
+      if (err instanceof Error && err.message.includes('wallet_switch')) {
+        showToast('请手动切换到 Sepolia 网络以使用链上资产功能')
+        onClose()
+        return
+      }
       let message = '登录失败，请重试'
       if (err instanceof WalletError) {
         message = err.message

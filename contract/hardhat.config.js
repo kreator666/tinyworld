@@ -1,9 +1,11 @@
 require("@nomicfoundation/hardhat-ethers");
+require("@nomicfoundation/hardhat-verify");
 require("dotenv").config();
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY || "";
 const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL || "";
 const POLYGON_AMOY_RPC_URL = process.env.POLYGON_AMOY_RPC_URL || "";
+const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
 
 /** @type {import('hardhat/config').HardhatUserConfig} */
 module.exports = {
@@ -31,5 +33,8 @@ module.exports = {
     ...(POLYGON_AMOY_RPC_URL && PRIVATE_KEY
       ? { polygonAmoy: { url: POLYGON_AMOY_RPC_URL, accounts: [PRIVATE_KEY] } }
       : {}),
+  },
+  etherscan: {
+    apiKey: ETHERSCAN_API_KEY,
   },
 };

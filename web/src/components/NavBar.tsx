@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
+import { useChainStore } from '../store/chainStore'
+import { ensureSepolia, TARGET_CHAIN_ID } from '../lib/chain'
+import { setActiveProvider } from '../lib/wallet'
 import WalletModal from './WalletModal'
 
 const navItems = [
@@ -10,13 +13,37 @@ const navItems = [
 ]
 
 export default function NavBar() {
-  const { connected, address, did, disconnect } = useAppStore()
+  const { connected, address, did, disconnect, login } = useAppStore()
+  const chainStore = useChainStore()
+  const [switching, setSwitching] = useState(false)
   const handleDisconnect = () => {
     disconnect()
+    setActiveProvider(null)
+    chainStore.clear()
     nav('/')
   }
   const [showWallet, setShowWallet] = useState(false)
   const nav = useNavigate()
+  const { isAdmin } = chainStore
+
+  const isSepolia = login?.chainId === TARGET_CHAIN_ID
+
+  useEffect(() => {
+    if (connected && isSepolia && address) {
+      chainStore.checkAdmin(address as `0x${string}`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, isSepolia, address])
+
+  const switchChain = async () => {
+    setSwitching(true)
+    try {
+      await ensureSepolia()
+      if (address) await chainStore.refresh(address as `0x${string}`)
+      // eslint-disable-next-line no-empty
+    } catch {}
+    setSwitching(false)
+  }
 
   return (
     <>
@@ -61,6 +88,16 @@ export default function NavBar() {
                 铸造工坊
               </NavLink>
             )}
+            {isAdmin && (
+              <NavLink
+                to="/admin"
+                className={({ isActive }) =>
+                  isActive ? 'text-white border-b-2 border-neon-purple pb-0.5' : 'hover:text-white transition'
+                }
+              >
+                管理员
+              </NavLink>
+            )}
           </nav>
 
           <div className="flex items-center gap-3">
@@ -74,6 +111,18 @@ export default function NavBar() {
                 >
                   🟢 {address?.slice(0, 6)}...{address?.slice(-4)}
                 </button>
+                {isSepolia ? (
+                  <span className="tag border-neon-cyan/40 text-neon-cyan text-[10px]" title="已连接 Sepolia 测试网">✓ Sepolia</span>
+                ) : (
+                  <button
+                    onClick={switchChain}
+                    disabled={switching}
+                    className="tag border-amber-400/50 text-amber-300 text-[10px] hover:border-amber-300"
+                    title="切换到 Sepolia 以使用链上功能"
+                  >
+                    ⚠ {switching ? '切链中' : '切到 Sepolia'}
+                  </button>
+                )}
                 <button onClick={handleDisconnect} className="btn-ghost !px-3 !py-1.5 text-xs">断开</button>
               </div>
             ) : (

@@ -65,6 +65,17 @@ const EIP712_TYPE = 'Login' as const
 
 let discoveredProviders: EIP6963ProviderDetail[] = []
 
+// 当前已连接钱包的 provider(不可序列化,模块级暂存,供链上交易使用)
+let activeProvider: EIP1193Provider | null = null
+
+export function setActiveProvider(provider: EIP1193Provider | null) {
+  activeProvider = provider
+}
+
+export function getActiveProvider(): EIP1193Provider | null {
+  return activeProvider
+}
+
 function matchRdnsToTarget(rdns: string): TargetWallet | undefined {
   return targetWallets.find((t) => t.rdns.toLowerCase() === rdns.toLowerCase())
 }

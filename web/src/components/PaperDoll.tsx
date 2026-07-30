@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import type { Equipped } from '../types'
+import type { Equipped, NFTCategory } from '../types'
 import { dollParts } from './dollParts'
+import { getPartByLocalId } from '../data/equipmentCatalog'
 
 // Q 版 ARPG 纸娃娃:4 插槽分层 SVG 渲染(pet→body→accessory→head),统一脚底锚点
 export default function PaperDoll({
@@ -25,6 +26,20 @@ export default function PaperDoll({
     [equipped],
   )
 
+  // 没有自定义 SVG 的已装备槽位,显示 emoji 占位
+  const unknownSlots = useMemo(
+    () =>
+      (['pet', 'body', 'accessory', 'head'] as const)
+        .map((slot) => {
+          const id = equipped[slot]
+          if (!id || dollParts[slot][id]) return null
+          const part = getPartByLocalId(id)
+          return { slot, id, emoji: part?.emoji ?? '❓', name: part?.name ?? id }
+        })
+        .filter((x): x is { slot: NFTCategory; id: string; emoji: string; name: string } => !!x),
+    [equipped],
+  )
+
   const box = size === 'lg' ? 'w-64 h-64' : size === 'sm' ? 'w-24 h-24' : 'w-44 h-44'
 
   return (
@@ -44,6 +59,28 @@ export default function PaperDoll({
             {parts.body?.()}
             {parts.accessory?.()}
             {parts.head?.()}
+            {/* 未配置 SVG 的装备按槽位显示 emoji 占位 */}
+            {unknownSlots.map(({ slot, emoji, name }) => {
+              const pos =
+                slot === 'head'
+                  ? { x: 120, y: 78 }
+                  : slot === 'body'
+                    ? { x: 120, y: 150 }
+                    : slot === 'accessory'
+                      ? { x: 62, y: 132 }
+                      : { x: 184, y: 184 }
+              return (
+                <g key={slot}>
+                  <circle cx={pos.x} cy={pos.y} r="16" fill="#1e293b" opacity="0.85" />
+                  <text x={pos.x} y={pos.y + 4} textAnchor="middle" fontSize="16" fill="#e2e8f0">
+                    {emoji}
+                  </text>
+                  <text x={pos.x} y={pos.y + 28} textAnchor="middle" fontSize="7" fill="#94a3b8">
+                    {name.slice(0, 4)}
+                  </text>
+                </g>
+              )
+            })}
           </svg>
         </div>
         <span className="absolute top-2 right-2 tag !text-[10px] border-neon-cyan/40 text-neon-cyan">NFT</span>
