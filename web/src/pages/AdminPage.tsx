@@ -261,8 +261,27 @@ export default function AdminPage() {
                   key={p.localId}
                   className={`glass p-3 relative ${state?.registered ? 'border-white/10' : 'border-amber-500/30'}`}
                 >
-                  <div className={`w-full h-20 rounded-xl bg-gradient-to-br ${p.gradient} grid place-items-center text-3xl mb-2`}>
-                    {p.emoji}
+                  <div className={`w-full h-20 rounded-xl bg-gradient-to-br ${p.gradient} grid place-items-center mb-2 overflow-hidden`}>
+                    {p.imageUrl ? (
+                      <img
+                        src={p.imageUrl}
+                        alt={p.name}
+                        className="max-w-full max-h-full object-contain"
+                        onError={(e) => {
+                          const el = e.target as HTMLImageElement
+                          el.style.display = 'none'
+                          const parent = el.parentElement
+                          if (parent) {
+                            const span = document.createElement('span')
+                            span.className = 'text-3xl'
+                            span.textContent = p.emoji
+                            parent.appendChild(span)
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span className="text-3xl">{p.emoji}</span>
+                    )}
                   </div>
                   <div className="text-xs font-medium truncate" title={p.name}>{p.name}</div>
                   <div className="flex items-center justify-between mt-1.5">

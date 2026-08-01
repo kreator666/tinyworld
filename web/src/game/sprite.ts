@@ -1,58 +1,125 @@
-import { createElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
-import type { Equipped } from '../types'
-import { dollParts } from '../components/dollParts'
+import type { Equipped, NFTCategory } from '../types'
+import { getPartByLocalId } from '../data/equipmentCatalog'
+import {
+  BASE_CANVAS,
+  BASE_IMAGE,
+  SLOT_ANCHORS,
+  SLOT_CANVAS,
+  type AvatarGender,
+  type AvatarSlotKey,
+} from '../data/avatarConfig'
 
-// 把当前装备的 SVG 纸娃娃序列化成游戏可用的 Image sprite
-// 与 PaperDoll 相同的分层顺序: pet → body → accessory → head,锚点=脚底中心 (120,218)
+// 把当前装备的纸娃娃合成为游戏可用的 canvas sprite
+// 输出画布 480x480(2 倍精度), 锚点 = 脚底中心 (240,436),
+// 与旧 SVG 版 (120,218)/240 比例一致, 引擎绘制逻辑无需改动
 
 export interface DollSprites {
-  doll: HTMLImageElement | null
-  pet: HTMLImageElement | null
+  doll: HTMLCanvasElement | null
+  pet: HTMLCanvasElement | null
 }
 
-function svgToImage(svg: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
-    const img = new Image()
-    img.onload = () => {
-      URL.revokeObjectURL(url)
-      resolve(img)
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      reject(new Error('doll sprite 加载失败'))
-    }
-    img.src = url
-  })
+const OUT = 480
+const FOOT_X = 240
+const FOOT_Y = 436
+const K = FOOT_Y / BASE_CANVAS.height // 逻辑 512x1024 -> 输出缩放
+
+const CATEGORY_TO_SLOT: Record<NFTCategory, AvatarSlotKey> = {
+  head: 'head',
+  body: 'body',
+  accessory: 'acc',
+  pet: 'pet',
 }
 
-function layerMarkup(category: keyof Equipped, id: string | null): string {
-  if (!id) return ''
-  const part = dollParts[category][id]
-  return part ? renderToStaticMarkup(createElement(part)) : ''
+// 图片加载缓存
+const imageCache = new Map<string, Promise<HTMLImageElement>>()
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  let p = imageCache.get(src)
+  if (!p) {
+    p = new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error(`sprite 加载失败: ${src}`))
+      img.src = src
+    })
+    imageCache.set(src, p)
+  }
+  return p
 }
 
-function wrapSvg(layers: string): string {
-  // 显式 width/height: Firefox 加载无尺寸 SVG 图像需要
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">${layers}</svg>`
+function createCanvas(): [HTMLCanvasElement, CanvasRenderingContext2D] {
+  const canvas = document.createElement('canvas')
+  canvas.width = OUT
+  canvas.height = OUT
+  return [canvas, canvas.getContext('2d')!]
 }
 
-export async function buildDollSprites(equipped: Equipped): Promise<DollSprites> {
-  // 人物本体不含宠物层:宠物由引擎作为独立跟随者绘制
-  const dollSvg = wrapSvg(
-    layerMarkup('body', equipped.body) +
-      layerMarkup('accessory', equipped.accessory) +
-      layerMarkup('head', equipped.head),
-  )
-  // 宠物单独一张:部件原本画在画布右后方(约 x=184),平移到中心便于独立跟随定位
-  const petSvg = equipped.pet
-    ? wrapSvg(`<g transform="translate(-64,0)">${layerMarkup('pet', equipped.pet)}</g>`)
-    : null
+// 按插槽配置把素材画布绘制到输出画布(锚点对齐, 逻辑原点 = 脚底中心)
+function drawSlot(
+  c: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  slot: AvatarSlotKey,
+  gender: AvatarGender,
+) {
+  const cfg = SLOT_CANVAS[slot]
+  const anchor = SLOT_ANCHORS[gender][slot]
+  const x = FOOT_X + (anchor.offsetX - cfg.width * cfg.anchorX) * K
+  const y = FOOT_Y + (anchor.offsetY - cfg.height * cfg.anchorY) * K
+  c.drawImage(img, x, y, cfg.width * K, cfg.height * K)
+}
 
-  const [doll, pet] = await Promise.all([
-    svgToImage(dollSvg).catch(() => null),
-    petSvg ? svgToImage(petSvg).catch(() => null) : Promise.resolve(null),
+async function loadSlotImage(equipped: Equipped, category: NFTCategory) {
+  const localId = equipped[category]
+  if (!localId) return null
+  const part = getPartByLocalId(localId)
+  if (!part) return null
+  const img = await loadImage(part.imageUrl).catch(() => null)
+  return img ? { img, slot: CATEGORY_TO_SLOT[category] } : null
+}
+
+export async function buildDollSprites(
+  equipped: Equipped,
+  gender: AvatarGender = 'male',
+): Promise<DollSprites> {
+  const [baseImg, body, head, acc, pet] = await Promise.all([
+    loadImage(BASE_IMAGE[gender]).catch(() => null),
+    loadSlotImage(equipped, 'body'),
+    loadSlotImage(equipped, 'head'),
+    loadSlotImage(equipped, 'accessory'),
+    loadSlotImage(equipped, 'pet'),
   ])
-  return { doll, pet }
+
+  // 人物本体: base → body → head → acc(宠物由引擎作为独立跟随者绘制)
+  let doll: HTMLCanvasElement | null = null
+  if (baseImg) {
+    const [canvas, c] = createCanvas()
+    c.drawImage(
+      baseImg,
+      FOOT_X - (BASE_CANVAS.width / 2) * K,
+      FOOT_Y - BASE_CANVAS.height * K,
+      BASE_CANVAS.width * K,
+      BASE_CANVAS.height * K,
+    )
+    for (const layer of [body, head, acc]) {
+      if (layer) drawSlot(c, layer.img, layer.slot, gender)
+    }
+    doll = canvas
+  }
+
+  // 宠物单独一张: 底部中心锚点居中放置(独立跟随定位, 不含腰侧偏移)
+  let petCanvas: HTMLCanvasElement | null = null
+  if (pet) {
+    const [canvas, c] = createCanvas()
+    const cfg = SLOT_CANVAS.pet
+    c.drawImage(
+      pet.img,
+      FOOT_X - (cfg.width / 2) * K,
+      FOOT_Y - cfg.height * K,
+      cfg.width * K,
+      cfg.height * K,
+    )
+    petCanvas = canvas
+  }
+
+  return { doll, pet: petCanvas }
 }

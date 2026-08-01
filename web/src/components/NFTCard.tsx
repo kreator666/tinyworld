@@ -32,8 +32,27 @@ export default function NFTCard({
     >
       {/* 链标 */}
       <span className="absolute top-2 right-2 tag !text-[10px] border-neon-cyan/40 text-neon-cyan">{item.chain}</span>
-      <div className={`w-full h-24 rounded-xl bg-gradient-to-br ${item.gradient} grid place-items-center text-4xl mb-2`}>
-        {item.emoji}
+      <div className={`w-full h-24 rounded-xl bg-gradient-to-br ${item.gradient} grid place-items-center mb-2 overflow-hidden`}>
+        {item.imageUrl ? (
+          <img
+            src={item.imageUrl}
+            alt={item.name}
+            className="max-w-full max-h-full object-contain"
+            onError={(e) => {
+              const el = e.target as HTMLImageElement
+              el.style.display = 'none'
+              const parent = el.parentElement
+              if (parent) {
+                const span = document.createElement('span')
+                span.className = 'text-4xl'
+                span.textContent = item.emoji
+                parent.appendChild(span)
+              }
+            }}
+          />
+        ) : (
+          <span className="text-4xl">{item.emoji}</span>
+        )}
       </div>
       <div className="text-sm font-medium truncate" title={item.name}>{item.name}</div>
       <div className="flex items-center justify-between mt-1.5 text-xs">

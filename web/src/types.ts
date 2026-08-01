@@ -25,6 +25,7 @@ export interface NFTItem {
   hash: string // 链上哈希
   chain: ChainType
   count?: number // 持有数量
+  imageUrl?: string // 素材切图路径
 }
 
 export type Equipped = Record<NFTCategory, string | null>

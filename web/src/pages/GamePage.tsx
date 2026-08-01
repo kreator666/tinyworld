@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
+import { useAvatarStore } from '../store/avatarStore'
 import { Game, type GameStatus, type HudState } from '../game/engine'
 import { buildDollSprites, type DollSprites } from '../game/sprite'
 import PaperDoll from '../components/PaperDoll'
@@ -22,6 +23,7 @@ const initHud: HudState = { hp: MAX_HP, score: 0, gems: 0, kills: 0, time: 0 }
 // 游戏页:Canvas 引擎 + React 覆盖层(HUD / 开始 / 暂停 / 结算)
 export default function GamePage() {
   const did = useAppStore((s) => s.did)
+  const gender = useAvatarStore((s) => s.gender)
   const equipped = did?.equipped ?? demoEquipped
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -33,10 +35,10 @@ export default function GamePage() {
   const [hud, setHud] = useState<HudState>(initHud)
   const [runId, setRunId] = useState(0)
 
-  // 加载纸娃娃 sprite(每局共用,重开不重复加载)
+  // 加载纸娃娃 sprite(每局共用,重开不重复加载;性别变化时重载)
   useEffect(() => {
     let cancelled = false
-    buildDollSprites(equipped)
+    buildDollSprites(equipped, gender)
       .catch(() => ({ doll: null, pet: null }) as DollSprites)
       .then((s) => {
         if (cancelled) return
@@ -47,7 +49,7 @@ export default function GamePage() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [gender])
 
   // 创建 / 重建引擎(重新开始时 runId 变化触发)
   useEffect(() => {

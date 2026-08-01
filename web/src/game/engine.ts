@@ -35,7 +35,7 @@ const ATTACK_CD = 0.35
 const ATTACK_TIME = 0.16
 const INVULN = 1.2
 const START_HP = 5
-const SPRITE_SCALE = 0.62 // 240 视窗 → 约 149px 高的游戏 sprite
+const SPRITE_SCALE = 0.62 // sprite 逻辑尺寸 240(480 画布 2 倍精度) → 约 149px 高的游戏 sprite
 
 // ---------- 调色板(与站点 neon 主题一致) ----------
 const PURPLE = '#8b5cf6'
