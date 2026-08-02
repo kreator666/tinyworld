@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Equipped, NFTCategory, ChainType, NFTItem } from '../types'
 import { nftLibrary } from '../mock/data'
+import { CHARACTERS } from '../data/characterCatalog'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import PaperDoll from '../components/PaperDoll'
@@ -9,8 +10,8 @@ import NFTCard from '../components/NFTCard'
 import { explorerTx, TARGET_CHAIN_ID, partByLocalId } from '../lib/contracts'
 
 const tabs: { key: NFTCategory; label: string; desc: string }[] = [
-  { key: 'head', label: '头部', desc: '发型 / 头盔 / 面具' },
-  { key: 'body', label: '身体', desc: '服装 / 盔甲 / 躯干主体' },
+  { key: 'head', label: '头部', desc: '角色头部形象(v4 角色库)' },
+  { key: 'body', label: '身体', desc: '角色身体造型(v4 角色库)' },
   { key: 'accessory', label: '配饰', desc: '披风 / 徽章 / 手持 / 光翼' },
   { key: 'pet', label: '宠物', desc: '跟随小伙伴(显示在人物身后)' },
 ]
@@ -21,7 +22,32 @@ const takenNames = ['satoshi', 'vitalik', 'aiko_02', 'neonhunter']
 
 type MintPhase = 'idle' | 'signing' | 'confirming' | 'done' | 'error'
 
-// 铸造工坊:保留完整 16 件装备目录;连接 Sepolia 后只把链上持有状态覆盖到每件装备上
+// 把 v4 角色库映射为 head-N / body-N 的展示项,保持与链上 part ID 一一对应
+function buildCharacterItems(): NFTItem[] {
+  return CHARACTERS.flatMap((char) => {
+    const index = char.id.split('-')[1]
+    const baseHead = nftLibrary.find((i) => i.id === `head-${index}`)
+    const baseBody = nftLibrary.find((i) => i.id === `body-${index}`)
+    const items: NFTItem[] = []
+    if (baseHead) {
+      items.push({
+        ...baseHead,
+        name: `角色 ${index}`,
+        imageUrl: char.headUrl,
+      })
+    }
+    if (baseBody) {
+      items.push({
+        ...baseBody,
+        name: `角色 ${index}`,
+        imageUrl: char.bodyUrl,
+      })
+    }
+    return items
+  })
+}
+
+// 铸造工坊:v4 角色 head/body + 装备 accessory/pet,链上交互与合约逻辑保持不变
 export default function MintWorkshop() {
   const nav = useNavigate()
   const { connected, address, login, mintDID, showToast } = useAppStore()
@@ -29,7 +55,7 @@ export default function MintWorkshop() {
 
   const [tab, setTab] = useState<NFTCategory>('head')
   const [equipped, setEquipped] = useState<Equipped>(
-    chainEquipped ?? { head: 'head-3', body: 'body-1', accessory: null, pet: null },
+    chainEquipped ?? { head: 'head-1', body: 'body-1', accessory: null, pet: null },
   )
   const [name, setName] = useState(didName ?? '')
   const [bio, setBio] = useState('')
@@ -62,9 +88,11 @@ export default function MintWorkshop() {
     ;(Object.keys(SLOT_MAP) as NFTCategory[]).forEach((cat) => {
       const slot = SLOT_MAP[cat]
       const owned = parts.find((p) => p.slot === slot && p.balance > 0)
-      const localItem = owned ? nftLibrary.find((i) => i.id === owned.localId) : undefined
-      if (localItem) next[cat] = localItem.id
+      if (owned) next[cat] = owned.localId
     })
+    // 保底默认角色
+    if (!next.head) next.head = 'head-1'
+    if (!next.body) next.body = 'body-1'
     setEquipped(next)
     setPreviewInit(true)
   }, [isSepolia, parts, previewInit])
@@ -72,10 +100,14 @@ export default function MintWorkshop() {
   const nameTaken = name.trim().length > 0 && takenNames.includes(name.trim().toLowerCase())
   const nameOk = name.trim().length >= 2 && !nameTaken
 
-  // 完整本地目录;连接 Sepolia 后,对已在链上注册并有余额的装备覆盖 owned/count/chain 标记
-  const catalogItems = useMemo(() => {
-    if (!isSepolia) return nftLibrary
-    return nftLibrary.map((item) => {
+  // v4 角色 head/body 展示项
+  const characterItems = useMemo(() => buildCharacterItems(), [])
+
+  // 装备 accessory/pet 目录;连接 Sepolia 后,对已在链上注册并有余额的装备覆盖 owned/count/chain 标记
+  const equipmentItems = useMemo(() => {
+    const base = nftLibrary.filter((i) => i.category === 'accessory' || i.category === 'pet')
+    if (!isSepolia) return base
+    return base.map((item) => {
       const cp = partByLocalId(item.id)
       if (!cp) return item
       const chain = parts.find((p) => p.id === cp.id)
@@ -88,11 +120,34 @@ export default function MintWorkshop() {
     })
   }, [isSepolia, parts])
 
-  const categoryItems = catalogItems.filter((i) => i.category === tab)
+  // head/body 展示项同样覆盖链上持有状态
+  const characterCatalogItems = useMemo(() => {
+    if (!isSepolia) return characterItems
+    return characterItems.map((item) => {
+      const cp = partByLocalId(item.id)
+      if (!cp) return item
+      const chain = parts.find((p) => p.id === cp.id)
+      return {
+        ...item,
+        owned: chain ? chain.balance > 0 : item.owned,
+        count: chain?.balance ?? 0,
+        chain: 'Sepolia' as ChainType,
+      }
+    })
+  }, [isSepolia, parts, characterItems])
+
+  // 当前标签页要渲染的卡片
+  const categoryItems = useMemo(() => {
+    if (tab === 'head' || tab === 'body') return characterCatalogItems.filter((i) => i.category === tab)
+    return equipmentItems.filter((i) => i.category === tab)
+  }, [tab, characterCatalogItems, equipmentItems])
+
+  // 所有展示项,用于右侧“当前预览搭配”
+  const allItems = useMemo(() => [...characterCatalogItems, ...equipmentItems], [characterCatalogItems, equipmentItems])
 
   const selectedItems = useMemo(
-    () => Object.values(equipped).map((id) => catalogItems.find((i) => i.id === id)).filter((i): i is NonNullable<typeof i> => !!i),
-    [equipped, catalogItems],
+    () => Object.values(equipped).map((id) => allItems.find((i) => i.id === id)).filter((i): i is NonNullable<typeof i> => !!i),
+    [equipped, allItems],
   )
 
   const pick = (id: string, category: NFTCategory) =>
@@ -199,7 +254,7 @@ export default function MintWorkshop() {
               ? `${tabs.find((t) => t.key === tab)?.desc}(已连接 Sepolia: 显示链上持有状态)`
               : `${tabs.find((t) => t.key === tab)?.desc}(演示目录,连接钱包后显示链上持有状态)`}
           </p>
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {categoryItems.map((i) => (
               <NFTCard
                 key={i.id}

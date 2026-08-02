@@ -26,13 +26,13 @@ export default function NFTCard({
   return (
     <div
       onClick={onClick}
-      className={`glass p-3 relative transition ${onClick ? 'cursor-pointer hover:border-neon-purple/60' : ''} ${
+      className={`glass p-5 relative transition ${onClick ? 'cursor-pointer hover:border-neon-purple/60' : ''} ${
         selected ? 'neon-border shadow-neon-purple' : ''
       }`}
     >
       {/* 链标 */}
       <span className="absolute top-2 right-2 tag !text-[10px] border-neon-cyan/40 text-neon-cyan">{item.chain}</span>
-      <div className={`w-full h-24 rounded-xl bg-gradient-to-br ${item.gradient} grid place-items-center mb-2 overflow-hidden`}>
+      <div className={`w-full h-56 rounded-xl bg-gradient-to-br ${item.gradient} grid place-items-center mb-5 overflow-hidden`}>
         {item.imageUrl ? (
           <img
             src={item.imageUrl}
@@ -44,22 +44,22 @@ export default function NFTCard({
               const parent = el.parentElement
               if (parent) {
                 const span = document.createElement('span')
-                span.className = 'text-4xl'
+                span.className = 'text-6xl'
                 span.textContent = item.emoji
                 parent.appendChild(span)
               }
             }}
           />
         ) : (
-          <span className="text-4xl">{item.emoji}</span>
+          <span className="text-6xl">{item.emoji}</span>
         )}
       </div>
-      <div className="text-sm font-medium truncate" title={item.name}>{item.name}</div>
-      <div className="flex items-center justify-between mt-1.5 text-xs">
+      <div className="text-sm font-medium leading-relaxed line-clamp-2" title={item.name}>{item.name}</div>
+      <div className="flex items-center justify-between mt-4 text-xs">
         <span className={`tag ${rarityStyle[item.rarity]}`}>{rarityDot[item.rarity]} {item.rarity}</span>
         <span className="text-slate-400 font-mono">{item.price} ETH</span>
       </div>
-      <div className="flex items-center justify-between mt-2">
+      <div className="flex items-center justify-between mt-4">
         <span className={`text-[11px] ${item.owned ? 'text-emerald-400' : 'text-slate-500'}`}>
           {item.owned ? '✓ 已持有' : '未持有'}
         </span>
