@@ -5,15 +5,15 @@ import { getPartByLocalId } from '../data/equipmentCatalog'
 import {
   BASE_CANVAS,
   BASE_IMAGE,
+  DEFAULT_BODY_INDEX,
   SLOT_ANCHORS,
   SLOT_CANVAS,
-  type AvatarGender,
   type AvatarSlotKey,
 } from '../data/avatarConfig'
-import { useAvatarStore } from '../store/avatarStore'
 
-// Q 版纸娃娃(PixiJS): 基底 + 4 插槽装备, 容器树与坐标系见 prototype/v2/design.md §3/§4
-// 逻辑坐标: 基底画布 512x1024, 原点 = 脚底中心, y 向上为负
+// Q 版纸娃娃(PixiJS, 穿戴切片制式): 基底 + 4 插槽装备
+// 所有切片与基底共用 512x1024 画布原点位叠放; body 插槽 = 套装(leg + torso 两张)
+// 切片仅有男性版本, 固定使用男性基底
 
 const CATEGORY_TO_SLOT: Record<NFTCategory, AvatarSlotKey> = {
   head: 'head',
@@ -22,14 +22,18 @@ const CATEGORY_TO_SLOT: Record<NFTCategory, AvatarSlotKey> = {
   pet: 'pet',
 }
 
-// Z 层级(design.md §3): base=0 → body=1 → head=2 → accessory=3 → pet=4
+// Z 层级: base=0 → leg=1 → body=2 → head=3 → acc=4 → pet=5
 const SLOT_Z: Record<AvatarSlotKey | 'base', number> = {
   base: 0,
-  body: 1,
-  head: 2,
-  acc: 3,
-  pet: 4,
+  leg: 1,
+  body: 2,
+  head: 3,
+  acc: 4,
+  pet: 5,
 }
+
+// body 套装的腿切片路径(与 torso 同编号)
+const legImageUrl = (index: string) => `/assets/equipment/leg/${index}.png`
 
 interface DollStage {
   app: PIXI.Application
@@ -42,17 +46,11 @@ export default function PaperDoll({
   equipped,
   size = 'md',
   interactive = false,
-  gender,
 }: {
   equipped: Equipped
   size?: 'sm' | 'md' | 'lg'
-  interactive?: boolean // 是否显示缩放/翻转/性别控制
-  gender?: AvatarGender // 不传时读取 avatarStore
+  interactive?: boolean // 是否显示缩放/翻转控制
 }) {
-  const storeGender = useAvatarStore((s) => s.gender)
-  const setGender = useAvatarStore((s) => s.setGender)
-  const effectiveGender = gender ?? storeGender
-
   const [zoom, setZoom] = useState(1)
   const [flip, setFlip] = useState(false)
 
@@ -62,7 +60,8 @@ export default function PaperDoll({
   const flipRef = useRef(flip)
   const equipSeq = useRef(0)
 
-  const box = size === 'lg' ? 'w-64 h-64' : size === 'sm' ? 'w-24 h-24' : 'w-44 h-44'
+  // 容器与素材画布同为 1:2, 角色完整占满显示区
+  const box = size === 'lg' ? 'w-64 aspect-[1/2]' : size === 'sm' ? 'w-24 aspect-[1/2]' : 'w-44 aspect-[1/2]'
 
   // 逻辑画布 -> 屏幕: 按高度适配, 脚底贴底, 水平居中
   const layout = () => {
@@ -107,7 +106,7 @@ export default function PaperDoll({
         root.addChild(base)
 
         const slots = {} as Record<AvatarSlotKey, PIXI.Container>
-        ;(['body', 'head', 'acc', 'pet'] as AvatarSlotKey[]).forEach((key) => {
+        ;(['leg', 'body', 'head', 'acc', 'pet'] as AvatarSlotKey[]).forEach((key) => {
           const c = new PIXI.Container()
           c.zIndex = SLOT_Z[key]
           slots[key] = c
@@ -150,30 +149,14 @@ export default function PaperDoll({
       const stage = stageRef.current
       if (!stage) return
       const seq = ++equipSeq.current
-      const anchors = SLOT_ANCHORS[effectiveGender]
+      const anchors = SLOT_ANCHORS.male
 
-      // 基底
-      PIXI.Assets.load<PIXI.Texture>(BASE_IMAGE[effectiveGender])
-        .then((tex) => {
-          if (equipSeq.current !== seq || !stageRef.current) return
-          stage.base.texture = tex
-          stage.base.width = BASE_CANVAS.width
-          stage.base.height = BASE_CANVAS.height
-        })
-        .catch(() => {})
-
-      // 装备插槽
-      ;(Object.keys(CATEGORY_TO_SLOT) as NFTCategory[]).forEach((category) => {
-        const slotKey = CATEGORY_TO_SLOT[category]
+      // 加载一张贴图到指定插槽容器
+      const loadInto = (slotKey: AvatarSlotKey, imageUrl: string, emoji?: string) => {
         const container = stage.slots[slotKey]
-        container.removeChildren()
-        const localId = equipped[category]
-        if (!localId) return
-        const part = getPartByLocalId(localId)
-        if (!part) return
         const cfg = SLOT_CANVAS[slotKey]
         const anchor = anchors[slotKey]
-        PIXI.Assets.load<PIXI.Texture>(part.imageUrl)
+        PIXI.Assets.load<PIXI.Texture>(imageUrl)
           .then((tex) => {
             if (equipSeq.current !== seq || !stageRef.current) return
             container.removeChildren()
@@ -183,19 +166,50 @@ export default function PaperDoll({
             container.addChild(sprite)
           })
           .catch(() => {
-            if (equipSeq.current !== seq || !stageRef.current) return
+            if (equipSeq.current !== seq || !stageRef.current || !emoji) return
             // 贴图加载失败降级为 emoji 占位
             container.removeChildren()
-            const text = new PIXI.Text({ text: part.emoji, style: { fontSize: 96 } })
+            const text = new PIXI.Text({ text: emoji, style: { fontSize: 96 } })
             text.anchor.set(0.5)
-            text.position.set(anchor.offsetX, anchor.offsetY - 120)
+            text.position.set(anchor.offsetX, anchor.offsetY - 480)
             container.addChild(text)
           })
+      }
+
+      // 基底(切片仅有男性版本)
+      PIXI.Assets.load<PIXI.Texture>(BASE_IMAGE.male)
+        .then((tex) => {
+          if (equipSeq.current !== seq || !stageRef.current) return
+          stage.base.texture = tex
+          stage.base.width = BASE_CANVAS.width
+          stage.base.height = BASE_CANVAS.height
+        })
+        .catch(() => {})
+
+      // 清空全部插槽
+      ;(['leg', 'body', 'head', 'acc', 'pet'] as AvatarSlotKey[]).forEach((key) => {
+        stage.slots[key].removeChildren()
+      })
+
+      // body 套装: leg + torso 同编号两张; 空槽时显示默认套装(纯显示)
+      const bodyId = equipped.body ?? `body-${DEFAULT_BODY_INDEX}`
+      const bodyPart = getPartByLocalId(bodyId)
+      const bodyIndex = bodyId.split('-')[1] ?? String(DEFAULT_BODY_INDEX)
+      loadInto('leg', legImageUrl(bodyIndex))
+      if (bodyPart) loadInto('body', bodyPart.imageUrl, bodyPart.emoji)
+
+      // 其余插槽
+      ;(['head', 'accessory', 'pet'] as NFTCategory[]).forEach((category) => {
+        const localId = equipped[category]
+        if (!localId) return
+        const part = getPartByLocalId(localId)
+        if (!part) return
+        loadInto(CATEGORY_TO_SLOT[category], part.imageUrl, part.emoji)
       })
     }
     refreshRef.current = refresh
     refresh()
-  }, [equipped, effectiveGender])
+  }, [equipped])
 
   // 缩放/翻转
   useEffect(() => {
@@ -222,13 +236,6 @@ export default function PaperDoll({
           <button className="btn-ghost !px-2 !py-1" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.1).toFixed(1)))}>−</button>
           <span className="text-slate-400 w-10 text-center">{Math.round(zoom * 100)}%</span>
           <button className="btn-ghost !px-2 !py-1" onClick={() => setZoom((z) => Math.min(1.6, +(z + 0.1).toFixed(1)))}>+</button>
-          <button
-            className="btn-ghost !px-2 !py-1"
-            onClick={() => setGender(effectiveGender === 'male' ? 'female' : 'male')}
-            title="切换性别"
-          >
-            {effectiveGender === 'male' ? '♂' : '♀'}
-          </button>
         </div>
       )}
     </div>

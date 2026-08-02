@@ -1,17 +1,18 @@
-import type { Equipped, NFTCategory } from '../types'
+import type { Equipped } from '../types'
 import { getPartByLocalId } from '../data/equipmentCatalog'
 import {
   BASE_CANVAS,
   BASE_IMAGE,
+  DEFAULT_BODY_INDEX,
   SLOT_ANCHORS,
   SLOT_CANVAS,
-  type AvatarGender,
   type AvatarSlotKey,
 } from '../data/avatarConfig'
 
-// 把当前装备的纸娃娃合成为游戏可用的 canvas sprite
+// 把当前装备的纸娃娃合成为游戏可用的 canvas sprite(穿戴切片制式)
 // 输出画布 480x480(2 倍精度), 锚点 = 脚底中心 (240,436),
 // 与旧 SVG 版 (120,218)/240 比例一致, 引擎绘制逻辑无需改动
+// 切片仅有男性版本, 固定使用男性基底
 
 export interface DollSprites {
   doll: HTMLCanvasElement | null
@@ -22,13 +23,7 @@ const OUT = 480
 const FOOT_X = 240
 const FOOT_Y = 436
 const K = FOOT_Y / BASE_CANVAS.height // 逻辑 512x1024 -> 输出缩放
-
-const CATEGORY_TO_SLOT: Record<NFTCategory, AvatarSlotKey> = {
-  head: 'head',
-  body: 'body',
-  accessory: 'acc',
-  pet: 'pet',
-}
+const GENDER = 'male' as const
 
 // 图片加载缓存
 const imageCache = new Map<string, Promise<HTMLImageElement>>()
@@ -55,41 +50,33 @@ function createCanvas(): [HTMLCanvasElement, CanvasRenderingContext2D] {
 }
 
 // 按插槽配置把素材画布绘制到输出画布(锚点对齐, 逻辑原点 = 脚底中心)
-function drawSlot(
-  c: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  slot: AvatarSlotKey,
-  gender: AvatarGender,
-) {
+function drawSlot(c: CanvasRenderingContext2D, img: HTMLImageElement, slot: AvatarSlotKey) {
   const cfg = SLOT_CANVAS[slot]
-  const anchor = SLOT_ANCHORS[gender][slot]
+  const anchor = SLOT_ANCHORS[GENDER][slot]
   const x = FOOT_X + (anchor.offsetX - cfg.width * cfg.anchorX) * K
   const y = FOOT_Y + (anchor.offsetY - cfg.height * cfg.anchorY) * K
   c.drawImage(img, x, y, cfg.width * K, cfg.height * K)
 }
 
-async function loadSlotImage(equipped: Equipped, category: NFTCategory) {
-  const localId = equipped[category]
-  if (!localId) return null
-  const part = getPartByLocalId(localId)
-  if (!part) return null
-  const img = await loadImage(part.imageUrl).catch(() => null)
-  return img ? { img, slot: CATEGORY_TO_SLOT[category] } : null
-}
+export async function buildDollSprites(equipped: Equipped): Promise<DollSprites> {
+  // body 套装 = leg + torso 同编号两张; 空槽时显示默认套装(纯显示)
+  const bodyId = equipped.body ?? `body-${DEFAULT_BODY_INDEX}`
+  const bodyIndex = bodyId.split('-')[1] ?? String(DEFAULT_BODY_INDEX)
+  const bodyPart = getPartByLocalId(bodyId)
+  const headPart = equipped.head ? getPartByLocalId(equipped.head) : null
+  const accPart = equipped.accessory ? getPartByLocalId(equipped.accessory) : null
+  const petPart = equipped.pet ? getPartByLocalId(equipped.pet) : null
 
-export async function buildDollSprites(
-  equipped: Equipped,
-  gender: AvatarGender = 'male',
-): Promise<DollSprites> {
-  const [baseImg, body, head, acc, pet] = await Promise.all([
-    loadImage(BASE_IMAGE[gender]).catch(() => null),
-    loadSlotImage(equipped, 'body'),
-    loadSlotImage(equipped, 'head'),
-    loadSlotImage(equipped, 'accessory'),
-    loadSlotImage(equipped, 'pet'),
+  const [baseImg, legImg, torsoImg, headImg, accImg, petImg] = await Promise.all([
+    loadImage(BASE_IMAGE[GENDER]).catch(() => null),
+    loadImage(`/assets/equipment/leg/${bodyIndex}.png`).catch(() => null),
+    bodyPart ? loadImage(bodyPart.imageUrl).catch(() => null) : Promise.resolve(null),
+    headPart ? loadImage(headPart.imageUrl).catch(() => null) : Promise.resolve(null),
+    accPart ? loadImage(accPart.imageUrl).catch(() => null) : Promise.resolve(null),
+    petPart ? loadImage(petPart.imageUrl).catch(() => null) : Promise.resolve(null),
   ])
 
-  // 人物本体: base → body → head → acc(宠物由引擎作为独立跟随者绘制)
+  // 人物本体: base → leg → body → head → acc(宠物由引擎作为独立跟随者绘制)
   let doll: HTMLCanvasElement | null = null
   if (baseImg) {
     const [canvas, c] = createCanvas()
@@ -100,19 +87,20 @@ export async function buildDollSprites(
       BASE_CANVAS.width * K,
       BASE_CANVAS.height * K,
     )
-    for (const layer of [body, head, acc]) {
-      if (layer) drawSlot(c, layer.img, layer.slot, gender)
-    }
+    if (legImg) drawSlot(c, legImg, 'leg')
+    if (torsoImg) drawSlot(c, torsoImg, 'body')
+    if (headImg) drawSlot(c, headImg, 'head')
+    if (accImg) drawSlot(c, accImg, 'acc')
     doll = canvas
   }
 
   // 宠物单独一张: 底部中心锚点居中放置(独立跟随定位, 不含腰侧偏移)
   let petCanvas: HTMLCanvasElement | null = null
-  if (pet) {
+  if (petImg) {
     const [canvas, c] = createCanvas()
     const cfg = SLOT_CANVAS.pet
     c.drawImage(
-      pet.img,
+      petImg,
       FOOT_X - (cfg.width / 2) * K,
       FOOT_Y - cfg.height * K,
       cfg.width * K,
