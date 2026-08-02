@@ -37,7 +37,7 @@ export default function NFTCard({
           <img
             src={item.imageUrl}
             alt={item.name}
-            className="max-w-full max-h-full object-contain"
+            className={item.category === 'accessory' ? 'w-full h-full object-cover object-bottom' : 'max-w-full max-h-full object-contain'}
             onError={(e) => {
               const el = e.target as HTMLImageElement
               el.style.display = 'none'

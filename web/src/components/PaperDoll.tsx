@@ -74,11 +74,11 @@ export default function PaperDoll({
           acc: new PIXI.Container(),
           head: new PIXI.Container(),
         }
-        // Z 序: pet 在后 -> body -> acc -> head 在前
-        root.addChild(slots.pet)
+        // Z 序: body -> acc -> head -> pet（宠物在最前）
         root.addChild(slots.body)
         root.addChild(slots.acc)
         root.addChild(slots.head)
+        root.addChild(slots.pet)
 
         stageRef.current = { app, root, slots }
 
@@ -105,9 +105,11 @@ export default function PaperDoll({
     return () => {
       cancelled = true
       stageRef.current = null
-      if (app) {
+      const a = app
+      app = null
+      if (a) {
         try {
-          app.destroy(true, { children: true })
+          a.destroy(true, { children: true })
         } catch (e) {
           console.warn('PaperDoll destroy:', e)
         }
@@ -188,7 +190,7 @@ export default function PaperDoll({
         const pet = new PIXI.Sprite(petTex)
         pet.anchor.set(0.5, 1)
         const ratio = totalH / 1024
-        pet.position.set(-170 * ratio, -20 * ratio)
+        pet.position.set(180 * ratio, 0)
         pet.visible = !!equipped.pet
         s.slots.pet.addChild(pet)
       }

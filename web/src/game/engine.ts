@@ -624,8 +624,8 @@ export class Game {
     this.drawGems(c)
     this.drawPortal(c)
     for (const e of this.enemies) if (!e.dead) this.drawEnemy(c, e)
-    this.drawPet(c)
     this.drawPlayer(c)
+    this.drawPet(c)
     this.drawSlash(c)
 
     c.restore()
