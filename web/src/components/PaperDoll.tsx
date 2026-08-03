@@ -74,9 +74,9 @@ export default function PaperDoll({
           acc: new PIXI.Container(),
           head: new PIXI.Container(),
         }
-        // Z 序: body -> acc -> head -> pet（宠物在最前）
-        root.addChild(slots.body)
+        // Z 序: acc -> body -> head -> pet（配饰在最底层）
         root.addChild(slots.acc)
+        root.addChild(slots.body)
         root.addChild(slots.head)
         root.addChild(slots.pet)
 
@@ -121,6 +121,7 @@ export default function PaperDoll({
   const defaultScaleRef = useRef(1)
   const zoomRef = useRef(zoom)
   const flipRef = useRef(flip)
+  const totalHRef = useRef(1024)
 
   // 刷新角色/装备
   useEffect(() => {
@@ -160,6 +161,7 @@ export default function PaperDoll({
       const overlap = 1
       const totalH = bodyH + headH - overlap
       const headOffset = -(bodyH - overlap)
+      totalHRef.current = totalH
 
       headSp.position.set(0, headOffset)
 
@@ -167,23 +169,9 @@ export default function PaperDoll({
       const { screen } = s.app
       defaultScaleRef.current = (screen.height / totalH) * 0.92
 
-      // 更新 acc/pet
-      const accPart = equipped.accessory ? getPartByLocalId(equipped.accessory) : null
+      // 更新 pet
       const petPart = equipped.pet ? getPartByLocalId(equipped.pet) : null
-      const [accTex, petTex] = await Promise.all([
-        accPart ? load(accPart.imageUrl) : load(ACC_DEFAULT_URL),
-        petPart ? load(petPart.imageUrl) : load(PET_DEFAULT_URL),
-      ])
-
-      s.slots.acc.removeChildren()
-      if (accTex) {
-        const acc = new PIXI.Sprite(accTex)
-        acc.anchor.set(0.5, 1)
-        const ratio = totalH / 1024
-        acc.position.set(130 * ratio, -260 * ratio)
-        acc.visible = !!equipped.accessory
-        s.slots.acc.addChild(acc)
-      }
+      const petTex = await (petPart ? load(petPart.imageUrl) : load(PET_DEFAULT_URL))
 
       s.slots.pet.removeChildren()
       if (petTex) {
@@ -201,9 +189,53 @@ export default function PaperDoll({
     }
 
     refresh()
-  }, [equipped])
+  }, [equipped.head, equipped.body, equipped.pet])
 
-  // 同步 zoom/flip 到舞台
+  // 单独刷新配饰背景(确保点击配饰时背景立即切换)
+  useEffect(() => {
+    const updateAccessory = async () => {
+      const s = stageRef.current
+      if (!s) return
+
+      const load = async (url: string) => {
+        try {
+          return await PIXI.Assets.load<PIXI.Texture>(url)
+        } catch (e) {
+          console.warn('PaperDoll accessory load failed:', url, e)
+          return null
+        }
+      }
+
+      const accPart = equipped.accessory ? getPartByLocalId(equipped.accessory) : null
+      const imageUrl = accPart ? accPart.imageUrl : ACC_DEFAULT_URL
+      const accTex = await load(imageUrl)
+
+      // 计算总高度:优先用 full refresh 缓存,否则从当前 body/head 读取
+      let totalH = totalHRef.current
+      if (!totalH && s.slots.body.children[0] && s.slots.head.children[0]) {
+        totalH = s.slots.body.children[0].height + s.slots.head.children[0].height - 1
+      }
+      if (!totalH) totalH = 1024
+
+      s.slots.acc.removeChildren()
+      if (accTex) {
+        const acc = new PIXI.Sprite(accTex)
+        acc.anchor.set(0.5, 1)
+        const ratio = totalH / 1024
+        acc.position.set(0, 0)
+        acc.scale.set(ratio)
+        acc.visible = !!equipped.accessory
+        s.slots.acc.addChild(acc)
+      }
+
+      // 重新应用根容器缩放/位置(防止第一次没有 body/head 时错位)
+      const k = defaultScaleRef.current * zoomRef.current
+      s.root.scale.set(flipRef.current ? -k : k, k)
+      s.root.position.set(s.app.screen.width / 2, s.app.screen.height * 0.98)
+    }
+
+    updateAccessory()
+  }, [equipped.accessory, equipped.head, equipped.body])
   useEffect(() => {
     zoomRef.current = zoom
     flipRef.current = flip

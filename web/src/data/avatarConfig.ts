@@ -1,6 +1,6 @@
 // 本文件由 web/scripts/build-avatar-assets.mjs 自动生成, 请勿手改
 // 穿戴切片制式: 所有切片与基底共用 512x1024 画布, 原点位叠放, offset 全 0
-// Z 序: base(0) -> leg(1) -> body(2) -> head(3) -> acc(4) -> pet(5)
+// Z 序: acc(背景,0) -> base(1) -> leg(2) -> body(3) -> head(4) -> pet(5)
 // body 插槽 = 套装: torso(equipment/body/{n}.png) + leg(equipment/leg/{n}.png)
 export type AvatarGender = 'male' | 'female'
 export type AvatarSlotKey = 'leg' | 'body' | 'head' | 'acc' | 'pet'

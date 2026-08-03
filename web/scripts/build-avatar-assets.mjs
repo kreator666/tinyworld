@@ -6,14 +6,14 @@
  *   装备/头部/head_slice_*.png           脸+头饰切片(RGBA, 与素体同比例)
  *   装备/身体/torso_slice_*.png          躯干+衣服切片
  *   装备/腿/leg_slice_*.png              腿+裤靴切片(与 torso 同编号配成套装)
- *   装备/手持/acc_slice_*.png            手+武器切片
+ *   装备/手持/acc_slice_*.png            配饰/背景切片(去白雾后填满 512x1024 画布)
  *   装备/宠物/*.png                      独立宠物(白底, 旧制式沿用)
  *
  * 对齐规则(在素体归一化后的 512x1024 画布坐标系, 切片随基底同系数缩放):
  *   head  -> 切片肤色(脸)质心 对齐 素体脸部中心
  *   torso -> 切片顶部中心     对齐 素体颈部点
  *   leg   -> 切片底部中心     对齐 素体脚底中心
- *   acc   -> 切片肤色(拳)质心 对齐 素体手部点
+ *   acc   -> 直接填满 512x1024 画布, 作为人物背景图
  * 所有切片放置到与基底相同的 512x1024 透明画布, 运行时原点位叠放, offset 全 0。
  *
  * 输出:
@@ -344,7 +344,7 @@ async function measureBase(buffer, width, height) {
 // 去白雾: 切片源图带白色半透明雾底, 从边缘洪水填充标记"近白色"像素并置为全透明
 // (衣物内部的白色区域不与边缘连通, 得以保留; 肤色 min 通道 < 222 不受影响)
 async function dehaze(src) {
-  const { data, info } = await sharp(src).raw().toBuffer({ resolveWithObject: true })
+  const { data, info } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
   const width = info.width
   const height = info.height
   const WHITE = 222
@@ -540,7 +540,7 @@ async function main() {
   // 切片与素体并非同一像素比例: 按解剖尺寸逐件校准缩放
   //   head: 素体脸宽/切片肤色宽(等比)  body: 素体躯干全幅宽/切片bbox宽(等比)
   //   leg:  X=素体腿幅宽/切片bbox宽, Y=素体腿长(含上探)/切片bbox高(独立缩放, 裤腰接上衣)
-  //   acc:  素体拳高/切片肤色高(等比)
+  //   acc:  作为人物背景图, 去白雾后直接填满 512x1024 画布, 不参与切片量测
   // 对齐: face=肤色bbox中心对脸部中心 neck=顶部中心对颈部
   //   foot=底部中心对脚底 hand=肤色bbox中心偏下对手部
   const SLICES = {
@@ -561,11 +561,33 @@ async function main() {
       const src = path.join(SRC, cfg.dir, f)
       const index = parseInt(f.match(/(\d+)/)[1], 10)
       const clean = await dehaze(src)
+      // 配饰新素材作为人物背景图, 直接填满 512x1024 画布
+      if (slot === 'acc') {
+        const buf = await sharp(clean)
+          .resize(CW, CH, { fit: 'fill' })
+          .png()
+          .toBuffer()
+        measured.push({ src, clean, index, buf, isBg: true })
+        continue
+      }
       const m = await measureSlice(clean, skin)
       const raw = m.skinW || m.bboxW ? cfg.ratio(m) : NaN
       const rawY = cfg.ratioY ? cfg.ratioY(m) : NaN
       measured.push({ src, clean, index, m, raw, rawY })
     }
+
+    const byIndex = new Map()
+    // 配饰: 直接输出填满画布的背景图, 不再按手持尺寸对齐
+    if (slot === 'acc') {
+      for (const t of measured) byIndex.set(t.index, t.buf)
+      for (let i = 1; i <= cfg.count; i++) {
+        const buf = byIndex.get(i) ?? byIndex.get(i - 1) ?? [...byIndex.values()][0]
+        fs.writeFileSync(path.join(outDir, `${i}.png`), buf)
+      }
+      console.log(`${slot}: ${files.length} 张背景图, 已填满 ${CW}x${CH}`)
+      continue
+    }
+
     const pickMedian = (key) => {
       const vals = measured.map((t) => t[key]).filter((r) => isFinite(r) && r > 0).sort((a, b) => a - b)
       return vals.length ? vals[Math.floor(vals.length / 2)] : 1
@@ -576,7 +598,6 @@ async function main() {
     console.log(`${slot}: ${files.length} 张切片, 缩放比中位 X=${medianX.toFixed(3)}${cfg.ratioY ? ` Y=${medianY.toFixed(3)}` : ''}`)
 
     // 第二遍: 裁内容 bbox -> 缩放(X/Y 可独立) -> 对齐放置
-    const byIndex = new Map()
     for (const t of measured) {
       // head 槽全件统一用中位比, 保证头部大小一致; 其他槽逐件钳位
       const ratioX = slot === 'head' && HEAD_UNIFIED_SCALE ? medianX : clamp(t.raw, medianX)
@@ -637,7 +658,7 @@ async function main() {
   // ---------- avatarConfig.ts ----------
   const ts = `// 本文件由 web/scripts/build-avatar-assets.mjs 自动生成, 请勿手改
 // 穿戴切片制式: 所有切片与基底共用 512x1024 画布, 原点位叠放, offset 全 0
-// Z 序: base(0) -> leg(1) -> body(2) -> head(3) -> acc(4) -> pet(5)
+// Z 序: base(0) -> leg(1) -> acc(2) -> body(3) -> head(4) -> pet(5)
 // body 插槽 = 套装: torso(equipment/body/{n}.png) + leg(equipment/leg/{n}.png)
 export type AvatarGender = 'male' | 'female'
 export type AvatarSlotKey = 'leg' | 'body' | 'head' | 'acc' | 'pet'
@@ -687,12 +708,12 @@ export const BASE_IMAGE: Record<AvatarGender, string> = {
   // ---------- 调试合成预览 ----------
   for (const combo of [1, 3, 7, 12, 16, 20, 24, 28]) {
     const layers = [{ input: male.buffer, left: 0, top: 0 }]
-    // Z: leg -> body -> head -> acc -> pet
+    // Z: acc -> leg -> body -> head -> pet
     for (const [slot, cv, anchor] of [
+      ['acc', [CW, CH], [0.5, 1]],
       ['leg', [CW, CH], [0.5, 1]],
       ['body', [CW, CH], [0.5, 1]],
       ['head', [CW, CH], [0.5, 1]],
-      ['acc', [CW, CH], [0.5, 1]],
       ['pet', [512, 512], [0.5, 1]],
     ]) {
       const a = slot === 'pet' ? PET_ANCHOR : { offsetX: 0, offsetY: 0 }

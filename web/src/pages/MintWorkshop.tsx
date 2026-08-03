@@ -12,7 +12,7 @@ import { explorerTx, TARGET_CHAIN_ID, partByLocalId } from '../lib/contracts'
 const tabs: { key: NFTCategory; label: string; desc: string }[] = [
   { key: 'head', label: '头部', desc: '角色头部形象(v4 角色库)' },
   { key: 'body', label: '身体', desc: '角色身体造型(v4 角色库)' },
-  { key: 'accessory', label: '配饰', desc: '披风 / 徽章 / 手持 / 光翼' },
+  { key: 'accessory', label: '配饰', desc: '全屏背景 / 氛围 / 披风 / 光翼' },
   { key: 'pet', label: '宠物', desc: '跟随小伙伴(显示在人物身前)' },
 ]
 

@@ -76,10 +76,21 @@ export async function buildDollSprites(equipped: Equipped): Promise<DollSprites>
     petPart ? loadImage(petPart.imageUrl).catch(() => null) : Promise.resolve(null),
   ])
 
-  // 人物本体: base → leg → body → head → acc(宠物由引擎作为独立跟随者绘制)
+  // 人物本体: acc(背景) → base → leg → body → head(宠物由引擎作为独立跟随者绘制)
   let doll: HTMLCanvasElement | null = null
   if (baseImg) {
     const [canvas, c] = createCanvas()
+    if (accImg) {
+      const ACC_W = 512
+      const ACC_H = 1024
+      c.drawImage(
+        accImg,
+        FOOT_X - (ACC_W / 2) * K,
+        FOOT_Y - ACC_H * K,
+        ACC_W * K,
+        ACC_H * K,
+      )
+    }
     c.drawImage(
       baseImg,
       FOOT_X - (BASE_CANVAS.width / 2) * K,
@@ -90,7 +101,6 @@ export async function buildDollSprites(equipped: Equipped): Promise<DollSprites>
     if (legImg) drawSlot(c, legImg, 'leg')
     if (torsoImg) drawSlot(c, torsoImg, 'body')
     if (headImg) drawSlot(c, headImg, 'head')
-    if (accImg) drawSlot(c, accImg, 'acc')
     doll = canvas
   }
 
