@@ -200,6 +200,3 @@ export function getRarityMintAmount(rarity: Rarity): number {
   return RARITY_CONFIG[rarity].mintAmount
 }
 
-export function getRarityMaxSupply(rarity: Rarity): number {
-  return RARITY_CONFIG[rarity].maxSupply
-}
