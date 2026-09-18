@@ -73,6 +73,7 @@ export interface ChatSession {
   online: boolean
   aiTag: string
   messages: Message[]
+  selfAgent?: boolean // true = 自己的 Agent(走真实 agent/ 服务,不跑 mock 回复)
 }
 
 export interface PlazaUser {

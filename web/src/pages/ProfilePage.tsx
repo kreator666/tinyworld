@@ -124,7 +124,8 @@ export default function ProfilePage() {
   const favored = favorites.includes(selfId)
 
   const chat = (mode: 'human' | 'ai') => {
-    ensureChatWith(view.name, view.address.slice(0, 6) + '...' + view.address.slice(-4), '🧑‍🎤', mode, form.template + '型 AI')
+    // "和 Agent 聊" 标记为 selfAgent 会话:聊天页改走真实 agent/ 服务而非 mock
+    ensureChatWith(view.name, view.address.slice(0, 6) + '...' + view.address.slice(-4), '🧑‍🎤', mode, form.template + '型 AI', { selfAgent: mode === 'ai' })
     nav('/chat')
   }
 

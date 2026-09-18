@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import ChatBubble from '../components/ChatBubble'
+import { chatWithMyAgent } from '../lib/agentApi'
 
 // 页面 5:消息聊天界面
 export default function ChatPage() {
-  const { chats, activeChatId, setActiveChat, switchChatMode, sendMessage, inventory, aiProfile, showToast } = useAppStore()
+  const { chats, activeChatId, setActiveChat, switchChatMode, sendMessage, appendPeerMessage, inventory, aiProfile, showToast, address } = useAppStore()
   const [draft, setDraft] = useState('')
   const [showNFT, setShowNFT] = useState(false)
   const [showAIInfo, setShowAIInfo] = useState(false)
+  const [typingChatId, setTypingChatId] = useState<string | null>(null) // 等待真实 Agent 回复的会话
   const listRef = useRef<HTMLDivElement>(null)
 
   const active = chats.find((c) => c.id === activeChatId) ?? chats[0]
@@ -18,8 +20,28 @@ export default function ChatPage() {
 
   const send = () => {
     if (!draft.trim() || !active) return
-    sendMessage(active.id, draft.trim())
+    const text = draft.trim()
+    const sessionId = active.id
+    // selfAgent 会话:跳过 mock,改调 agent/ 服务与自己的 Agent 真实对话
+    const toSelfAgent = active.selfAgent && active.mode === 'ai'
+    sendMessage(sessionId, text)
     setDraft('')
+    if (!toSelfAgent) return
+    if (!address) {
+      appendPeerMessage(sessionId, '请先连接钱包,我才能找到你在链上的 Agent。')
+      return
+    }
+    setTypingChatId(sessionId)
+    chatWithMyAgent(address, text)
+      .then((r) => appendPeerMessage(sessionId, r.reply))
+      .catch((err) => {
+        // 网络层失败(服务没起)与业务错误(未铸造/LLM 异常)分开提示
+        const msg = err instanceof TypeError
+          ? 'Agent 服务未启动,请先运行 agent/ 服务(npm run dev,端口 4111)'
+          : `Agent 回复失败:${err instanceof Error ? err.message : String(err)}`
+        appendPeerMessage(sessionId, msg)
+      })
+      .finally(() => setTypingChatId((id) => (id === sessionId ? null : id)))
   }
 
   // 导出对话记录为 txt
@@ -115,6 +137,9 @@ export default function ChatPage() {
                 </div>
               )}
               {active.messages.map((m) => <ChatBubble key={m.id} msg={m} />)}
+              {typingChatId === active.id && (
+                <div className="text-xs text-slate-500 animate-pulse">🤖 对方正在输入…</div>
+              )}
             </div>
 
             {/* 底部输入区 */}
