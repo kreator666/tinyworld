@@ -59,7 +59,7 @@ export class WalletError extends Error {
   }
 }
 
-const EIP712_DOMAIN_NAME = 'DID AI Verse'
+const EIP712_DOMAIN_NAME = 'AgentVerse'
 const EIP712_DOMAIN_VERSION = '1'
 const EIP712_TYPE = 'Login' as const
 

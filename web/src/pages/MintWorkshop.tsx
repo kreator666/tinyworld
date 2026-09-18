@@ -201,7 +201,7 @@ export default function MintWorkshop() {
       mintDID(name.trim(), bio.trim(), 'ETH', equipped)
       setPhase('done')
       setTimeout(() => {
-        showToast('🎉 DID 身份 NFT 已上链!配件可在资产背包中穿戴')
+        showToast('🎉 Agent 身份已上链!配件可在资产背包中穿戴')
         nav('/backpack')
       }, 1400)
     } catch (err) {
@@ -217,8 +217,8 @@ export default function MintWorkshop() {
       <h2 className="text-2xl font-bold mb-1">NFT 铸造工坊</h2>
       <p className="text-sm text-slate-400 mb-6">
         {alreadyMinted
-          ? '你已铸造 DID 主身份 NFT,可在资产背包查看链上资产'
-          : '挑选 NFT 组件预览搭配,并在 Sepolia 测试网铸造 DID 主身份'}
+          ? '你已铸造 Agent 主身份,可在资产背包查看链上资产'
+          : '挑选 NFT 组件预览搭配,并在 Sepolia 测试网铸造你的 Agent 主身份'}
       </p>
 
       {alreadyMinted && (
@@ -254,7 +254,7 @@ export default function MintWorkshop() {
               disabled={phase !== 'idle' || alreadyMinted || !connected || !isSepolia || !nameOk}
               onClick={doMint}
             >
-              {alreadyMinted ? '已铸造' : '铸造专属 DID 身份 NFT'}
+              {alreadyMinted ? '已铸造' : '铸造我的专属 Agent'}
             </button>
             {!connected && <p className="text-xs text-rose-400 mt-1">请先连接钱包</p>}
             {connected && !isSepolia && <p className="text-xs text-amber-400 mt-1">请先切换到 Sepolia 网络</p>}
@@ -305,21 +305,21 @@ export default function MintWorkshop() {
             ))}
           </div>
           <p className="text-xs text-slate-500 mt-4">
-            💡 选择组件仅影响当前预览;铸造后可在资产背包中把已持有的配件穿到 DID 上
+            💡 选择组件仅影响当前预览;铸造后可在资产背包中把已持有的配件穿到 Agent 上
           </p>
         </div>
 
         {/* 右栏:铸造参数 + 预览搭配 */}
         <div className="glass p-5 space-y-4 h-fit">
           <div>
-            <label className="text-xs text-slate-400">DID 身份名称(链上永久,不可重复)</label>
+            <label className="text-xs text-slate-400">Agent 名称(链上永久,不可重复)</label>
             <input className="input mt-1" placeholder="输入 2 个字符以上" value={name} onChange={(e) => setName(e.target.value)} disabled={alreadyMinted} />
             {nameTaken && <p className="text-xs text-rose-400 mt-1">✕ 该名称已被占用{isSepolia ? '(链上查重)' : '(本地校验)'}</p>}
             {nameOk && <p className="text-xs text-emerald-400 mt-1">✓ 名称可用{isSepolia && chainNameAvailable === true ? '(链上确认)' : ''}</p>}
           </div>
           <div>
-            <label className="text-xs text-slate-400">身份简介(profileURI,同步到个人主页)</label>
-            <textarea className="input mt-1 h-20 resize-none" placeholder="介绍一下你的链上身份…" value={bio} onChange={(e) => setBio(e.target.value)} disabled={alreadyMinted} />
+            <label className="text-xs text-slate-400">Agent 简介(链上存证,同步到个人主页)</label>
+            <textarea className="input mt-1 h-20 resize-none" placeholder="介绍一下你的 Agent…" value={bio} onChange={(e) => setBio(e.target.value)} disabled={alreadyMinted} />
           </div>
           <div>
             <label className="text-xs text-slate-400">选择公链</label>
@@ -329,7 +329,7 @@ export default function MintWorkshop() {
           </div>
           <div>
             <label className="text-xs text-slate-400">铸造数量</label>
-            <div className="input mt-1 text-slate-500 text-xs">1 份专属 DID 主 NFT(每地址限 1 枚)</div>
+            <div className="input mt-1 text-slate-500 text-xs">1 份专属 Agent 主身份(每地址限 1 枚)</div>
           </div>
           {/* 当前预览搭配 */}
           <div className="border-t border-white/10 pt-3">
@@ -348,7 +348,7 @@ export default function MintWorkshop() {
           </div>
           <div className="border-t border-white/10 pt-3">
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              确认铸造后钱包会弹出真实交易,仅消耗 Sepolia 测试 Gas。配件需先在资产背包中持有,才能通过链上“穿戴”挂到 DID 上。
+              确认铸造后钱包会弹出真实交易,仅消耗 Sepolia 测试 Gas。配件需先在资产背包中持有,才能通过链上“穿戴”挂到 Agent 上。
             </p>
           </div>
           <button
@@ -368,7 +368,7 @@ export default function MintWorkshop() {
             {phase === 'done' ? (
               <>
                 <div className="text-5xl">🎉</div>
-                <p className="mt-3 font-semibold">DID 身份 NFT 已上链</p>
+                <p className="mt-3 font-semibold">Agent 身份已上链</p>
                 <p className="text-xs text-slate-400 mt-1">正在跳转资产背包…</p>
               </>
             ) : (

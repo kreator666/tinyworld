@@ -10,7 +10,7 @@ import { chainParts, explorerAddress, explorerTx, TARGET_CHAIN_ID } from '../lib
 import { getCharacterDisplay } from '../data/equipmentCatalog'
 
 const tabs: { key: NFTCategory | 'did'; label: string }[] = [
-  { key: 'did', label: 'DID 主身份' },
+  { key: 'did', label: 'Agent 主身份' },
   { key: 'head', label: '头部' },
   { key: 'body', label: '身体' },
   { key: 'accessory', label: '配饰' },
@@ -42,7 +42,7 @@ export default function BackpackPage() {
     try {
       const hash = await equip(address as `0x${string}`, slot, part.id)
       setLastTx(hash)
-      showToast(`已穿戴「${part.name}」到链上 DID`)
+      showToast(`已为 Agent 穿戴「${part.name}」`)
     } catch (err) {
       showToast(err instanceof Error ? err.message : '链上穿戴失败')
     } finally {
@@ -76,7 +76,7 @@ export default function BackpackPage() {
         <div className="glass p-10 text-center text-slate-500 max-w-md">
           {connected ? '⚠️ 请切换到 Sepolia 网络以查看链上资产' : '请先连接钱包以查看链上资产'}
           <br />
-          <Link to="/mint" className="btn-primary inline-block mt-4 text-sm">去铸造 DID</Link>
+          <Link to="/mint" className="btn-primary inline-block mt-4 text-sm">去铸造 Agent</Link>
         </div>
       )
     }
@@ -88,7 +88,7 @@ export default function BackpackPage() {
       if (tokenId === 0) {
         return (
           <div className="glass p-10 text-center text-slate-500 max-w-md">
-            尚未铸造 DID 主身份 NFT
+            尚未铸造 Agent 主身份
             <br />
             <Link to="/mint" className="btn-primary inline-block mt-4 text-sm">去铸造</Link>
           </div>
@@ -179,7 +179,7 @@ export default function BackpackPage() {
                   <button
                     className="flex-1 btn-primary !text-xs !py-1.5"
                     disabled={acting === p.localId || tokenId === 0}
-                    title={tokenId === 0 ? '请先铸造 DID 身份' : undefined}
+                    title={tokenId === 0 ? '请先铸造 Agent' : undefined}
                     onClick={() => doEquip(p.localId, tab as NFTCategory)}
                   >
                     {acting === p.localId ? '上链中…' : '穿戴'}

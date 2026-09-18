@@ -38,7 +38,7 @@ export default function DIDCard({ user }: { user: PlazaUser }) {
           进入主页
         </button>
         <button className="btn-primary flex-1 !text-xs !py-2" onClick={chatWithAI}>
-          🤖 和 AI 分身聊
+          🤖 和 Agent 聊
         </button>
       </div>
     </div>

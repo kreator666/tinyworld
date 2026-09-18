@@ -75,7 +75,7 @@ export default function GamePage() {
       <div className="mb-4 flex items-center justify-between">
         <Link to="/" className="btn-ghost !px-3 !py-1.5 text-xs">← 返回首页</Link>
         <span className="text-sm text-slate-400">
-          出战形象:<span className="text-neon-cyan font-medium">{did ? did.name : '演示纸娃娃(未铸造 DID)'}</span>
+          出战形象:<span className="text-neon-cyan font-medium">{did ? did.name : '演示形象(未铸造 Agent)'}</span>
         </span>
       </div>
 
@@ -108,7 +108,7 @@ export default function GamePage() {
                 <PaperDoll equipped={equipped} size="md" />
               </div>
               <div className="max-w-sm">
-                <h2 className="text-3xl font-bold bg-neon-grad bg-clip-text text-transparent">DID 大冒险</h2>
+                <h2 className="text-3xl font-bold bg-neon-grad bg-clip-text text-transparent">Agent 大冒险</h2>
                 <p className="mt-2 text-sm text-slate-400">
                   操控你的纸娃娃穿越霓虹荒原,击败敌人、收集宝石,抵达终点传送门!
                 </p>
@@ -184,7 +184,7 @@ export default function GamePage() {
       </div>
 
       <p className="mt-3 text-xs text-slate-500 text-center">
-        键盘操作 · 在铸造工坊打造 DID 身份后,将使用你的专属形象出战
+        键盘操作 · 在铸造工坊铸造你的 Agent 后,将使用你的专属形象出战
       </p>
     </div>
   )

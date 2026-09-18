@@ -26,9 +26,9 @@ export default function ChatPage() {
   const exportChat = () => {
     if (!active) return
     const lines = active.messages.map(
-      (m) => `[${m.time}] ${m.from === 'me' ? '我' : active.peerName + (m.ai ? '(AI分身)' : '')}: ${m.kind === 'nft' ? '[NFT分享]' : m.text}`,
+      (m) => `[${m.time}] ${m.from === 'me' ? '我' : active.peerName + (m.ai ? '(Agent)' : '')}: ${m.kind === 'nft' ? '[NFT分享]' : m.text}`,
     )
-    const blob = new Blob([`DID AI Verse 对话记录 - ${active.peerName}\n\n` + lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const blob = new Blob([`AgentVerse 对话记录 - ${active.peerName}\n\n` + lines.join('\n')], { type: 'text/plain;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `chat-${active.peerName}.txt`
@@ -98,7 +98,7 @@ export default function ChatPage() {
                   onClick={() => switchChatMode(active.id, 'ai')}
                   className={`px-3 py-1 rounded-full transition ${active.mode === 'ai' ? 'bg-neon-grad text-white' : 'text-slate-400'}`}
                 >
-                  🤖 AI 分身
+                  🤖 Agent
                 </button>
               </div>
               <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => setShowAIInfo(true)}>AI 设定</button>
@@ -110,7 +110,7 @@ export default function ChatPage() {
               {active.mode === 'ai' && (
                 <div className="text-center">
                   <span className="tag !text-[10px] border-neon-cyan/40 text-neon-cyan">
-                    🤖 当前由对方的 AI 分身({active.aiTag})代为交流
+                    🤖 当前由对方的 Agent({active.aiTag})代为交流
                   </span>
                 </div>
               )}
@@ -164,7 +164,7 @@ export default function ChatPage() {
               <button onClick={() => setShowAIInfo(false)} className="text-slate-400 hover:text-white">✕</button>
             </div>
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-slate-400">分身标签</span><span>{active.aiTag}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Agent 标签</span><span>{active.aiTag}</span></div>
               <div className="flex justify-between"><span className="text-slate-400">人设模板</span><span>{aiProfile.template}</span></div>
               <div className="flex justify-between"><span className="text-slate-400">语气风格</span><span>{aiProfile.tone}</span></div>
               <div className="flex justify-between"><span className="text-slate-400">回复速度</span><span>{aiProfile.replySpeed === 'instant' ? '秒级快速回复' : '模拟人类延迟'}</span></div>
@@ -172,7 +172,7 @@ export default function ChatPage() {
                 <span className="text-slate-400 text-xs">性格描述</span>
                 <p className="text-xs mt-1 text-slate-300">{aiProfile.personality || '未设置'}</p>
               </div>
-              <p className="text-[10px] text-slate-500 pt-1">* 演示版:对方分身设定以你的 AI 配置近似展示</p>
+              <p className="text-[10px] text-slate-500 pt-1">* 演示版:对方 Agent 设定以你的 AI 配置近似展示</p>
             </div>
           </div>
         </div>

@@ -29,7 +29,7 @@ function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: (v: bool
   )
 }
 
-// 页面 3:个人 DID 主页(展示 + AI 分身控制台)
+// 页面 3:个人主页(Agent 展示 + 控制台)
 export default function ProfilePage() {
   const nav = useNavigate()
   const { connected, address, login, did, inventory, aiProfile, saveAIProfile, resetAIProfile, following, favorites, toggleFollow, toggleFavorite, ensureChatWith, showToast } = useAppStore()
@@ -81,7 +81,7 @@ export default function ProfilePage() {
   const chainDid: DIDIdentity | null =
     !did && tokenId > 0
       ? {
-          name: didName || '未命名 DID',
+          name: didName || '未命名 Agent',
           bio: '',
           chain: 'Sepolia',
           mintedAt: '—',
@@ -97,14 +97,14 @@ export default function ProfilePage() {
       return (
         <div className="mx-auto max-w-md px-4 py-24 text-center">
           <div className="text-5xl mb-4">🪪</div>
-          <p className="text-slate-300 mb-6">链上身份读取中…</p>
+          <p className="text-slate-300 mb-6">链上 Agent 读取中…</p>
         </div>
       )
     }
     return (
       <div className="mx-auto max-w-md px-4 py-24 text-center">
         <div className="text-5xl mb-4">🪪</div>
-        <p className="text-slate-300 mb-6">你还没有铸造 DID 身份,先去铸造工坊创建一个吧</p>
+        <p className="text-slate-300 mb-6">你还没有铸造自己的 Agent,先去铸造工坊创建一个吧</p>
         <Link to="/mint" className="btn-primary inline-block">前往铸造工坊</Link>
       </div>
     )
@@ -137,7 +137,7 @@ export default function ProfilePage() {
         const json = JSON.stringify(form)
         const uri = `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`
         await setPersonaOnChain(address as `0x${string}`, tokenId, uri, keccak256(toBytes(json)))
-        showToast('✅ 人格配置已保存并同步上链绑定 DID NFT')
+        showToast('✅ 人格配置已保存并同步上链,绑定 Agent 身份')
       } catch (err) {
         showToast(explainChainError(err))
       } finally {
@@ -155,7 +155,7 @@ export default function ProfilePage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 grid lg:grid-cols-[1fr_380px] gap-6">
-      {/* 左栏:DID 身份展示区(公开可见) */}
+      {/* 左栏:Agent 身份展示区(公开可见) */}
       <div className="space-y-6">
         {/* 顶部信息卡 */}
         <div className="glass p-5">
@@ -164,7 +164,7 @@ export default function ProfilePage() {
             <span className="tag border-neon-cyan/40 text-neon-cyan">{view.chain}</span>
             <span className="tag text-slate-400">铸造于 {view.mintedAt}</span>
           </div>
-          <div className="text-xs text-slate-500 font-mono mt-1.5">DID 地址:{view.address}</div>
+          <div className="text-xs text-slate-500 font-mono mt-1.5">所属钱包:{view.address}</div>
           <div className="text-xs mt-1">
             <a className="text-neon-purple hover:underline cursor-pointer font-mono" onClick={() => showToast('演示环境:已复制合约链接')}>
               合约:{view.contract} ↗
@@ -174,7 +174,7 @@ export default function ProfilePage() {
           {/* 数据标签 */}
           <div className="grid grid-cols-3 gap-3 mt-4">
             {[
-              { label: 'AI 分身活跃度', value: '92%' },
+              { label: 'Agent 活跃度', value: '92%' },
               { label: '社交互动数', value: '1,284' },
               { label: '持有 NFT 装备', value: String(inventory.length) },
             ].map((s) => (
@@ -195,25 +195,25 @@ export default function ProfilePage() {
           {/* 公开社交按钮 */}
           <div className="flex flex-wrap gap-2 mt-4 justify-center">
             <button className="btn-primary !text-sm" onClick={() => chat('human')}>💬 和本人真人聊</button>
-            <button className="btn-primary !text-sm" onClick={() => chat('ai')}>🤖 和 AI 分身聊</button>
-            <button className="btn-ghost !text-sm" onClick={() => { toggleFavorite(selfId); showToast(favored ? '已取消收藏' : '已收藏该 DID 身份') }}>
+            <button className="btn-primary !text-sm" onClick={() => chat('ai')}>🤖 和 Agent 聊</button>
+            <button className="btn-ghost !text-sm" onClick={() => { toggleFavorite(selfId); showToast(favored ? '已取消收藏' : '已收藏该 Agent') }}>
               {favored ? '★ 已收藏' : '☆ 收藏'}
             </button>
             <button className="btn-ghost !text-sm" onClick={() => showToast(`全部装备:${equippedItems.map((i) => i!.name).join('、') || '无'}`)}>
               🎒 查看装备
             </button>
-            <button className="btn-ghost !text-sm" onClick={() => { toggleFollow(selfId); showToast(followed ? '已取消关注' : '已关注该 DID') }}>
+            <button className="btn-ghost !text-sm" onClick={() => { toggleFollow(selfId); showToast(followed ? '已取消关注' : '已关注该 Agent') }}>
               {followed ? '✓ 已关注' : '+ 关注'}
             </button>
           </div>
         </div>
       </div>
 
-      {/* 右栏:私有 AI 分身配置面板(仅本人可见) */}
+      {/* 右栏:私有 Agent 配置面板(仅本人可见) */}
       <div className="space-y-4">
         <div className="glass neon-border p-5">
           <div className="flex items-center justify-between mb-1">
-            <h3 className="font-semibold">🤖 AI 分身控制台</h3>
+            <h3 className="font-semibold">🤖 Agent 控制台</h3>
             <span className="tag !text-[10px] text-slate-500">仅本人可见</span>
           </div>
 

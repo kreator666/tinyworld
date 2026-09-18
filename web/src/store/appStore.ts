@@ -72,7 +72,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       did: {
         name, bio, chain,
         mintedAt: new Date().toISOString().slice(0, 10),
-        contract: '0xDIDaiVerse...' + Math.random().toString(16).slice(2, 8),
+        contract: 'AgentVerse Identity...' + Math.random().toString(16).slice(2, 8),
         address: get().address ?? '0x0',
         equipped,
       },
@@ -135,7 +135,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       id, peerName, peerAddress, peerEmoji, mode, aiTag, online: mode === 'human',
       messages: [{
         id: `m${msgSeq++}`, from: 'peer', kind: 'text',
-        text: mode === 'ai' ? `你好,我是 ${peerName} 的 AI 分身,本人离线时由我代为交流~` : `你好,我是 ${peerName}。`,
+        text: mode === 'ai' ? `你好,我是 ${peerName} 的 Agent,本人离线时由我代为交流~` : `你好,我是 ${peerName}。`,
         time: now(), ai: mode === 'ai',
       }],
     }

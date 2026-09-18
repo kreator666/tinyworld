@@ -53,7 +53,7 @@ export default function NavBar() {
           <Link to="/" className="flex items-center gap-2 shrink-0">
             <span className="w-8 h-8 rounded-lg bg-neon-grad grid place-items-center text-lg shadow-neon-purple">⬡</span>
             <span className="font-bold tracking-widest text-lg bg-neon-grad bg-clip-text text-transparent">
-              DID AI VERSE
+              AGENTVERSE
             </span>
           </Link>
 

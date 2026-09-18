@@ -103,8 +103,8 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
           <span className="w-9 h-9 rounded-xl bg-neon-grad grid place-items-center text-xl">⬡</span>
           <button onClick={onClose} className="text-slate-400 hover:text-white">✕</button>
         </div>
-        <h3 className="text-lg font-semibold mt-2">连接你的去中心化身份</h3>
-        <p className="text-xs text-slate-400 mb-4">登录即生成专属链上 DID 标识，资产归属你的钱包地址</p>
+        <h3 className="text-lg font-semibold mt-2">连接钱包，唤醒你的 Agent</h3>
+        <p className="text-xs text-slate-400 mb-4">签名即登录，Agent 身份与资产全部归属你的钱包地址</p>
 
         <div className="space-y-2">
           {wallets.map((w) => (

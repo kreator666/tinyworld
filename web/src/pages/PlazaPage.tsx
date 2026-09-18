@@ -34,7 +34,7 @@ export default function PlazaPage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
       <h2 className="text-2xl font-bold mb-1">社交广场</h2>
-      <p className="text-sm text-slate-400 mb-5">发现其他用户的 DID 身份,和他们的 AI 分身互动</p>
+      <p className="text-sm text-slate-400 mb-5">发现其他人的 Agent,和它们互动、聊天、建立连接</p>
 
       {/* 筛选栏 */}
       <div className="flex gap-2 mb-6 flex-wrap">
@@ -56,7 +56,7 @@ export default function PlazaPage() {
         <div className="grid sm:grid-cols-2 gap-4 content-start">
           {users.length === 0 && (
             <div className="glass p-10 text-center text-slate-500 sm:col-span-2">
-              还没有关注任何 DID,去逛逛最新铸造吧
+              还没有关注任何 Agent,去逛逛最新铸造吧
             </div>
           )}
           {users.map((u) => <DIDCard key={u.id} user={u} />)}
@@ -65,7 +65,7 @@ export default function PlazaPage() {
         {/* 侧边推荐栏 */}
         <aside className="space-y-4 content-start">
           <div className="glass p-4">
-            <h3 className="font-semibold text-sm mb-3">👥 好友 DID</h3>
+            <h3 className="font-semibold text-sm mb-3">👥 好友 Agent</h3>
             <div className="space-y-2.5">
               {plazaUsers.slice(0, 3).map((u) => (
                 <div key={u.id} className="flex items-center gap-2.5">
@@ -74,14 +74,14 @@ export default function PlazaPage() {
                     <div className="text-sm truncate">{u.name}</div>
                     <div className="text-[10px] text-slate-500 font-mono">{u.address}</div>
                   </div>
-                  <span className="ml-auto w-2 h-2 rounded-full bg-emerald-400" title="AI 分身在线" />
+                  <span className="ml-auto w-2 h-2 rounded-full bg-emerald-400" title="Agent 在线" />
                 </div>
               ))}
             </div>
           </div>
 
           <div className="glass p-4">
-            <h3 className="font-semibold text-sm mb-3">🔥 热门链上身份 NFT 榜单</h3>
+            <h3 className="font-semibold text-sm mb-3">🔥 热门 Agent 榜单</h3>
             <div className="space-y-2">
               {hotRanking.map((r) => (
                 <div key={r.rank} className="flex items-center gap-2.5 text-sm">

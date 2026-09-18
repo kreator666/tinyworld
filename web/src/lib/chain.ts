@@ -157,7 +157,7 @@ export async function fetchChainState(address: Address): Promise<ChainIdentitySt
   return { tokenId: Number(tokenId), didName, equipped, parts }
 }
 
-/** 铸造 DID 主身份,返回 tx hash(等待上链确认后 resolve) */
+/** 铸造 Agent 主身份,返回 tx hash(等待上链确认后 resolve) */
 export async function mintIdentity(owner: Address, name: string, profileURI: string): Promise<Hash> {
   const wallet = walletClient(owner)
   const hash = await wallet.writeContract({
@@ -384,7 +384,7 @@ export async function mintPartsBatch(owner: Address, to: Address, ids: bigint[],
 /** 把链上错误翻译成中文提示 */
 export function explainChainError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
-  if (/AlreadyHasDID/.test(msg)) return '该地址已铸造过 DID 身份(每地址限 1 枚)'
+  if (/AlreadyHasDID/.test(msg)) return '该地址已铸造过 Agent(每地址限 1 枚)'
   if (/NameTaken/.test(msg)) return '该名称已被占用,请换一个'
   if (/InvalidName/.test(msg)) return '名称不符合要求(1-64 字符)'
   if (/NotMinter/.test(msg)) return '当前地址没有 DIDParts 铸造权限(需 owner 或授权 minter)'
@@ -395,8 +395,8 @@ export function explainChainError(err: unknown): string {
   if (/MaxSupplyExceeded/.test(msg)) return '铸造数量超过该配件最大供应量'
   if (/InvalidMaxSupply/.test(msg)) return '最大供应量必须大于 0'
   if (/User rejected|rejected|denied|Denied/i.test(msg)) return '你取消了钱包操作'
-  if (/NotTokenOwner/.test(msg)) return '只有 DID 持有者本人可以操作'
-  if (/NotAuthorized/.test(msg)) return '没有权限修改该 DID 的人格配置'
+  if (/NotTokenOwner/.test(msg)) return '只有 Agent 持有者本人可以操作'
+  if (/NotAuthorized/.test(msg)) return '没有权限修改该 Agent 的人格配置'
   if (/NothingEquipped/.test(msg)) return '该插槽没有装备中的配件'
   if (/insufficient funds/i.test(msg)) return '钱包 Sepolia ETH 余额不足,请先领取测试币'
   return `链上操作失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`
