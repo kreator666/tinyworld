@@ -2,7 +2,7 @@
 export type Rarity = '普通' | '稀有' | '史诗' | '传说'
 // 纸娃娃 4 插槽:头部 / 身体 / 配饰 / 宠物(渲染层级 pet→body→accessory→head)
 export type NFTCategory = 'head' | 'body' | 'accessory' | 'pet'
-export type ChainType = 'Polygon' | 'BSC' | 'ETH'
+export type ChainType = 'Polygon' | 'BSC' | 'ETH' | 'Sepolia'
 
 export interface WalletLogin {
   address: string

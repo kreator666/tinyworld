@@ -7,6 +7,7 @@ import { setActiveProvider } from '../lib/wallet'
 import WalletModal from './WalletModal'
 
 const navItems = [
+  { to: '/profile', label: '个人主页' },
   { to: '/backpack', label: '资产背包' },
   { to: '/plaza', label: '社交广场' },
   { to: '/chat', label: '消息' },
@@ -68,16 +69,6 @@ export default function NavBar() {
                 {n.label}
               </NavLink>
             ))}
-            {did && (
-              <NavLink
-                to="/profile"
-                className={({ isActive }) =>
-                  isActive ? 'text-white border-b-2 border-neon-purple pb-0.5' : 'hover:text-white transition'
-                }
-              >
-                我的 DID
-              </NavLink>
-            )}
             {connected && !did && (
               <NavLink
                 to="/mint"
@@ -105,7 +96,7 @@ export default function NavBar() {
             {connected ? (
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => nav(did ? '/profile' : '/mint')}
+                  onClick={() => nav(did || chainStore.tokenId > 0 ? '/profile' : '/mint')}
                   className="tag border-neon-purple/40 text-neon-cyan font-mono"
                   title="我的钱包地址"
                 >

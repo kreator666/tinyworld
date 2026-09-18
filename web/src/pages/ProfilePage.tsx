@@ -1,11 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { keccak256, toBytes } from 'viem'
 import { useAppStore } from '../store/appStore'
-import type { AIProfile } from '../types'
+import { useChainStore } from '../store/chainStore'
+import type { AIProfile, DIDIdentity } from '../types'
 import { nftLibrary } from '../mock/data'
 import PaperDoll from '../components/PaperDoll'
 import { personaTemplates, toneOptions, topicOptions } from '../mock/data'
 import { rarityDot } from '../components/NFTCard'
+import { IDENTITY_ADDRESS, TARGET_CHAIN_ID } from '../lib/contracts'
+import { explainChainError, fetchPersona, setPersonaOnChain } from '../lib/chain'
+import { getCharacterDisplay } from '../data/equipmentCatalog'
 
 function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: (v: boolean) => void; label: string; desc: string }) {
   return (
@@ -27,11 +32,75 @@ function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: (v: bool
 // 页面 3:个人 DID 主页(展示 + AI 分身控制台)
 export default function ProfilePage() {
   const nav = useNavigate()
-  const { did, inventory, aiProfile, saveAIProfile, resetAIProfile, following, favorites, toggleFollow, toggleFavorite, ensureChatWith, showToast } = useAppStore()
+  const { connected, address, login, did, inventory, aiProfile, saveAIProfile, resetAIProfile, following, favorites, toggleFollow, toggleFavorite, ensureChatWith, showToast } = useAppStore()
+  const { tokenId, didName, equipped: chainEquipped, loading: chainLoading, refresh } = useChainStore()
   const [form, setForm] = useState<AIProfile>(aiProfile)
   const [zoomMeta, setZoomMeta] = useState(false)
+  const [saving, setSaving] = useState(false)
 
-  if (!did) {
+  const isSepolia = login?.chainId === TARGET_CHAIN_ID
+
+  // 本地镜像没有 DID 时,回退到链上数据(Sepolia)
+  useEffect(() => {
+    if (!did && connected && isSepolia && address) refresh(address as `0x${string}`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [did, connected, isSepolia, address])
+
+  // 读取链上人格配置(personaOf)回填 AI 控制台;contentHash 校验不一致则忽略
+  useEffect(() => {
+    if (!connected || !isSepolia || tokenId === 0) return
+    let cancelled = false
+    const DATA_PREFIX = 'data:application/json;base64,'
+    fetchPersona(tokenId)
+      .then(({ uri, contentHash }) => {
+        if (cancelled || !uri) return
+        if (!uri.startsWith(DATA_PREFIX)) {
+          console.warn('链上人格配置为外部 URI,暂不支持读取:', uri)
+          return
+        }
+        try {
+          const json = decodeURIComponent(escape(atob(uri.slice(DATA_PREFIX.length))))
+          if (keccak256(toBytes(json)) !== contentHash.toLowerCase()) {
+            showToast('⚠️ 链上人格配置校验和不匹配,已忽略')
+            return
+          }
+          const profile = JSON.parse(json) as AIProfile
+          setForm(profile)
+          saveAIProfile(profile)
+        } catch (e) {
+          console.warn('链上人格配置解析失败:', e)
+        }
+      })
+      .catch((e) => console.warn('读取链上人格配置失败:', e))
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, isSepolia, tokenId])
+
+  const chainDid: DIDIdentity | null =
+    !did && tokenId > 0
+      ? {
+          name: didName || '未命名 DID',
+          bio: '',
+          chain: 'Sepolia',
+          mintedAt: '—',
+          contract: IDENTITY_ADDRESS,
+          address: address ?? '0x0',
+          equipped: chainEquipped,
+        }
+      : null
+  const view = did ?? chainDid
+
+  if (!view) {
+    if (connected && isSepolia && chainLoading) {
+      return (
+        <div className="mx-auto max-w-md px-4 py-24 text-center">
+          <div className="text-5xl mb-4">🪪</div>
+          <p className="text-slate-300 mb-6">链上身份读取中…</p>
+        </div>
+      )
+    }
     return (
       <div className="mx-auto max-w-md px-4 py-24 text-center">
         <div className="text-5xl mb-4">🪪</div>
@@ -42,19 +111,41 @@ export default function ProfilePage() {
   }
 
   const set = <K extends keyof AIProfile>(k: K, v: AIProfile[K]) => setForm((f) => ({ ...f, [k]: v }))
-  const equippedItems = Object.values(did.equipped).map((id) => nftLibrary.find((i) => i.id === id)).filter(Boolean)
+  const equippedItems = Object.values(view.equipped)
+    .map((id) => nftLibrary.find((i) => i.id === id))
+    .filter(Boolean)
+    .map((i) => {
+      // head/body 名称与铸造工坊一致:角色 N
+      const display = getCharacterDisplay(i!.category, i!.id)
+      return display ? { ...i!, name: display.name } : i!
+    })
   const selfId = 'me'
   const followed = following.includes(selfId)
   const favored = favorites.includes(selfId)
 
   const chat = (mode: 'human' | 'ai') => {
-    ensureChatWith(did.name, did.address.slice(0, 6) + '...' + did.address.slice(-4), '🧑‍🎤', mode, form.template + '型 AI')
+    ensureChatWith(view.name, view.address.slice(0, 6) + '...' + view.address.slice(-4), '🧑‍🎤', mode, form.template + '型 AI')
     nav('/chat')
   }
 
-  const save = () => {
+  const save = async () => {
     saveAIProfile(form)
-    showToast('✅ 人格配置已保存并同步上链绑定 DID NFT')
+    // 已连接 Sepolia 且链上已有 DID 时,人格配置真正写链(setPersona:URI + keccak256 内容哈希)
+    if (connected && isSepolia && address && tokenId > 0) {
+      setSaving(true)
+      try {
+        const json = JSON.stringify(form)
+        const uri = `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`
+        await setPersonaOnChain(address as `0x${string}`, tokenId, uri, keccak256(toBytes(json)))
+        showToast('✅ 人格配置已保存并同步上链绑定 DID NFT')
+      } catch (err) {
+        showToast(explainChainError(err))
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
+    showToast('✅ 人格配置已保存(本地);连接 Sepolia 后会自动同步上链')
   }
   const reset = () => {
     resetAIProfile()
@@ -69,17 +160,17 @@ export default function ProfilePage() {
         {/* 顶部信息卡 */}
         <div className="glass p-5">
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-2xl font-bold">{did.name}</h2>
-            <span className="tag border-neon-cyan/40 text-neon-cyan">{did.chain}</span>
-            <span className="tag text-slate-400">铸造于 {did.mintedAt}</span>
+            <h2 className="text-2xl font-bold">{view.name}</h2>
+            <span className="tag border-neon-cyan/40 text-neon-cyan">{view.chain}</span>
+            <span className="tag text-slate-400">铸造于 {view.mintedAt}</span>
           </div>
-          <div className="text-xs text-slate-500 font-mono mt-1.5">DID 地址:{did.address}</div>
+          <div className="text-xs text-slate-500 font-mono mt-1.5">DID 地址:{view.address}</div>
           <div className="text-xs mt-1">
             <a className="text-neon-purple hover:underline cursor-pointer font-mono" onClick={() => showToast('演示环境:已复制合约链接')}>
-              合约:{did.contract} ↗
+              合约:{view.contract} ↗
             </a>
           </div>
-          {did.bio && <p className="text-sm text-slate-400 mt-2">{did.bio}</p>}
+          {view.bio && <p className="text-sm text-slate-400 mt-2">{view.bio}</p>}
           {/* 数据标签 */}
           <div className="grid grid-cols-3 gap-3 mt-4">
             {[
@@ -98,7 +189,7 @@ export default function ProfilePage() {
         {/* 中央纸娃娃 */}
         <div className="glass p-6 flex flex-col items-center">
           <div className="cursor-pointer" onClick={() => setZoomMeta(true)} title="点击查看链上元数据">
-            <PaperDoll equipped={did.equipped} size="lg" />
+            <PaperDoll equipped={view.equipped} size="lg" />
           </div>
           <p className="text-xs text-slate-500 mt-3">点击纸娃娃查看链上藏品元数据</p>
           {/* 公开社交按钮 */}
@@ -191,7 +282,9 @@ export default function ProfilePage() {
 
           {/* 底部操作 */}
           <div className="flex gap-2 mt-4">
-            <button className="btn-primary flex-1 !text-sm" onClick={save}>保存人格配置</button>
+            <button className="btn-primary flex-1 !text-sm" onClick={save} disabled={saving}>
+              {saving ? '上链中…' : '保存人格配置'}
+            </button>
             <button className="btn-ghost !text-sm" onClick={reset}>重置 AI 人设</button>
           </div>
         </div>
@@ -206,12 +299,12 @@ export default function ProfilePage() {
               <button onClick={() => setZoomMeta(false)} className="text-slate-400 hover:text-white">✕</button>
             </div>
             <div className="flex justify-center my-4">
-              <PaperDoll equipped={did.equipped} size="lg" />
+              <PaperDoll equipped={view.equipped} size="lg" />
             </div>
             <div className="space-y-1.5 text-xs font-mono text-slate-400">
-              <div>contract: {did.contract}</div>
-              <div>chain: {did.chain}</div>
-              <div>minted: {did.mintedAt}</div>
+              <div>contract: {view.contract}</div>
+              <div>chain: {view.chain}</div>
+              <div>minted: {view.mintedAt}</div>
               <div className="pt-2 border-t border-white/10 font-sans">
                 {equippedItems.map((i) => (
                   <div key={i!.id} className="flex justify-between py-1">

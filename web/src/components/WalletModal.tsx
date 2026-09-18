@@ -68,7 +68,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
       } catch (err) {
         showToast('已连接钱包,但未能切换到 Sepolia 或读取链上资产,请手动切网络后再试')
       }
-      nav('/mint')
+      nav('/profile')
     } catch (err) {
       // 切链失败不算致命:已登录,但链上功能不可用
       if (err instanceof Error && err.message.includes('wallet_switch')) {

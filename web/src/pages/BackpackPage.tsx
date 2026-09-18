@@ -7,10 +7,11 @@ import { nftLibrary } from '../mock/data'
 import NFTCard, { rarityDot, rarityStyle } from '../components/NFTCard'
 import PaperDoll from '../components/PaperDoll'
 import { chainParts, explorerAddress, explorerTx, TARGET_CHAIN_ID } from '../lib/contracts'
+import { getCharacterDisplay } from '../data/equipmentCatalog'
 
 const tabs: { key: NFTCategory | 'did'; label: string }[] = [
   { key: 'did', label: 'DID 主身份' },
-  { key: 'head', label: '头部藏品' },
+  { key: 'head', label: '头部' },
   { key: 'body', label: '身体' },
   { key: 'accessory', label: '配饰' },
   { key: 'pet', label: '宠物' },
@@ -135,11 +136,21 @@ export default function BackpackPage() {
     return (
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {list.map((p) => {
+          // head/body 与铸造工坊一致:展示 v4 角色库形象(角色 N + 头/身体切片)
+          const display = getCharacterDisplay(tab as NFTCategory, p.localId)
           const item = p.local
-            ? { ...p.local, owned: p.balance > 0, count: p.balance, chain: 'Sepolia' as ChainType }
+            ? {
+                ...p.local,
+                name: display?.name ?? p.local.name,
+                imageUrl: display?.imageUrl || p.local.imageUrl,
+                owned: p.balance > 0,
+                count: p.balance,
+                chain: 'Sepolia' as ChainType,
+              }
             : {
                 id: p.localId,
-                name: p.name,
+                name: display?.name ?? p.name,
+                imageUrl: display?.imageUrl || undefined,
                 category: tab,
                 rarity: p.rarity as Rarity,
                 price: 0,

@@ -171,6 +171,49 @@ export async function mintIdentity(owner: Address, name: string, profileURI: str
   return hash
 }
 
+/** 链上名称查重:名称是否可铸造(大小写不敏感,与合约 mint 校验一致) */
+export async function checkNameAvailable(name: string): Promise<boolean> {
+  return (await readClient().readContract({
+    address: IDENTITY_ADDRESS,
+    abi: identityAbi,
+    functionName: 'nameAvailable',
+    args: [name],
+  })) as boolean
+}
+
+/** 把 AI 人格配置写链:URI + keccak256 内容哈希(JSON 本体存链下,链上保证完整性) */
+export async function setPersonaOnChain(
+  owner: Address,
+  tokenId: number,
+  uri: string,
+  contentHash: `0x${string}`,
+): Promise<Hash> {
+  const wallet = walletClient(owner)
+  const hash = await wallet.writeContract({
+    address: IDENTITY_ADDRESS,
+    abi: identityAbi,
+    functionName: 'setPersona',
+    args: [BigInt(tokenId), uri, contentHash],
+    gas: 300000n,
+  })
+  await readClient().waitForTransactionReceipt({ hash })
+  return hash
+}
+
+/** 读取链上人格配置指针(无配置时返回空) */
+export async function fetchPersona(tokenId: number): Promise<{ uri: string; contentHash: `0x${string}` }> {
+  const res = (await readClient().readContract({
+    address: IDENTITY_ADDRESS,
+    abi: identityAbi,
+    functionName: 'personaOf',
+    args: [BigInt(tokenId)],
+    // viem 对命名 tuple 返回对象 { uri, contentHash },做兼容处理
+  })) as { uri: string; contentHash: `0x${string}` } | [string, `0x${string}`]
+  const uri = Array.isArray(res) ? res[0] : res.uri
+  const contentHash = Array.isArray(res) ? res[1] : res.contentHash
+  return { uri: uri ?? '', contentHash: contentHash ?? '0x' }
+}
+
 /** 穿戴:首次自动授权身份合约托管配件,然后装备 */
 export async function equipPart(owner: Address, tokenId: number, slot: number, partChainId: number): Promise<Hash> {
   const client = readClient()
@@ -353,6 +396,7 @@ export function explainChainError(err: unknown): string {
   if (/InvalidMaxSupply/.test(msg)) return '最大供应量必须大于 0'
   if (/User rejected|rejected|denied|Denied/i.test(msg)) return '你取消了钱包操作'
   if (/NotTokenOwner/.test(msg)) return '只有 DID 持有者本人可以操作'
+  if (/NotAuthorized/.test(msg)) return '没有权限修改该 DID 的人格配置'
   if (/NothingEquipped/.test(msg)) return '该插槽没有装备中的配件'
   if (/insufficient funds/i.test(msg)) return '钱包 Sepolia ETH 余额不足,请先领取测试币'
   return `链上操作失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`

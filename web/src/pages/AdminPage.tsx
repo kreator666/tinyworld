@@ -5,6 +5,7 @@ import type { NFTCategory, Rarity } from '../types'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import {
+  getCharacterDisplay,
   getPartsByCategory,
   getPartsByRarity,
   getRarityMintAmount,
@@ -256,16 +257,20 @@ export default function AdminPage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3 max-h-[520px] overflow-y-auto pr-2">
             {tabParts.map((p) => {
               const state = stateMap.get(p.chainId)
+              // head/body 与铸造工坊一致:展示 v4 角色库形象(角色 N + 头/身体切片)
+              const display = getCharacterDisplay(tab, p.localId)
+              const displayName = display?.name ?? p.name
+              const displayImage = display?.imageUrl || p.imageUrl
               return (
                 <div
                   key={p.localId}
                   className={`glass p-3 relative ${state?.registered ? 'border-white/10' : 'border-amber-500/30'}`}
                 >
                   <div className={`w-full h-20 rounded-xl bg-gradient-to-br ${p.gradient} grid place-items-center mb-2 overflow-hidden`}>
-                    {p.imageUrl ? (
+                    {displayImage ? (
                       <img
-                        src={p.imageUrl}
-                        alt={p.name}
+                        src={displayImage}
+                        alt={displayName}
                         className="max-w-full max-h-full object-contain"
                         onError={(e) => {
                           const el = e.target as HTMLImageElement
@@ -283,7 +288,7 @@ export default function AdminPage() {
                       <span className="text-3xl">{p.emoji}</span>
                     )}
                   </div>
-                  <div className="text-xs font-medium truncate" title={p.name}>{p.name}</div>
+                  <div className="text-xs font-medium truncate" title={displayName}>{displayName}</div>
                   <div className="flex items-center justify-between mt-1.5">
                     <span className={`tag ${rarityStyle[p.rarity]} text-[10px]`}>
                       {rarityDot[p.rarity]} {p.rarity}

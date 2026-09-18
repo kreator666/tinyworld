@@ -8,6 +8,7 @@ import { useChainStore } from '../store/chainStore'
 import PaperDoll from '../components/PaperDoll'
 import NFTCard from '../components/NFTCard'
 import { explorerTx, TARGET_CHAIN_ID, partByLocalId } from '../lib/contracts'
+import { checkNameAvailable } from '../lib/chain'
 
 const tabs: { key: NFTCategory; label: string; desc: string }[] = [
   { key: 'head', label: '头部', desc: '角色头部形象(v4 角色库)' },
@@ -18,7 +19,7 @@ const tabs: { key: NFTCategory; label: string; desc: string }[] = [
 
 const SLOT_MAP: Record<NFTCategory, number> = { head: 0, body: 1, accessory: 2, pet: 3 }
 
-const takenNames = ['satoshi', 'vitalik', 'aiko_02', 'neonhunter']
+const takenNames = ['satoshi', 'vitalik', 'aiko_02', 'neonhunter'] // 未连接 Sepolia 时的本地演示兜底
 
 type MintPhase = 'idle' | 'signing' | 'confirming' | 'done' | 'error'
 
@@ -64,6 +65,30 @@ export default function MintWorkshop() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [isSepolia, setIsSepolia] = useState(false)
   const [previewInit, setPreviewInit] = useState(false)
+  // 链上名称查重结果:null = 未校验/校验中
+  const [chainNameAvailable, setChainNameAvailable] = useState<boolean | null>(null)
+
+  // 连接 Sepolia 后,名称查重走合约 nameAvailable(防抖 400ms;RPC 异常时不阻塞,由链上 mint 兜底)
+  useEffect(() => {
+    const trimmed = name.trim()
+    if (!connected || !isSepolia || trimmed.length < 2) {
+      setChainNameAvailable(null)
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      try {
+        const ok = await checkNameAvailable(trimmed)
+        if (!cancelled) setChainNameAvailable(ok)
+      } catch {
+        if (!cancelled) setChainNameAvailable(null)
+      }
+    }, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [name, connected, isSepolia])
 
   useEffect(() => {
     const sepolia = login?.chainId === TARGET_CHAIN_ID
@@ -97,7 +122,9 @@ export default function MintWorkshop() {
     setPreviewInit(true)
   }, [isSepolia, parts, previewInit])
 
-  const nameTaken = name.trim().length > 0 && takenNames.includes(name.trim().toLowerCase())
+  const nameTaken =
+    chainNameAvailable === false ||
+    (chainNameAvailable === null && name.trim().length > 0 && takenNames.includes(name.trim().toLowerCase()))
   const nameOk = name.trim().length >= 2 && !nameTaken
 
   // v4 角色 head/body 展示项
@@ -287,8 +314,8 @@ export default function MintWorkshop() {
           <div>
             <label className="text-xs text-slate-400">DID 身份名称(链上永久,不可重复)</label>
             <input className="input mt-1" placeholder="输入 2 个字符以上" value={name} onChange={(e) => setName(e.target.value)} disabled={alreadyMinted} />
-            {nameTaken && <p className="text-xs text-rose-400 mt-1">✕ 该名称已被占用(本地校验)</p>}
-            {nameOk && <p className="text-xs text-emerald-400 mt-1">✓ 名称可用</p>}
+            {nameTaken && <p className="text-xs text-rose-400 mt-1">✕ 该名称已被占用{isSepolia ? '(链上查重)' : '(本地校验)'}</p>}
+            {nameOk && <p className="text-xs text-emerald-400 mt-1">✓ 名称可用{isSepolia && chainNameAvailable === true ? '(链上确认)' : ''}</p>}
           </div>
           <div>
             <label className="text-xs text-slate-400">身份简介(profileURI,同步到个人主页)</label>

@@ -1,4 +1,5 @@
 import type { NFTCategory, NFTItem, Rarity } from '../types'
+import { getCharacterById } from './characterCatalog'
 
 // ============================================================
 // 链上装备总目录
@@ -167,6 +168,18 @@ export function getPartByChainId(chainId: number | bigint): CatalogItem | undefi
 
 export function getPartByLocalId(localId: string): CatalogItem | undefined {
   return EQUIPMENT_CATALOG.find((i) => i.localId === localId)
+}
+
+// head/body 的展示信息与铸造工坊保持一致:v4 角色库形象(名称统一为「角色 N」,图片为角色 头/身体 切片)
+// 配饰/宠物返回 null,沿用目录自身名称与图片
+export function getCharacterDisplay(category: NFTCategory, localId: string): { name: string; imageUrl: string } | null {
+  if (category !== 'head' && category !== 'body') return null
+  const index = localId.split('-')[1]
+  const char = getCharacterById(`character-${index}`)
+  return {
+    name: `角色 ${index}`,
+    imageUrl: char ? (category === 'head' ? char.headUrl : char.bodyUrl) : '',
+  }
 }
 
 export function toChainParts(): ChainPart[] {
