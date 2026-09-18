@@ -40,6 +40,7 @@ export default function PaperDoll({
 }) {
   const boxRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<StageRef | null>(null)
+  const [stageReady, setStageReady] = useState(false)
 
   const [zoom, setZoom] = useState(1)
   const [flip, setFlip] = useState(false)
@@ -81,6 +82,7 @@ export default function PaperDoll({
         root.addChild(slots.pet)
 
         stageRef.current = { app, root, slots }
+        setStageReady(true)
 
         app.renderer.on('resize', () => {
           const s = stageRef.current
@@ -105,6 +107,7 @@ export default function PaperDoll({
     return () => {
       cancelled = true
       stageRef.current = null
+      setStageReady(false)
       const a = app
       app = null
       if (a) {
@@ -126,6 +129,7 @@ export default function PaperDoll({
   // 刷新角色/装备
   useEffect(() => {
     const refresh = async () => {
+      if (!stageReady) return
       const s = stageRef.current
       if (!s) return
 
@@ -189,11 +193,12 @@ export default function PaperDoll({
     }
 
     refresh()
-  }, [equipped.head, equipped.body, equipped.pet])
+  }, [equipped.head, equipped.body, equipped.pet, stageReady])
 
   // 单独刷新配饰背景(确保点击配饰时背景立即切换)
   useEffect(() => {
     const updateAccessory = async () => {
+      if (!stageReady) return
       const s = stageRef.current
       if (!s) return
 
@@ -235,7 +240,7 @@ export default function PaperDoll({
     }
 
     updateAccessory()
-  }, [equipped.accessory, equipped.head, equipped.body])
+  }, [equipped.accessory, equipped.head, equipped.body, stageReady])
   useEffect(() => {
     zoomRef.current = zoom
     flipRef.current = flip
