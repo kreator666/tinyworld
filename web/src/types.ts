@@ -74,6 +74,7 @@ export interface ChatSession {
   aiTag: string
   messages: Message[]
   selfAgent?: boolean // true = 自己的 Agent(走真实 agent/ 服务,不跑 mock 回复)
+  agentTokenId?: number // 链上 Agent 的 tokenId(会话列表从链上读取时写入)
 }
 
 export interface PlazaUser {

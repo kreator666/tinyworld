@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { AIProfile, ChatSession, DIDIdentity, Equipped, NFTCategory, NFTItem, WalletLogin } from '../types'
-import { aiReplies, initialChats, nftLibrary } from '../mock/data'
+import { aiReplies, nftLibrary } from '../mock/data'
 
 export const emptyEquipped: Equipped = { head: null, body: null, accessory: null, pet: null }
 
@@ -49,6 +49,7 @@ interface AppState {
   switchChatMode: (id: string, mode: 'human' | 'ai') => void
   sendMessage: (sessionId: string, text: string, kind?: 'text' | 'nft', nftId?: string) => void
   appendPeerMessage: (sessionId: string, text: string) => void
+  upsertChainSession: (agent: { tokenId: number; name: string; owner: string }, selfAgent: boolean) => string
   ensureChatWith: (peerName: string, peerAddress: string, peerEmoji: string, mode: 'human' | 'ai', aiTag: string, opts?: { selfAgent?: boolean }) => string
   // 全局提示
   toast: string | null
@@ -99,19 +100,50 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleFavorite: (id) =>
     set((s) => ({ favorites: s.favorites.includes(id) ? s.favorites.filter((f) => f !== id) : [...s.favorites, id] })),
 
-  chats: initialChats,
-  activeChatId: initialChats[0]?.id ?? null,
+  chats: [],
+  activeChatId: null,
   setActiveChat: (id) => set({ activeChatId: id }),
   switchChatMode: (id, mode) =>
     set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, mode } : c)) })),
+  // 会话列表从链上读取:为每个已铸造的 Agent 建会话
+  // 同名(链上名称唯一)的已有会话(如从个人主页"和 Agent 聊"创建)做合并,避免重复
+  upsertChainSession: (agent, selfAgent) => {
+    const id = `chain-${agent.tokenId}`
+    const existing =
+      get().chats.find((c) => c.id === id) ?? get().chats.find((c) => c.peerName === agent.name)
+    if (existing) {
+      set((s) => ({
+        chats: s.chats.map((c) =>
+          c.id === existing.id
+            ? { ...c, agentTokenId: agent.tokenId, selfAgent: selfAgent || c.selfAgent }
+            : c,
+        ),
+      }))
+      return existing.id
+    }
+    const session: ChatSession = {
+      id,
+      peerName: agent.name,
+      peerAddress: agent.owner.slice(0, 6) + '...' + agent.owner.slice(-4),
+      peerEmoji: '🤖',
+      mode: 'ai',
+      aiTag: '链上 Agent',
+      online: false,
+      selfAgent,
+      agentTokenId: agent.tokenId,
+      messages: [],
+    }
+    set((s) => ({ chats: [...s.chats, session], activeChatId: s.activeChatId ?? id }))
+    return id
+  },
   sendMessage: (sessionId, text, kind = 'text', nftId) => {
     const msg = { id: `m${msgSeq++}`, from: 'me' as const, kind, text, nftId, time: now() }
     set((s) => ({
       chats: s.chats.map((c) => (c.id === sessionId ? { ...c, messages: [...c.messages, msg] } : c)),
     }))
-    // 模拟对方 AI 分身延迟回复;selfAgent 会话走真实 agent/ 服务,跳过 mock
+    // 模拟对方 AI 分身延迟回复;链上 Agent 会话走真实 agent/ 服务,跳过 mock
     const session = get().chats.find((c) => c.id === sessionId)
-    if (session && !session.selfAgent && (session.mode === 'ai' || !session.online)) {
+    if (session && !session.selfAgent && session.agentTokenId == null && (session.mode === 'ai' || !session.online)) {
       const delay = 1000 + Math.random() * 2000
       setTimeout(() => {
         const reply = {

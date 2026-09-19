@@ -21,3 +21,16 @@ export async function chatWithMyAgent(address: string, message: string): Promise
   if (!data?.reply) throw new Error('Agent 服务返回格式异常')
   return data as AgentChatResult
 }
+
+/** 与任意链上 Agent 对话(按 tokenId,装载的是该 Agent 的链上人格) */
+export async function chatWithAgent(tokenId: number, message: string): Promise<AgentChatResult> {
+  const res = await fetch(`${AGENT_API}/agents/${tokenId}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  })
+  const data = (await res.json().catch(() => null)) as (Partial<AgentChatResult> & { error?: string }) | null
+  if (!res.ok) throw new Error(data?.error ?? `Agent 服务错误(${res.status})`)
+  if (!data?.reply) throw new Error('Agent 服务返回格式异常')
+  return data as AgentChatResult
+}

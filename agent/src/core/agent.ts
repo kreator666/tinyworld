@@ -24,11 +24,12 @@ export interface ChatResult {
 
 const HISTORY_LIMIT = 20 // 每个 Agent 只保留最近 20 轮对话
 
-/** 把人格字段组织成中文 system prompt */
-function buildInstructions(profile: AIProfile): string {
+/** 把人格字段组织成中文 system prompt;名字入 prompt,保证每个 Agent 有自己的身份 */
+function buildInstructions(profile: AIProfile, name: string): string {
   const topics = profile.topics.length > 0 ? profile.topics.join('、') : '不限'
   const lines = [
-    `你是主人在链上的 AI 分身(Agent),以第一人称与来访者聊天,就像主人本人在说话一样,不要暴露自己是程序或语言模型。`,
+    `你是「${name}」在链上的 AI 分身(Agent),以第一人称与来访者聊天,就像 ${name} 本人在说话一样,不要暴露自己是程序或语言模型。`,
+    `被问到"你是谁"时,回答你是 ${name}(的 Agent 身份),不要泛化成别的身份。`,
     `人设模板:${profile.template}`,
     profile.personality ? `性格:${profile.personality}` : '',
     `语气风格:${profile.tone}`,
@@ -48,7 +49,7 @@ function agentFor(persona: LoadedPersona): Agent {
   if (cached) return cached
   const agent = new Agent({
     name: `agent-${persona.tokenId}`,
-    instructions: buildInstructions(persona.profile),
+    instructions: buildInstructions(persona.profile, persona.name),
     model: openai(config.llmModel),
   })
   agents.set(persona.tokenId, agent)

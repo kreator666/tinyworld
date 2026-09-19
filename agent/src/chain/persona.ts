@@ -8,7 +8,7 @@ import type { AIProfile } from '../types'
 // 校验不过宁可拒绝装载,防止链下人格数据被篡改(见设计文档 §4.3)
 // ============================================================
 
-// 只需要两个只读方法,ABI 内联即可,避免依赖整份合约 ABI 文件
+// 只需要三个只读方法,ABI 内联即可,避免依赖整份合约 ABI 文件
 const identityAbi = [
   {
     type: 'function',
@@ -16,6 +16,13 @@ const identityAbi = [
     stateMutability: 'view',
     inputs: [{ name: 'owner', type: 'address' }],
     outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'nameOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'string' }],
   },
   {
     type: 'function',
@@ -57,6 +64,7 @@ export const defaultAIProfile: AIProfile = {
 
 export interface LoadedPersona {
   tokenId: number
+  name: string // 链上 Agent 名称(nameOf),用于身份区分
   profile: AIProfile
   fromChain: boolean // false = 链上无人格,用的默认兜底
   contentHash: string
@@ -97,23 +105,31 @@ function decodePersonaUri(uri: string, contentHash: string): AIProfile {
   return { ...defaultAIProfile, ...raw }
 }
 
-/** 从链上读取并校验人格(uri 为空则返回默认人格兜底) */
+/** 从链上读取并校验人格(uri 为空则返回默认人格兜底);同时读链上名称用于身份区分 */
 export async function fetchPersonaFromChain(tokenId: number): Promise<LoadedPersona> {
-  const res = (await client.readContract({
-    address: config.identityAddress,
-    abi: identityAbi,
-    functionName: 'personaOf',
-    args: [BigInt(tokenId)],
-    // viem 对命名 tuple 返回对象 { uri, contentHash },做兼容处理
-  })) as { uri: string; contentHash: `0x${string}` } | [string, `0x${string}`]
+  const [res, name] = await Promise.all([
+    client.readContract({
+      address: config.identityAddress,
+      abi: identityAbi,
+      functionName: 'personaOf',
+      args: [BigInt(tokenId)],
+      // viem 对命名 tuple 返回对象 { uri, contentHash },做兼容处理
+    }) as Promise<{ uri: string; contentHash: `0x${string}` } | [string, `0x${string}`]>,
+    client.readContract({
+      address: config.identityAddress,
+      abi: identityAbi,
+      functionName: 'nameOf',
+      args: [BigInt(tokenId)],
+    }) as Promise<string>,
+  ])
   const uri = Array.isArray(res) ? res[0] : res.uri
   const contentHash = (Array.isArray(res) ? res[1] : res.contentHash) ?? '0x'
 
   if (!uri) {
-    return { tokenId, profile: defaultAIProfile, fromChain: false, contentHash }
+    return { tokenId, name, profile: defaultAIProfile, fromChain: false, contentHash }
   }
   const profile = decodePersonaUri(uri, contentHash)
-  return { tokenId, profile, fromChain: true, contentHash }
+  return { tokenId, name, profile, fromChain: true, contentHash }
 }
 
 // 人格缓存:每个 tokenId 只装载一次,reload 接口强制刷新

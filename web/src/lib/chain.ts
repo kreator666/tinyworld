@@ -181,6 +181,37 @@ export async function checkNameAvailable(name: string): Promise<boolean> {
   })) as boolean
 }
 
+export interface MintedAgent {
+  tokenId: number
+  name: string
+  owner: Address
+}
+
+/** 读取全部已铸造的 Agent(totalMinted 遍历,已销毁的跳过) */
+export async function fetchMintedAgents(): Promise<MintedAgent[]> {
+  const client = readClient()
+  const total = (await client.readContract({
+    address: IDENTITY_ADDRESS,
+    abi: identityAbi,
+    functionName: 'totalMinted',
+  })) as bigint
+
+  const list = await Promise.all(
+    Array.from({ length: Number(total) }, (_, i) => BigInt(i + 1)).map(async (id) => {
+      try {
+        const [name, owner] = await Promise.all([
+          client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'nameOf', args: [id] }) as Promise<string>,
+          client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'ownerOf', args: [id] }) as Promise<Address>,
+        ])
+        return { tokenId: Number(id), name, owner }
+      } catch {
+        return null // 已 burn 的 token:nameOf/ownerOf 会 revert
+      }
+    }),
+  )
+  return list.filter((a): a is MintedAgent => a !== null)
+}
+
 /** 把 AI 人格配置写链:URI + keccak256 内容哈希(JSON 本体存链下,链上保证完整性) */
 export async function setPersonaOnChain(
   owner: Address,
