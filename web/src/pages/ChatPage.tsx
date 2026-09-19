@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import ChatBubble from '../components/ChatBubble'
@@ -15,6 +16,7 @@ export default function ChatPage() {
   const [typingChatId, setTypingChatId] = useState<string | null>(null) // 等待真实 Agent 回复的会话
   const [loadingAgents, setLoadingAgents] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
+  const nav = useNavigate()
 
   const isSepolia = login?.chainId === TARGET_CHAIN_ID
   const active = chats.find((c) => c.id === activeChatId) ?? chats[0]
@@ -151,6 +153,9 @@ export default function ChatPage() {
                   🤖 Agent
                 </button>
               </div>
+              {active.agentTokenId != null && (
+                <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => nav(`/profile/${active.agentTokenId}`)}>主页</button>
+              )}
               <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => setShowAIInfo(true)}>AI 设定</button>
               <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={exportChat}>导出</button>
             </div>

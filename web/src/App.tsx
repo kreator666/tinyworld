@@ -77,6 +77,7 @@ export default function App() {
             <Route path="/" element={<LandingPage />} />
             <Route path="/mint" element={<Guard><MintWorkshop /></Guard>} />
             <Route path="/profile" element={<Guard><ProfilePage /></Guard>} />
+            <Route path="/profile/:tokenId" element={<Guard><ProfilePage /></Guard>} />
             <Route path="/plaza" element={<Guard><PlazaPage /></Guard>} />
             <Route path="/chat" element={<Guard><ChatPage /></Guard>} />
             <Route path="/backpack" element={<Guard><BackpackPage /></Guard>} />

@@ -50,7 +50,7 @@ interface AppState {
   sendMessage: (sessionId: string, text: string, kind?: 'text' | 'nft', nftId?: string) => void
   appendPeerMessage: (sessionId: string, text: string) => void
   upsertChainSession: (agent: { tokenId: number; name: string; owner: string }, selfAgent: boolean) => string
-  ensureChatWith: (peerName: string, peerAddress: string, peerEmoji: string, mode: 'human' | 'ai', aiTag: string, opts?: { selfAgent?: boolean }) => string
+  ensureChatWith: (peerName: string, peerAddress: string, peerEmoji: string, mode: 'human' | 'ai', aiTag: string, opts?: { selfAgent?: boolean; agentTokenId?: number }) => string
   // 全局提示
   toast: string | null
   showToast: (msg: string) => void
@@ -168,15 +168,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const existing = get().chats.find((c) => c.peerName === peerName)
     if (existing) {
       // 已存在的会话补标记(比如先建了普通会话,再从主页"和 Agent 聊"进入)
-      if (opts?.selfAgent && !existing.selfAgent) {
-        set((s) => ({ chats: s.chats.map((c) => (c.id === existing.id ? { ...c, selfAgent: true } : c)) }))
+      const patch: Partial<ChatSession> = {}
+      if (opts?.selfAgent && !existing.selfAgent) patch.selfAgent = true
+      if (opts?.agentTokenId != null && existing.agentTokenId == null) patch.agentTokenId = opts.agentTokenId
+      if (Object.keys(patch).length > 0) {
+        set((s) => ({ chats: s.chats.map((c) => (c.id === existing.id ? { ...c, ...patch } : c)) }))
       }
       set({ activeChatId: existing.id })
       return existing.id
     }
     const id = `c${Date.now()}`
     const session: ChatSession = {
-      id, peerName, peerAddress, peerEmoji, mode, aiTag, online: mode === 'human', selfAgent: opts?.selfAgent,
+      id, peerName, peerAddress, peerEmoji, mode, aiTag, online: mode === 'human',
+      selfAgent: opts?.selfAgent, agentTokenId: opts?.agentTokenId,
       messages: [{
         id: `m${msgSeq++}`, from: 'peer', kind: 'text',
         text: mode === 'ai' ? `你好,我是 ${peerName} 的 Agent,本人离线时由我代为交流~` : `你好,我是 ${peerName}。`,

@@ -1,40 +1,55 @@
 import { useNavigate } from 'react-router-dom'
-import type { PlazaUser } from '../types'
 import { useAppStore } from '../store/appStore'
 import { rarityDot } from './NFTCard'
+import PaperDoll from './PaperDoll'
+import type { Equipped, Rarity } from '../types'
 
-// 社交广场用户 DID 卡
-export default function DIDCard({ user }: { user: PlazaUser }) {
+export interface PlazaAgent {
+  tokenId: number
+  name: string
+  owner: string
+  bio: string
+  equipped: Equipped
+  rarest: Rarity | null // 由链上装备推导
+}
+
+// 社交广场 Agent 卡:数据全部来自链上(fetchAgentPublic)
+export default function DIDCard({ agent }: { agent: PlazaAgent }) {
   const nav = useNavigate()
   const ensureChatWith = useAppStore((s) => s.ensureChatWith)
-  const showToast = useAppStore((s) => s.showToast)
 
   const chatWithAI = () => {
-    ensureChatWith(user.name, user.address, user.emoji, 'ai', user.aiTag)
+    // 带 agentTokenId:聊天页会用对方的链上人格走真实 agent/ 服务
+    ensureChatWith(agent.name, agent.owner.slice(0, 6) + '...' + agent.owner.slice(-4), '🤖', 'ai', '链上 Agent', {
+      agentTokenId: agent.tokenId,
+    })
     nav('/chat')
   }
 
   return (
     <div className="glass p-4 hover:border-neon-purple/50 transition">
       <div className="flex items-start gap-3">
-        <div className={`w-16 h-20 rounded-xl bg-gradient-to-br ${user.gradient} grid place-items-center text-3xl shrink-0 border border-white/10`}>
-          {user.emoji}
+        <div className="shrink-0">
+          <PaperDoll equipped={agent.equipped} size="sm" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-semibold truncate">{user.name}</span>
-            <span className="tag border-neon-purple/40 text-neon-purple !text-[10px]">🤖 {user.aiTag}</span>
+            <span className="font-semibold truncate">{agent.name}</span>
+            <span className="tag border-neon-cyan/40 text-neon-cyan !text-[10px]">#{agent.tokenId}</span>
           </div>
-          <div className="text-xs text-slate-500 font-mono mt-0.5">{user.address}</div>
-          <div className="text-xs text-slate-400 mt-1 line-clamp-2">{user.bio}</div>
-          <div className="flex items-center gap-3 mt-1.5 text-[11px] text-slate-500">
-            <span>活跃度 {user.activity}%</span>
-            <span>{rarityDot[user.rarest]} 最高{user.rarest}</span>
+          <div className="text-xs text-slate-500 font-mono mt-0.5">
+            {agent.owner.slice(0, 6)}...{agent.owner.slice(-4)}
           </div>
+          <div className="text-xs text-slate-400 mt-1 line-clamp-2">{agent.bio || '这个 Agent 还没有写简介'}</div>
+          {agent.rarest && (
+            <div className="text-[11px] text-slate-500 mt-1.5">
+              {rarityDot[agent.rarest]} 最高{agent.rarest}装备
+            </div>
+          )}
         </div>
       </div>
       <div className="flex gap-2 mt-3">
-        <button className="btn-ghost flex-1 !text-xs" onClick={() => showToast('已进入对方主页(演示版展示本人主页)')}>
+        <button className="btn-ghost flex-1 !text-xs" onClick={() => nav(`/profile/${agent.tokenId}`)}>
           进入主页
         </button>
         <button className="btn-primary flex-1 !text-xs !py-2" onClick={chatWithAI}>

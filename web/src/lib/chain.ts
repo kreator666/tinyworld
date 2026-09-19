@@ -212,6 +212,36 @@ export async function fetchMintedAgents(): Promise<MintedAgent[]> {
   return list.filter((a): a is MintedAgent => a !== null)
 }
 
+/** 读取任意 Agent 的公开信息(访问他人主页用);不存在/已销毁时抛错 */
+export async function fetchAgentPublic(tokenId: number): Promise<{
+  tokenId: number
+  name: string
+  owner: Address
+  bio: string
+  equipped: Equipped
+}> {
+  const client = readClient()
+  const id = BigInt(tokenId)
+  const [name, owner, bio, items] = await Promise.all([
+    client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'nameOf', args: [id] }) as Promise<string>,
+    client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'ownerOf', args: [id] }) as Promise<Address>,
+    client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'profileURIOf', args: [id] }) as Promise<string>,
+    client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'getEquipped', args: [id] }) as Promise<[Address, bigint][]>,
+  ])
+  const equipped: Equipped = { head: null, body: null, accessory: null, pet: null }
+  items.forEach((item, slot) => {
+    // viem 对 tuple[4] 的返回可能是对象数组或数组数组,做兼容处理
+    const raw = item as unknown as { collection: Address; id: bigint } | [Address, bigint]
+    const collection = Array.isArray(raw) ? raw[0] : raw.collection
+    const partId = Array.isArray(raw) ? raw[1] : raw.id
+    if (collection === zeroAddress) return
+    const part = partByChainId(partId)
+    const category = SLOT_TO_CATEGORY[slot]
+    if (part && category) equipped[category] = part.localId
+  })
+  return { tokenId, name, owner, bio, equipped }
+}
+
 /** 把 AI 人格配置写链:URI + keccak256 内容哈希(JSON 本体存链下,链上保证完整性) */
 export async function setPersonaOnChain(
   owner: Address,

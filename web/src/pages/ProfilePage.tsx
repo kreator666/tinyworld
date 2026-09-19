@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { keccak256, toBytes } from 'viem'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
@@ -9,7 +9,7 @@ import PaperDoll from '../components/PaperDoll'
 import { personaTemplates, toneOptions, topicOptions } from '../mock/data'
 import { rarityDot } from '../components/NFTCard'
 import { IDENTITY_ADDRESS, TARGET_CHAIN_ID } from '../lib/contracts'
-import { explainChainError, fetchPersona, setPersonaOnChain } from '../lib/chain'
+import { explainChainError, fetchAgentPublic, fetchPersona, setPersonaOnChain } from '../lib/chain'
 import { getCharacterDisplay } from '../data/equipmentCatalog'
 
 function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: (v: boolean) => void; label: string; desc: string }) {
@@ -30,25 +30,57 @@ function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: (v: bool
 }
 
 // 页面 3:个人主页(Agent 展示 + 控制台)
+// /profile = 自己的主页(含 Agent 控制台);/profile/:tokenId = 他人主页(仅公开信息 + 社交按钮)
 export default function ProfilePage() {
   const nav = useNavigate()
+  const { tokenId: paramTokenId } = useParams()
   const { connected, address, login, did, inventory, aiProfile, saveAIProfile, resetAIProfile, following, favorites, toggleFollow, toggleFavorite, ensureChatWith, showToast } = useAppStore()
   const { tokenId, didName, equipped: chainEquipped, loading: chainLoading, refresh } = useChainStore()
   const [form, setForm] = useState<AIProfile>(aiProfile)
   const [zoomMeta, setZoomMeta] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  // 访客模式:URL 带 tokenId 且不是自己的 Agent
+  const visitingTokenId = paramTokenId ? Number(paramTokenId) : null
+  const isSelf = visitingTokenId == null || visitingTokenId === tokenId
+  const [other, setOther] = useState<DIDIdentity | null>(null)
+  const [otherLoading, setOtherLoading] = useState(false)
+  const [otherError, setOtherError] = useState<string | null>(null)
+
   const isSepolia = login?.chainId === TARGET_CHAIN_ID
 
-  // 本地镜像没有 DID 时,回退到链上数据(Sepolia)
+  // 访问他人主页:从链上读取该 Agent 的公开信息
   useEffect(() => {
-    if (!did && connected && isSepolia && address) refresh(address as `0x${string}`)
+    if (visitingTokenId == null || isSelf) return
+    setOtherLoading(true)
+    setOtherError(null)
+    fetchAgentPublic(visitingTokenId)
+      .then((a) =>
+        setOther({
+          name: a.name,
+          bio: a.bio,
+          chain: 'Sepolia',
+          mintedAt: '—',
+          contract: IDENTITY_ADDRESS,
+          address: a.owner,
+          equipped: a.equipped,
+        }),
+      )
+      .catch(() => setOtherError('该 Agent 不存在或已被销毁'))
+      .finally(() => setOtherLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [did, connected, isSepolia, address])
+  }, [visitingTokenId, isSelf])
+
+  // 本地镜像没有 DID 时,回退到链上数据(Sepolia)——仅自己的主页需要
+  useEffect(() => {
+    if (isSelf && !did && connected && isSepolia && address) refresh(address as `0x${string}`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSelf, did, connected, isSepolia, address])
 
   // 读取链上人格配置(personaOf)回填 AI 控制台;contentHash 校验不一致则忽略
+  // 仅自己的主页装载(控制台只有本人可见)
   useEffect(() => {
-    if (!connected || !isSepolia || tokenId === 0) return
+    if (!isSelf || !connected || !isSepolia || tokenId === 0) return
     let cancelled = false
     const DATA_PREFIX = 'data:application/json;base64,'
     fetchPersona(tokenId)
@@ -76,10 +108,10 @@ export default function ProfilePage() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isSepolia, tokenId])
+  }, [isSelf, connected, isSepolia, tokenId])
 
   const chainDid: DIDIdentity | null =
-    !did && tokenId > 0
+    isSelf && !did && tokenId > 0
       ? {
           name: didName || '未命名 Agent',
           bio: '',
@@ -90,9 +122,24 @@ export default function ProfilePage() {
           equipped: chainEquipped,
         }
       : null
-  const view = did ?? chainDid
+  const view = isSelf ? (did ?? chainDid) : other
 
   if (!view) {
+    if (!isSelf) {
+      return (
+        <div className="mx-auto max-w-md px-4 py-24 text-center">
+          <div className="text-5xl mb-4">🪪</div>
+          {otherLoading ? (
+            <p className="text-slate-300 mb-6 animate-pulse">链上 Agent 读取中…</p>
+          ) : (
+            <>
+              <p className="text-slate-300 mb-6">{otherError ?? '链上 Agent 读取中…'}</p>
+              {otherError && <Link to="/chat" className="btn-ghost inline-block">返回消息</Link>}
+            </>
+          )}
+        </div>
+      )
+    }
     if (connected && isSepolia && chainLoading) {
       return (
         <div className="mx-auto max-w-md px-4 py-24 text-center">
@@ -119,13 +166,18 @@ export default function ProfilePage() {
       const display = getCharacterDisplay(i!.category, i!.id)
       return display ? { ...i!, name: display.name } : i!
     })
-  const selfId = 'me'
-  const followed = following.includes(selfId)
-  const favored = favorites.includes(selfId)
+  const targetId = isSelf ? 'me' : `agent-${visitingTokenId}`
+  const followed = following.includes(targetId)
+  const favored = favorites.includes(targetId)
+  const equippedCount = Object.values(view.equipped).filter(Boolean).length
 
   const chat = (mode: 'human' | 'ai') => {
-    // "和 Agent 聊" 标记为 selfAgent 会话:聊天页改走真实 agent/ 服务而非 mock
-    ensureChatWith(view.name, view.address.slice(0, 6) + '...' + view.address.slice(-4), '🧑‍🎤', mode, form.template + '型 AI', { selfAgent: mode === 'ai' })
+    // "和 Agent 聊" 标记会话走真实 agent/ 服务:自己的用 selfAgent,他人的带 agentTokenId
+    const chatTokenId = isSelf ? (tokenId > 0 ? tokenId : undefined) : (visitingTokenId ?? undefined)
+    ensureChatWith(view.name, view.address.slice(0, 6) + '...' + view.address.slice(-4), '🧑‍🎤', mode, form.template + '型 AI', {
+      selfAgent: isSelf && mode === 'ai',
+      agentTokenId: chatTokenId,
+    })
     nav('/chat')
   }
 
@@ -155,7 +207,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 grid lg:grid-cols-[1fr_380px] gap-6">
+    <div className={`mx-auto max-w-7xl px-4 py-6 grid gap-6 ${isSelf ? 'lg:grid-cols-[1fr_380px]' : ''}`}>
       {/* 左栏:Agent 身份展示区(公开可见) */}
       <div className="space-y-6">
         {/* 顶部信息卡 */}
@@ -177,7 +229,7 @@ export default function ProfilePage() {
             {[
               { label: 'Agent 活跃度', value: '92%' },
               { label: '社交互动数', value: '1,284' },
-              { label: '持有 NFT 装备', value: String(inventory.length) },
+              { label: '持有 NFT 装备', value: String(isSelf ? inventory.length : equippedCount) },
             ].map((s) => (
               <div key={s.label} className="glass !rounded-xl p-3 text-center">
                 <div className="text-xl font-bold bg-neon-grad bg-clip-text text-transparent">{s.value}</div>
@@ -193,24 +245,31 @@ export default function ProfilePage() {
             <PaperDoll equipped={view.equipped} size="lg" />
           </div>
           <p className="text-xs text-slate-500 mt-3">点击纸娃娃查看链上藏品元数据</p>
-          {/* 公开社交按钮 */}
+          {/* 社交按钮:本人主页只保留"和 Agent 聊",其余是给访客用的 */}
           <div className="flex flex-wrap gap-2 mt-4 justify-center">
-            <button className="btn-primary !text-sm" onClick={() => chat('human')}>💬 和本人真人聊</button>
+            {!isSelf && (
+              <button className="btn-primary !text-sm" onClick={() => chat('human')}>💬 和本人真人聊</button>
+            )}
             <button className="btn-primary !text-sm" onClick={() => chat('ai')}>🤖 和 Agent 聊</button>
-            <button className="btn-ghost !text-sm" onClick={() => { toggleFavorite(selfId); showToast(favored ? '已取消收藏' : '已收藏该 Agent') }}>
-              {favored ? '★ 已收藏' : '☆ 收藏'}
-            </button>
-            <button className="btn-ghost !text-sm" onClick={() => showToast(`全部装备:${equippedItems.map((i) => i!.name).join('、') || '无'}`)}>
-              🎒 查看装备
-            </button>
-            <button className="btn-ghost !text-sm" onClick={() => { toggleFollow(selfId); showToast(followed ? '已取消关注' : '已关注该 Agent') }}>
-              {followed ? '✓ 已关注' : '+ 关注'}
-            </button>
+            {!isSelf && (
+              <>
+                <button className="btn-ghost !text-sm" onClick={() => { toggleFavorite(targetId); showToast(favored ? '已取消收藏' : '已收藏该 Agent') }}>
+                  {favored ? '★ 已收藏' : '☆ 收藏'}
+                </button>
+                <button className="btn-ghost !text-sm" onClick={() => showToast(`全部装备:${equippedItems.map((i) => i!.name).join('、') || '无'}`)}>
+                  🎒 查看装备
+                </button>
+                <button className="btn-ghost !text-sm" onClick={() => { toggleFollow(targetId); showToast(followed ? '已取消关注' : '已关注该 Agent') }}>
+                  {followed ? '✓ 已关注' : '+ 关注'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
 
       {/* 右栏:私有 Agent 配置面板(仅本人可见) */}
+      {isSelf && (
       <div className="space-y-4">
         <div className="glass neon-border p-5">
           <div className="flex items-center justify-between mb-1">
@@ -290,6 +349,7 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+      )}
 
       {/* 元数据放大弹窗 */}
       {zoomMeta && (
