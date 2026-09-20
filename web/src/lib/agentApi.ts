@@ -75,3 +75,42 @@ export const installSkill = (tokenId: number, skillId: string) =>
 
 export const uninstallSkill = (tokenId: number, skillId: string) =>
   apiCall<{ ok: boolean }>(`/agents/${tokenId}/skills/${skillId}`, { method: 'DELETE' })
+
+// ============================================================
+// 我的 Agent 助手:多对话管理(豆包式,历史存后端)
+// ============================================================
+
+export interface Conversation {
+  id: string
+  token_id: number
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ConversationMessage {
+  id: string
+  conversation_id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+}
+
+export const listConversations = (tokenId: number) =>
+  apiCall<{ conversations: Conversation[] }>(`/agents/${tokenId}/conversations`).then((r) => r.conversations)
+
+export const createConversation = (tokenId: number) =>
+  apiCall<{ conversation: Conversation }>(`/agents/${tokenId}/conversations`, { method: 'POST' }).then((r) => r.conversation)
+
+export const deleteConversation = (conversationId: string) =>
+  apiCall<{ ok: boolean }>(`/conversations/${conversationId}`, { method: 'DELETE' })
+
+export const listMessages = (conversationId: string) =>
+  apiCall<{ messages: ConversationMessage[] }>(`/conversations/${conversationId}/messages`).then((r) => r.messages)
+
+export const chatInConversation = (conversationId: string, message: string) =>
+  apiCall<{ reply: string; refused: boolean }>(`/conversations/${conversationId}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  })

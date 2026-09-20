@@ -273,10 +273,13 @@ export default function ProfilePage() {
   const equippedCount = Object.values(view.equipped).filter(Boolean).length
 
   const chat = (mode: 'human' | 'ai') => {
-    // "和 Agent 聊" 标记会话走真实 agent/ 服务:自己的用 selfAgent,他人的带 agentTokenId
+    // 自己的 Agent → 专属助手页(豆包式多对话);别人的 Agent → 消息页社交会话
+    if (isSelf && mode === 'ai') {
+      nav('/assistant')
+      return
+    }
     const chatTokenId = isSelf ? (tokenId > 0 ? tokenId : undefined) : (visitingTokenId ?? undefined)
     ensureChatWith(view.name, view.address.slice(0, 6) + '...' + view.address.slice(-4), '🧑‍🎤', mode, form.template + '型 AI', {
-      selfAgent: isSelf && mode === 'ai',
       agentTokenId: chatTokenId,
     })
     nav('/chat')

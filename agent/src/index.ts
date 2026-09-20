@@ -6,6 +6,14 @@ import { config } from './config'
 import { PersonaError, loadPersona, resolveTokenId } from './chain/persona'
 import { chatWithAgent, invalidateAgent, reloadAgent } from './core/agent'
 import { clearMemories, distill, getMemoryCounts, listMemories } from './core/memory'
+import {
+  chatInConversation,
+  createConversation,
+  deleteConversation,
+  getConversationById,
+  listConversations,
+  listMessages,
+} from './core/conversation'
 import { initSchema, closeDb, listChains, seedChains } from './db'
 import { ALL_CHAINS } from './config'
 import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill } from './skills'
@@ -197,6 +205,75 @@ app.delete('/agents/:tokenId/skills/:skillId', async (c) => {
     if (!removed) return c.json({ error: `Agent ${tokenId} 未安装技能 ${skillId}` }, 404)
     invalidateAgent(tokenId)
     return c.json({ ok: true, skillId })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// ============================================================
+// 多对话管理(我的 Agent 助手页;社交场景的 /agents/:tokenId/chat 保留不动)
+// ============================================================
+
+// 会话列表(按最近活跃倒序)
+app.get('/agents/:tokenId/conversations', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const conversations = await listConversations(tokenId)
+    return c.json({ conversations })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 新建会话
+app.post('/agents/:tokenId/conversations', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const conversation = await createConversation(tokenId)
+    return c.json({ conversation })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 删除会话(消息级联删除)
+app.delete('/conversations/:id', async (c) => {
+  const id = c.req.param('id')
+  try {
+    const removed = await deleteConversation(id)
+    if (!removed) return c.json({ error: '会话不存在' }, 404)
+    return c.json({ ok: true })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 会话消息(按时间正序)
+app.get('/conversations/:id/messages', async (c) => {
+  const id = c.req.param('id')
+  try {
+    const messages = await listMessages(id)
+    if (messages === null) return c.json({ error: '会话不存在' }, 404)
+    return c.json({ messages })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 在会话里对话(tokenId 从会话记录解析)
+app.post('/conversations/:id/chat', async (c) => {
+  const id = c.req.param('id')
+  const body = await c.req.json<{ message?: string }>().catch(() => null)
+  const message = body?.message?.trim()
+  if (!message) return c.json({ error: 'message 不能为空' }, 400)
+  try {
+    const conv = await getConversationById(id)
+    if (!conv) return c.json({ error: '会话不存在' }, 404)
+    const result = await chatInConversation(conv.tokenId, id, message)
+    if (result === null) return c.json({ error: '会话不存在' }, 404)
+    return c.json({ reply: result.reply, refused: result.refused })
   } catch (err) {
     return handleErr(c, err)
   }

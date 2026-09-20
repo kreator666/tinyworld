@@ -3,14 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import ChatBubble from '../components/ChatBubble'
-import { chatWithAgent, chatWithMyAgent } from '../lib/agentApi'
+import { chatWithAgent } from '../lib/agentApi'
 import { fetchMintedAgents } from '../lib/chain'
 import { useChainConfig } from '../store/chainConfigStore'
 
-// 页面 5:消息聊天界面(会话列表来自链上已铸造的 Agent)
+// 页面 5:消息聊天界面 —— 纯社交,只列别人的链上 Agent;自己的 Agent 在 /assistant 助手页
 export default function ChatPage() {
   const activeChain = useChainConfig((s) => s.active)
-  const { connected, login, chats, activeChatId, setActiveChat, switchChatMode, sendMessage, appendPeerMessage, upsertChainSession, inventory, aiProfile, showToast, address } = useAppStore()
+  const { connected, login, chats, activeChatId, setActiveChat, switchChatMode, sendMessage, appendPeerMessage, upsertChainSession, inventory, aiProfile, showToast } = useAppStore()
   const myTokenId = useChainStore((s) => s.tokenId)
   const [draft, setDraft] = useState('')
   const [showNFT, setShowNFT] = useState(false)
@@ -23,12 +23,12 @@ export default function ChatPage() {
   const isSepolia = login?.chainId === activeChain.chainId
   const active = chats.find((c) => c.id === activeChatId) ?? chats[0]
 
-  // 会话列表从链上读取:已铸造的 Agent 全部列出,自己的标记 selfAgent
+  // 会话列表从链上读取:只列别人的 Agent(自己的 Agent 有专属助手页,不进社交列表)
   useEffect(() => {
     if (!connected || !isSepolia) return
     setLoadingAgents(true)
     fetchMintedAgents()
-      .then((list) => list.forEach((a) => upsertChainSession(a, a.tokenId === myTokenId)))
+      .then((list) => list.filter((a) => a.tokenId !== myTokenId).forEach((a) => upsertChainSession(a, false)))
       .catch((e) => console.warn('读取链上 Agent 列表失败:', e))
       .finally(() => setLoadingAgents(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -42,20 +42,14 @@ export default function ChatPage() {
     if (!draft.trim() || !active) return
     const text = draft.trim()
     const sessionId = active.id
-    // 链上 Agent 会话:跳过 mock,改调 agent/ 服务真实对话(装载对方链上人格)
-    const toChainAgent = active.mode === 'ai' && (active.agentTokenId != null || active.selfAgent)
+    // 对方 Agent 会话:回复由对方的链上人格决定(agent/ 服务装载对方人格)
+    const toChainAgent = active.mode === 'ai' && active.agentTokenId != null
     sendMessage(sessionId, text)
     setDraft('')
     if (!toChainAgent) return
 
     setTypingChatId(sessionId)
-    const call =
-      active.agentTokenId != null
-        ? chatWithAgent(active.agentTokenId, text)
-        : address
-          ? chatWithMyAgent(address, text)
-          : Promise.reject(new Error('请先连接钱包,我才能找到你在链上的 Agent。'))
-    call
+    chatWithAgent(active.agentTokenId!, text)
       .then((r) => appendPeerMessage(sessionId, r.reply))
       .catch((err) => {
         // 网络层失败(服务没起)与业务错误(未铸造/LLM 异常)分开提示

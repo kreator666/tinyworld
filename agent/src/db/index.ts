@@ -12,7 +12,8 @@ import { EMBEDDING_DIM } from '../core/embedding'
 // ============================================================
 
 // PGlite 的 NodeFS 在 Windows 下不认反斜杠路径(会把路径拼接错),统一转正斜杠
-const DATA_DIR = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '../../data').replaceAll('\\', '/')
+// AGENT_DATA_DIR 可覆盖数据目录(多实例并行验证时用,默认 agent/data)
+const DATA_DIR = (process.env.AGENT_DATA_DIR || path.resolve(fileURLToPath(new URL('.', import.meta.url)), '../../data')).replaceAll('\\', '/')
 
 let dbPromise: Promise<PGlite> | null = null
 
@@ -102,6 +103,25 @@ export async function initSchema(): Promise<void> {
       explorer TEXT NOT NULL,
       enabled BOOLEAN NOT NULL DEFAULT true
     );
+
+    -- 多对话管理(我的 Agent 助手页):对话历史按会话隔离,事实记忆跨会话共享
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY,
+      token_id INTEGER NOT NULL,
+      title TEXT NOT NULL DEFAULT '新对话',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS conversations_token_idx ON conversations (token_id, updated_at);
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS messages_conv_idx ON messages (conversation_id, created_at);
   `)
 }
 

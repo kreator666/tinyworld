@@ -80,9 +80,12 @@ export async function reloadAgent(tokenId: number): Promise<LoadedPersona> {
   return loadPersona(tokenId, true)
 }
 
-/** 与自己的 Agent 对话:人格开关拦截优先于 LLM 调用;记忆开关控制读写长期记忆 */
-export async function chatWithAgent(tokenId: number, message: string): Promise<ChatResult> {
-  const persona = await loadPersona(tokenId)
+/** 单轮对话主流程(全局会话与多会话共用):人格开关 → 记忆注入 → generate → 情景记忆 */
+export async function runAgentTurn(
+  persona: LoadedPersona,
+  history: ChatMessage[],
+  message: string,
+): Promise<ChatResult> {
   const { profile } = persona
 
   // 人格开关硬约束(见设计文档 §6.3)
@@ -93,26 +96,32 @@ export async function chatWithAgent(tokenId: number, message: string): Promise<C
     return { refused: true, reply: '主人关闭了自动回复,我暂时不能代为聊天,等主人本人来回复你吧。' }
   }
 
-  const history = histories.get(tokenId) ?? []
-  history.push({ role: 'user', content: message })
-
   // 记忆检索:语义 topK + 最近情景,作为额外 system 消息拼在会话历史前(memory=false 时不读)
-  let messages: ChatMessage[] = history
+  let messages: ChatMessage[] = [...history, { role: 'user', content: message }]
   if (profile.memory !== false) {
-    const memoryContext = await retrieveContext(tokenId, message)
-    if (memoryContext) messages = [{ role: 'system', content: memoryContext }, ...history]
+    const memoryContext = await retrieveContext(persona.tokenId, message)
+    if (memoryContext) messages = [{ role: 'system', content: memoryContext }, ...messages]
   }
 
   const res = await (await agentFor(persona)).generate(messages)
   const reply = res.text?.trim() || '(一时语塞)'
-  history.push({ role: 'assistant', content: reply })
-
-  // 只保留最近 N 轮,防止上下文无限膨胀
-  histories.set(tokenId, history.slice(-HISTORY_LIMIT * 2))
 
   // 每轮结束落一条情景记忆,并按阈值触发后台蒸馏(memory=false 时不写)
   if (profile.memory !== false) {
-    await writeEpisodic(tokenId, message, reply)
+    await writeEpisodic(persona.tokenId, message, reply)
   }
   return { refused: false, reply }
+}
+
+/** 与自己的 Agent 对话(全局会话,社交场景用);历史存内存 Map,重启即清空 */
+export async function chatWithAgent(tokenId: number, message: string): Promise<ChatResult> {
+  const persona = await loadPersona(tokenId)
+  const history = histories.get(tokenId) ?? []
+  const result = await runAgentTurn(persona, history, message)
+  if (result.refused) return result // 被拦截的轮次不进历史
+
+  history.push({ role: 'user', content: message }, { role: 'assistant', content: result.reply })
+  // 只保留最近 N 轮,防止上下文无限膨胀
+  histories.set(tokenId, history.slice(-HISTORY_LIMIT * 2))
+  return result
 }

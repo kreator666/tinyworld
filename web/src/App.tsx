@@ -13,6 +13,7 @@ import ChatPage from './pages/ChatPage'
 import BackpackPage from './pages/BackpackPage'
 import GamePage from './pages/GamePage'
 import AdminPage from './pages/AdminPage'
+import MyAgentPage from './pages/MyAgentPage'
 
 // 未连接钱包守卫:其余页面一律跳回首页
 function Guard({ children }: { children: ReactNode }) {
@@ -78,6 +79,7 @@ export default function App() {
             <Route path="/mint" element={<Guard><MintWorkshop /></Guard>} />
             <Route path="/profile" element={<Guard><ProfilePage /></Guard>} />
             <Route path="/profile/:tokenId" element={<Guard><ProfilePage /></Guard>} />
+            <Route path="/assistant" element={<Guard><MyAgentPage /></Guard>} />
             <Route path="/plaza" element={<Guard><PlazaPage /></Guard>} />
             <Route path="/chat" element={<Guard><ChatPage /></Guard>} />
             <Route path="/backpack" element={<Guard><BackpackPage /></Guard>} />
