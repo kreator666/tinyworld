@@ -9,11 +9,13 @@ import {
   type EIP6963ProviderDetail,
   WalletError,
 } from '../lib/wallet'
-import { ensureSepolia } from '../lib/chain'
+import { ensureTargetChain } from '../lib/chain'
+import { useChainConfig } from '../store/chainConfigStore'
 import { useChainStore } from '../store/chainStore'
 
 // 钱包选择弹窗: 通过 EIP-6963 发现钱包并调起 EIP-712 签名登录
 export default function WalletModal({ onClose }: { onClose: () => void }) {
+  const active = useChainConfig((s) => s.active)
   const connect = useAppStore((s) => s.connect)
   const showToast = useAppStore((s) => s.showToast)
   const refresh = useChainStore((s) => s.refresh)
@@ -60,19 +62,19 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
       })
       onClose()
 
-      // 强制切到 Sepolia 后刷新链上资产
+      // 强制切到目标链后刷新链上资产
       try {
-        await ensureSepolia()
-        showToast(`${wallet.name} 已连接并切换到 Sepolia,正在读取链上资产…`)
+        await ensureTargetChain()
+        showToast(`${wallet.name} 已连接并切换到 ${active.name},正在读取链上资产…`)
         await refresh(result.address as `0x${string}`)
       } catch (err) {
-        showToast('已连接钱包,但未能切换到 Sepolia 或读取链上资产,请手动切网络后再试')
+        showToast(`已连接钱包,但未能切换到 ${active.name} 或读取链上资产,请手动切网络后再试`)
       }
       nav('/profile')
     } catch (err) {
       // 切链失败不算致命:已登录,但链上功能不可用
       if (err instanceof Error && err.message.includes('wallet_switch')) {
-        showToast('请手动切换到 Sepolia 网络以使用链上资产功能')
+        showToast(`请手动切换到 ${active.name} 网络以使用链上资产功能`)
         onClose()
         return
       }

@@ -34,3 +34,44 @@ export async function chatWithAgent(tokenId: number, message: string): Promise<A
   if (!data?.reply) throw new Error('Agent 服务返回格式异常')
   return data as AgentChatResult
 }
+
+// ============================================================
+// M2:Agent 状态 / 技能管理(控制台"Agent 状态"面板用)
+// ============================================================
+
+export interface AgentStatus {
+  tokenId: number
+  name: string
+  personaFromChain: boolean
+  episodicCount: number
+  semanticCount: number
+  skills: { id: string; name: string; version: string }[]
+}
+
+export interface SkillInfo {
+  id: string
+  name: string
+  version: string
+  description?: string
+}
+
+async function apiCall<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${AGENT_API}${path}`, init)
+  const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null
+  if (!res.ok) throw new Error(data?.error ?? `Agent 服务错误(${res.status})`)
+  return data as T
+}
+
+export const getAgentStatus = (tokenId: number) => apiCall<AgentStatus>(`/agents/${tokenId}/status`)
+
+export const listSkills = async () => (await apiCall<{ skills: SkillInfo[] }>('/skills')).skills
+
+export const installSkill = (tokenId: number, skillId: string) =>
+  apiCall<{ ok: boolean; note?: string }>(`/agents/${tokenId}/skills`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skillId }),
+  })
+
+export const uninstallSkill = (tokenId: number, skillId: string) =>
+  apiCall<{ ok: boolean }>(`/agents/${tokenId}/skills/${skillId}`, { method: 'DELETE' })

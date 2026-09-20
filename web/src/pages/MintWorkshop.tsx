@@ -7,7 +7,8 @@ import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import PaperDoll from '../components/PaperDoll'
 import NFTCard from '../components/NFTCard'
-import { explorerTx, TARGET_CHAIN_ID, partByLocalId } from '../lib/contracts'
+import { partByLocalId } from '../lib/contracts'
+import { explorerTx, useChainConfig } from '../store/chainConfigStore'
 import { checkNameAvailable } from '../lib/chain'
 
 const tabs: { key: NFTCategory; label: string; desc: string }[] = [
@@ -19,7 +20,7 @@ const tabs: { key: NFTCategory; label: string; desc: string }[] = [
 
 const SLOT_MAP: Record<NFTCategory, number> = { head: 0, body: 1, accessory: 2, pet: 3 }
 
-const takenNames = ['satoshi', 'vitalik', 'aiko_02', 'neonhunter'] // 未连接 Sepolia 时的本地演示兜底
+const takenNames = ['satoshi', 'vitalik', 'aiko_02', 'neonhunter'] // 未连接目标链时的本地演示兜底
 
 type MintPhase = 'idle' | 'signing' | 'confirming' | 'done' | 'error'
 
@@ -50,6 +51,7 @@ function buildCharacterItems(): NFTItem[] {
 
 // 铸造工坊:v4 角色 head/body + 装备 accessory/pet,链上交互与合约逻辑保持不变
 export default function MintWorkshop() {
+  const active = useChainConfig((s) => s.active)
   const nav = useNavigate()
   const { connected, address, login, mintDID, showToast } = useAppStore()
   const { tokenId, didName, equipped: chainEquipped, parts, refresh, mint, isAdmin } = useChainStore()
@@ -68,7 +70,7 @@ export default function MintWorkshop() {
   // 链上名称查重结果:null = 未校验/校验中
   const [chainNameAvailable, setChainNameAvailable] = useState<boolean | null>(null)
 
-  // 连接 Sepolia 后,名称查重走合约 nameAvailable(防抖 400ms;RPC 异常时不阻塞,由链上 mint 兜底)
+  // 连接目标链后,名称查重走合约 nameAvailable(防抖 400ms;RPC 异常时不阻塞,由链上 mint 兜底)
   useEffect(() => {
     const trimmed = name.trim()
     if (!connected || !isSepolia || trimmed.length < 2) {
@@ -91,7 +93,7 @@ export default function MintWorkshop() {
   }, [name, connected, isSepolia])
 
   useEffect(() => {
-    const sepolia = login?.chainId === TARGET_CHAIN_ID
+    const sepolia = login?.chainId === active.chainId
     setIsSepolia(sepolia)
     if (connected && sepolia && address) refresh(address as `0x${string}`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,7 +132,7 @@ export default function MintWorkshop() {
   // v4 角色 head/body 展示项
   const characterItems = useMemo(() => buildCharacterItems(), [])
 
-  // 装备 accessory/pet 目录;连接 Sepolia 后,对已在链上注册并有余额的装备覆盖 owned/count/chain 标记
+  // 装备 accessory/pet 目录;连接目标链后,对已在链上注册并有余额的装备覆盖 owned/count/chain 标记
   const equipmentItems = useMemo(() => {
     const base = nftLibrary.filter((i) => i.category === 'accessory' || i.category === 'pet')
     if (!isSepolia) return base
@@ -142,7 +144,7 @@ export default function MintWorkshop() {
         ...item,
         owned: chain ? chain.balance > 0 : item.owned,
         count: chain?.balance ?? 0,
-        chain: 'Sepolia' as ChainType,
+        chain: active.name,
       }
     })
   }, [isSepolia, parts])
@@ -158,7 +160,7 @@ export default function MintWorkshop() {
         ...item,
         owned: chain ? chain.balance > 0 : item.owned,
         count: chain?.balance ?? 0,
-        chain: 'Sepolia' as ChainType,
+        chain: active.name,
       }
     })
   }, [isSepolia, parts, characterItems])
@@ -218,7 +220,7 @@ export default function MintWorkshop() {
       <p className="text-sm text-slate-400 mb-6">
         {alreadyMinted
           ? '你已铸造 Agent 主身份,可在资产背包查看链上资产'
-          : '挑选 NFT 组件预览搭配,并在 Sepolia 测试网铸造你的 Agent 主身份'}
+          : `挑选 NFT 组件预览搭配,并在 ${active.name} 测试网铸造你的 Agent 主身份`}
       </p>
 
       {alreadyMinted && (
@@ -244,7 +246,7 @@ export default function MintWorkshop() {
           <PaperDoll equipped={equipped} size="lg" interactive />
           <div className="w-full mt-5 pt-4 border-t border-white/10 space-y-2 text-sm">
             <div className="flex justify-between text-slate-400">
-              <span>网络</span><span className="font-mono text-neon-cyan">{isSepolia ? 'Sepolia' : '未连接 Sepolia'}</span>
+              <span>网络</span><span className="font-mono text-neon-cyan">{isSepolia ? active.name : `未连接 ${active.name}`}</span>
             </div>
             <div className="flex justify-between text-slate-400">
               <span>已选组件</span><span>{selectedItems.length} 件</span>
@@ -257,7 +259,7 @@ export default function MintWorkshop() {
               {alreadyMinted ? '已铸造' : '铸造我的专属 Agent'}
             </button>
             {!connected && <p className="text-xs text-rose-400 mt-1">请先连接钱包</p>}
-            {connected && !isSepolia && <p className="text-xs text-amber-400 mt-1">请先切换到 Sepolia 网络</p>}
+            {connected && !isSepolia && <p className="text-xs text-amber-400 mt-1">请先切换到 {active.name} 网络</p>}
           </div>
         </div>
 
@@ -278,7 +280,7 @@ export default function MintWorkshop() {
           </div>
           <p className="text-xs text-slate-500 mb-4">
             {isSepolia
-              ? `${tabs.find((t) => t.key === tab)?.desc}(已连接 Sepolia: 显示链上持有状态)`
+              ? `${tabs.find((t) => t.key === tab)?.desc}(已连接 ${active.name}: 显示链上持有状态)`
               : `${tabs.find((t) => t.key === tab)?.desc}(演示目录,连接钱包后显示链上持有状态)`}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -324,7 +326,7 @@ export default function MintWorkshop() {
           <div>
             <label className="text-xs text-slate-400">选择公链</label>
             <div className="flex gap-2 mt-1">
-              <span className="flex-1 px-2 py-2 rounded-xl text-xs bg-neon-grad text-white text-center">Sepolia(ETH 测试网)</span>
+              <span className="flex-1 px-2 py-2 rounded-xl text-xs bg-neon-grad text-white text-center">{active.name}(测试网)</span>
             </div>
           </div>
           <div>
@@ -348,7 +350,7 @@ export default function MintWorkshop() {
           </div>
           <div className="border-t border-white/10 pt-3">
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              确认铸造后钱包会弹出真实交易,仅消耗 Sepolia 测试 Gas。配件需先在资产背包中持有,才能通过链上“穿戴”挂到 Agent 上。
+              确认铸造后钱包会弹出真实交易,仅消耗 ${active.name} 测试 Gas。配件需先在资产背包中持有,才能通过链上“穿戴”挂到 Agent 上。
             </p>
           </div>
           <button

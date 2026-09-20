@@ -5,6 +5,8 @@ require("dotenv").config();
 const PRIVATE_KEY = process.env.PRIVATE_KEY || "";
 const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL || "";
 const POLYGON_AMOY_RPC_URL = process.env.POLYGON_AMOY_RPC_URL || "";
+const FUJI_RPC_URL = process.env.FUJI_RPC_URL || "https://api.avax-test.network/ext/bc/C/rpc";
+const AVAX_RPC_URL = process.env.AVAX_RPC_URL || "https://api.avax.network/ext/bc/C/rpc";
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
 
 /** @type {import('hardhat/config').HardhatUserConfig} */
@@ -32,6 +34,13 @@ module.exports = {
       : {}),
     ...(POLYGON_AMOY_RPC_URL && PRIVATE_KEY
       ? { polygonAmoy: { url: POLYGON_AMOY_RPC_URL, accounts: [PRIVATE_KEY] } }
+      : {}),
+    // Avalanche C-Chain: Fuji 测试网(43113) / 主网(43114)
+    ...(PRIVATE_KEY
+      ? {
+          avalancheFuji: { url: FUJI_RPC_URL, accounts: [PRIVATE_KEY], chainId: 43113 },
+          avalanche: { url: AVAX_RPC_URL, accounts: [PRIVATE_KEY], chainId: 43114 },
+        }
       : {}),
   },
   etherscan: {

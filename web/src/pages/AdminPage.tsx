@@ -10,8 +10,7 @@ import {
   getPartsByRarity,
   getRarityMintAmount,
 } from '../data/equipmentCatalog'
-import { TARGET_CHAIN_ID } from '../lib/contracts'
-import { explorerTx } from '../lib/contracts'
+import { explorerTx, useChainConfig } from '../store/chainConfigStore'
 import { rarityDot, rarityStyle } from '../components/NFTCard'
 
 const TABS: { key: NFTCategory; label: string }[] = [
@@ -28,6 +27,7 @@ function isAddress(v: string): v is `0x${string}` {
 }
 
 export default function AdminPage() {
+  const active = useChainConfig((s) => s.active)
   const { connected, address, login } = useAppStore()
   const { isAdmin, adminLoading, partStates, checkAdmin, refreshPartStates, registerParts, mintParts, error } = useChainStore()
   const showToast = useAppStore((s) => s.showToast)
@@ -45,7 +45,7 @@ export default function AdminPage() {
   const [mintProgress, setMintProgress] = useState<{ current: number; total: number; rarity: Rarity } | null>(null)
   const [lastTx, setLastTx] = useState<Hash | null>(null)
 
-  const isSepolia = login?.chainId === TARGET_CHAIN_ID
+  const isSepolia = login?.chainId === active.chainId
 
   useEffect(() => {
     if (!connected || !isSepolia || !address) return
@@ -160,7 +160,7 @@ export default function AdminPage() {
     return (
       <div className="mx-auto max-w-7xl px-4 py-10">
         <div className="glass p-10 text-center text-amber-400 max-w-md mx-auto">
-          管理员页面需切换到 Sepolia 测试网
+          管理员页面需切换到 {active.name} 网络
         </div>
       </div>
     )
@@ -194,7 +194,7 @@ export default function AdminPage() {
         <div>
           <h2 className="text-2xl font-bold">装备发行后台</h2>
           <p className="text-sm text-slate-400 mt-1">
-            在 Sepolia 上注册并铸造 ERC-1155 配件；当前地址：
+            在 {active.name} 上注册并铸造 ERC-1155 配件；当前地址：
             <span className="font-mono text-neon-cyan">{address?.slice(0, 6)}…{address?.slice(-4)}</span>
           </p>
         </div>

@@ -2,11 +2,14 @@ import { Agent } from '@mastra/core/agent'
 import { createOpenAI } from '@ai-sdk/openai'
 import { config } from '../config'
 import { loadPersona, type LoadedPersona } from '../chain/persona'
+import { retrieveContext, writeEpisodic } from './memory'
+import { getToolsFor } from '../skills'
 import type { AIProfile } from '../types'
 
 // ============================================================
-// Agent 核心:Mastra Agent + 人格化 system prompt + 内存会话历史
-// M1 不持久化记忆,会话历史存内存 Map,进程重启即清空
+// Agent 核心:Mastra Agent + 人格化 system prompt + 长期记忆注入 + 动态技能工具
+// 工作记忆(会话历史)存内存 Map,进程重启即清空;生产可换 Redis(设计文档 §4)
+// 情景/语义记忆见 core/memory.ts,持久化在 PGlite
 // ============================================================
 
 const openai = createOpenAI({
@@ -14,8 +17,11 @@ const openai = createOpenAI({
   apiKey: config.llmApiKey,
 })
 
-// 单字面量联合类型,兼容 Mastra generate 的 CoreMessage 入参
-export type ChatMessage = { role: 'user'; content: string } | { role: 'assistant'; content: string }
+// 单字面量联合类型,兼容 Mastra generate 的 CoreMessage 入参;system 仅用于注入记忆上下文
+export type ChatMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string }
 
 export interface ChatResult {
   reply: string
@@ -36,33 +42,45 @@ function buildInstructions(profile: AIProfile, name: string): string {
     `偏好话题:${topics}(聊这些话题时更投入)`,
     profile.blacklist ? `绝对不要谈论以下话题:${profile.blacklist}。对方提起时礼貌地把话题岔开。` : '',
     `回复要符合语气风格,简短自然,像真人发消息,不要使用 markdown 格式。`,
+    `如果需要使用工具,先调用工具拿到结果,再用口语化的方式转述,不要照抄 JSON。`,
+    `有工具能完成的任务(起草文案、查询等),必须调用对应工具完成,不要自己代劳。`,
+    `涉及价格、行情等实时信息时,必须调用工具查询,以工具结果为准;不要凭记忆里的旧数字回答。`,
+    `被问到实时信息(价格、行情、链上数据等)而没有对应工具可用时,坦白说自己现在查不了,不要编造数字。`,
   ]
   return lines.filter(Boolean).join('\n')
 }
 
-// 会话历史与 Agent 实例都按 tokenId 缓存;reload 人格时 Agent 实例一并失效
+// 会话历史与 Agent 实例都按 tokenId 缓存;reload 人格、安装/卸载技能时 Agent 实例一并失效
 const histories = new Map<number, ChatMessage[]>()
 const agents = new Map<number, Agent>()
 
-function agentFor(persona: LoadedPersona): Agent {
+/** 装配该 tokenId 的 Agent 实例:人格指令 + 已安装技能的工具集 */
+async function agentFor(persona: LoadedPersona): Promise<Agent> {
   const cached = agents.get(persona.tokenId)
   if (cached) return cached
+  const tools = await getToolsFor(persona.tokenId)
   const agent = new Agent({
     name: `agent-${persona.tokenId}`,
     instructions: buildInstructions(persona.profile, persona.name),
     model: openai(config.llmModel),
+    tools,
   })
   agents.set(persona.tokenId, agent)
   return agent
 }
 
+/** 使缓存的 Agent 实例失效(技能装卸后下次对话会带上新工具集重建) */
+export function invalidateAgent(tokenId: number): void {
+  agents.delete(tokenId)
+}
+
 /** 强制重载人格并丢弃旧 Agent 实例(保留会话历史) */
 export async function reloadAgent(tokenId: number): Promise<LoadedPersona> {
-  agents.delete(tokenId)
+  invalidateAgent(tokenId)
   return loadPersona(tokenId, true)
 }
 
-/** 与自己的 Agent 对话:人格开关拦截优先于 LLM 调用 */
+/** 与自己的 Agent 对话:人格开关拦截优先于 LLM 调用;记忆开关控制读写长期记忆 */
 export async function chatWithAgent(tokenId: number, message: string): Promise<ChatResult> {
   const persona = await loadPersona(tokenId)
   const { profile } = persona
@@ -78,11 +96,23 @@ export async function chatWithAgent(tokenId: number, message: string): Promise<C
   const history = histories.get(tokenId) ?? []
   history.push({ role: 'user', content: message })
 
-  const res = await agentFor(persona).generate(history)
+  // 记忆检索:语义 topK + 最近情景,作为额外 system 消息拼在会话历史前(memory=false 时不读)
+  let messages: ChatMessage[] = history
+  if (profile.memory !== false) {
+    const memoryContext = await retrieveContext(tokenId, message)
+    if (memoryContext) messages = [{ role: 'system', content: memoryContext }, ...history]
+  }
+
+  const res = await (await agentFor(persona)).generate(messages)
   const reply = res.text?.trim() || '(一时语塞)'
   history.push({ role: 'assistant', content: reply })
 
   // 只保留最近 N 轮,防止上下文无限膨胀
   histories.set(tokenId, history.slice(-HISTORY_LIMIT * 2))
+
+  // 每轮结束落一条情景记忆,并按阈值触发后台蒸馏(memory=false 时不写)
+  if (profile.memory !== false) {
+    await writeEpisodic(tokenId, message, reply)
+  }
   return { refused: false, reply }
 }

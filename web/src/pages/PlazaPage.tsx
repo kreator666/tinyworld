@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import DIDCard, { type PlazaAgent } from '../components/DIDCard'
-import { fetchAgentPublic, fetchMintedAgents, TARGET_CHAIN_ID } from '../lib/chain'
+import { fetchAgentPublic, fetchMintedAgents } from '../lib/chain'
+import { useChainConfig } from '../store/chainConfigStore'
 import { getPartByLocalId } from '../data/equipmentCatalog'
 import type { Rarity } from '../types'
 import { rarityDot } from '../components/NFTCard'
@@ -17,13 +18,14 @@ const rareOrder: Record<Rarity, number> = { 传说: 0, 史诗: 1, 稀有: 2, 普
 
 // 页面 4:社交广场(用户列表全部来自链上已铸造的 Agent)
 export default function PlazaPage() {
+  const active = useChainConfig((s) => s.active)
   const [filter, setFilter] = useState<(typeof filters)[number]['key']>('latest')
   const [agents, setAgents] = useState<PlazaAgent[]>([])
   const [loading, setLoading] = useState(false)
   const nav = useNavigate()
   const { connected, login, following, toggleFollow, showToast } = useAppStore()
 
-  const isSepolia = login?.chainId === TARGET_CHAIN_ID
+  const isSepolia = login?.chainId === active.chainId
 
   useEffect(() => {
     if (!connected || !isSepolia) return
@@ -70,7 +72,7 @@ export default function PlazaPage() {
 
       {!connected || !isSepolia ? (
         <div className="glass p-10 text-center text-slate-500 max-w-md">
-          {connected ? '⚠️ 请切换到 Sepolia 网络以查看链上 Agent' : '请先连接钱包以查看链上 Agent'}
+          {connected ? `⚠️ 请切换到 ${active.name} 网络以查看链上 Agent` : '请先连接钱包以查看链上 Agent'}
         </div>
       ) : (
         <>

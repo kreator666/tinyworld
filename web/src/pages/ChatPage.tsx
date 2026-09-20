@@ -4,10 +4,12 @@ import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import ChatBubble from '../components/ChatBubble'
 import { chatWithAgent, chatWithMyAgent } from '../lib/agentApi'
-import { fetchMintedAgents, TARGET_CHAIN_ID } from '../lib/chain'
+import { fetchMintedAgents } from '../lib/chain'
+import { useChainConfig } from '../store/chainConfigStore'
 
 // 页面 5:消息聊天界面(会话列表来自链上已铸造的 Agent)
 export default function ChatPage() {
+  const activeChain = useChainConfig((s) => s.active)
   const { connected, login, chats, activeChatId, setActiveChat, switchChatMode, sendMessage, appendPeerMessage, upsertChainSession, inventory, aiProfile, showToast, address } = useAppStore()
   const myTokenId = useChainStore((s) => s.tokenId)
   const [draft, setDraft] = useState('')
@@ -18,7 +20,7 @@ export default function ChatPage() {
   const listRef = useRef<HTMLDivElement>(null)
   const nav = useNavigate()
 
-  const isSepolia = login?.chainId === TARGET_CHAIN_ID
+  const isSepolia = login?.chainId === activeChain.chainId
   const active = chats.find((c) => c.id === activeChatId) ?? chats[0]
 
   // 会话列表从链上读取:已铸造的 Agent 全部列出,自己的标记 selfAgent
@@ -88,7 +90,7 @@ export default function ChatPage() {
           <h3 className="text-sm font-semibold text-slate-300 px-2 py-2">会话列表</h3>
           {!connected || !isSepolia ? (
             <p className="text-xs text-slate-500 px-2 py-6 text-center">
-              连接钱包并切换到 Sepolia 后,会话列表将从链上读取
+              连接钱包并切换到 {activeChain.name} 后,会话列表将从链上读取
             </p>
           ) : loadingAgents && chats.length === 0 ? (
             <p className="text-xs text-slate-500 px-2 py-6 text-center animate-pulse">正在从链上读取 Agent…</p>

@@ -1,45 +1,56 @@
-import { sepolia } from 'viem/chains'
+import { sepolia, avalancheFuji, type Chain } from 'viem/chains'
 import DIDIdentityJson from '../abi/DIDIdentity.json'
 import DIDPartsJson from '../abi/DIDParts.json'
 import { toChainParts, type ChainPart } from '../data/equipmentCatalog'
+import type { ChainType } from '../types'
 
 // ============================================================
-// 合约地址按链配置:新增/更换网络时只需在 CONTRACTS_BY_CHAIN 中加一项
+// 链配置(纯数据,本地兜底副本):
+// 运行时以 agent 服务 GET /chains 返回的 chains 表为准,服务不可达时用这份兜底。
+// 当前激活链由 store/chainConfigStore.ts 管理(导航栏按钮切换)。
 // ============================================================
+
+export type ChainKey = 'sepolia' | 'fuji'
 
 export interface ChainContracts {
+  key: ChainKey
+  name: ChainType // 短链名,用于 UI 展示与 NFT 卡的链标
+  chainId: number
+  chain: Chain // viem 链定义(切链参数/原生币种都从这里取)
   identity: `0x${string}`
   parts: `0x${string}`
   rpc: string // 无钱包时的只读回退 RPC
   explorer: string // 区块浏览器地址(用于拼接 tx/address 链接)
 }
 
-export const CONTRACTS_BY_CHAIN: Record<number, ChainContracts> = {
+// 素材(角色库/装备目录)全链共用一套,与链无关;这里只放合约地址等链上信息
+export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
   // Sepolia 测试网(2026-07 部署)
-  [sepolia.id]: {
+  sepolia: {
+    key: 'sepolia',
+    name: 'Sepolia',
+    chainId: 11155111,
+    chain: sepolia,
     identity: '0x363AF72fC15af43BfEA47C1ED09128Cd994946c1',
     parts: '0xACa57ACa9F8FF68Dbf74E2baAB65f88Ec2515959',
     rpc: 'https://ethereum-sepolia-rpc.publicnode.com',
     explorer: 'https://sepolia.etherscan.io',
   },
+  // Avalanche Fuji 测试网(2026-09 部署,链ID 43113)
+  fuji: {
+    key: 'fuji',
+    name: 'Fuji',
+    chainId: 43113,
+    chain: avalancheFuji,
+    identity: '0x15dC02b5678b8454C75EeA0208C1C027b1903d9c',
+    parts: '0xdac819D6B834E26B23EE30Edc9C13eA0a4b834f2',
+    rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
+    explorer: 'https://testnet.snowtrace.io',
+  },
 }
-
-export const TARGET_CHAIN = sepolia
-export const TARGET_CHAIN_ID = sepolia.id // 11155111
-
-const ACTIVE = CONTRACTS_BY_CHAIN[TARGET_CHAIN_ID]
-
-export const IDENTITY_ADDRESS = ACTIVE.identity
-export const PARTS_ADDRESS = ACTIVE.parts
 
 export const identityAbi = DIDIdentityJson.abi
 export const partsAbi = DIDPartsJson.abi
-
-// 无钱包时的只读回退 RPC
-export const FALLBACK_RPC = ACTIVE.rpc
-
-export const explorerTx = (hash: string) => `${ACTIVE.explorer}/tx/${hash}`
-export const explorerAddress = (addr: string) => `${ACTIVE.explorer}/address/${addr}`
 
 // ============================================================
 // 链上配件注册表:链上 uint256 id ↔ 本地 SVG 部件 id

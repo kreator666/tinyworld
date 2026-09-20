@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
-import { ensureSepolia, TARGET_CHAIN_ID } from '../lib/chain'
+import { useChainConfig } from '../store/chainConfigStore'
+import { ensureTargetChain } from '../lib/chain'
 import { setActiveProvider } from '../lib/wallet'
 import WalletModal from './WalletModal'
 
@@ -14,8 +15,9 @@ const navItems = [
 ]
 
 export default function NavBar() {
-  const { connected, address, did, disconnect, login } = useAppStore()
+  const { connected, address, did, disconnect, login, showToast } = useAppStore()
   const chainStore = useChainStore()
+  const { active, chains, setActive, hydrateFromApi } = useChainConfig()
   const [switching, setSwitching] = useState(false)
   const handleDisconnect = () => {
     disconnect()
@@ -27,19 +29,43 @@ export default function NavBar() {
   const nav = useNavigate()
   const { isAdmin } = chainStore
 
-  const isSepolia = login?.chainId === TARGET_CHAIN_ID
+  const onTargetChain = login?.chainId === active.chainId
+
+  // 启动时从 agent 服务拉 chains 表(后端数据为准,本地兜底)
+  useEffect(() => {
+    hydrateFromApi()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
-    if (connected && isSepolia && address) {
+    if (connected && onTargetChain && address) {
       chainStore.checkAdmin(address as `0x${string}`)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isSepolia, address])
+  }, [connected, onTargetChain, address])
+
+  // 切链按钮:更新激活链 + 钱包跟随切换 + 重新拉链上数据(素材与链无关,只换合约)
+  const switchTo = async (key: string) => {
+    if (key === active.key) return
+    setSwitching(true)
+    setActive(key as typeof active.key)
+    chainStore.clear()
+    try {
+      if (connected) {
+        await ensureTargetChain()
+        if (address) await chainStore.refresh(address as `0x${string}`)
+      }
+      showToast(`已切换到 ${useChainConfig.getState().active.name}`)
+    } catch {
+      showToast('已切换目标链,但钱包切链失败,请手动切换')
+    }
+    setSwitching(false)
+  }
 
   const switchChain = async () => {
     setSwitching(true)
     try {
-      await ensureSepolia()
+      await ensureTargetChain()
       if (address) await chainStore.refresh(address as `0x${string}`)
       // eslint-disable-next-line no-empty
     } catch {}
@@ -92,7 +118,20 @@ export default function NavBar() {
           </nav>
 
           <div className="flex items-center gap-3">
-            <button className="text-slate-400 hover:text-white transition" title="搜索">🔍</button>
+            {/* 切链按钮:合约地址以后端 chains 表为准,前端本地数据兜底 */}
+            <select
+              className="glass !rounded-xl text-xs px-2 py-1.5 text-neon-cyan cursor-pointer bg-transparent"
+              value={active.key}
+              disabled={switching}
+              onChange={(e) => switchTo(e.target.value)}
+              title="切换目标链(素材全链一致,仅切换合约)"
+            >
+              {chains.map((c) => (
+                <option key={c.key} value={c.key} className="bg-ink">
+                  ⛓ {c.name}
+                </option>
+              ))}
+            </select>
             {connected ? (
               <div className="flex items-center gap-2">
                 <button
@@ -102,16 +141,14 @@ export default function NavBar() {
                 >
                   🟢 {address?.slice(0, 6)}...{address?.slice(-4)}
                 </button>
-                {isSepolia ? (
-                  <span className="tag border-neon-cyan/40 text-neon-cyan text-[10px]" title="已连接 Sepolia 测试网">✓ Sepolia</span>
-                ) : (
+                {!onTargetChain && (
                   <button
                     onClick={switchChain}
                     disabled={switching}
                     className="tag border-amber-400/50 text-amber-300 text-[10px] hover:border-amber-300"
-                    title="切换到 Sepolia 以使用链上功能"
+                    title={`钱包切换到 ${active.name} 以使用链上功能`}
                   >
-                    ⚠ {switching ? '切链中' : '切到 Sepolia'}
+                    ⚠ {switching ? '切链中' : `钱包切到 ${active.name}`}
                   </button>
                 )}
                 <button onClick={handleDisconnect} className="btn-ghost !px-3 !py-1.5 text-xs">断开</button>

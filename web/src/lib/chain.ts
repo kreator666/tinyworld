@@ -1,18 +1,11 @@
 import { createPublicClient, createWalletClient, custom, http, zeroAddress, type Address, type Hash } from 'viem'
 import type { Equipped } from '../types'
 import { getActiveProvider } from './wallet'
-import {
-  FALLBACK_RPC,
-  IDENTITY_ADDRESS,
-  PARTS_ADDRESS,
-  SLOT_TO_CATEGORY,
-  TARGET_CHAIN,
-  TARGET_CHAIN_ID,
-  chainParts,
-  identityAbi,
-  partByChainId,
-  partsAbi,
-} from './contracts'
+import { SLOT_TO_CATEGORY, chainParts, identityAbi, partByChainId, partsAbi } from './contracts'
+import { getActiveChain } from '../store/chainConfigStore'
+
+// 激活链配置(运行时读取,跟随导航栏切链按钮)
+const A = getActiveChain
 import { ALL_CHAIN_IDS } from '../data/equipmentCatalog'
 
 // ============================================================
@@ -59,8 +52,8 @@ export interface AdminMintConfig {
 function readClient() {
   const provider = getActiveProvider()
   return createPublicClient({
-    chain: TARGET_CHAIN,
-    transport: provider ? custom(provider) : http(FALLBACK_RPC),
+    chain: A().chain,
+    transport: provider ? custom(provider) : http(A().rpc),
     batch: { multicall: true },
   })
 }
@@ -68,19 +61,19 @@ function readClient() {
 function walletClient(account: Address) {
   const provider = getActiveProvider()
   if (!provider) throw new Error('未检测到已连接的钱包,请先连接')
-  return createWalletClient({ account, chain: TARGET_CHAIN, transport: custom(provider) })
+  return createWalletClient({ account, chain: A().chain, transport: custom(provider) })
 }
 
-/** 确保钱包切到 Sepolia(未添加过则先添加网络) */
-export async function ensureSepolia(): Promise<void> {
+/** 确保钱包切到目标链(未添加过则先添加网络;链名/币种/RPC 全部来自按链配置) */
+export async function ensureTargetChain(): Promise<void> {
   const provider = getActiveProvider()
   if (!provider) throw new Error('未检测到钱包扩展')
   const chainIdHex = (await provider.request({ method: 'eth_chainId' })) as string
-  if (Number.parseInt(chainIdHex, 16) === TARGET_CHAIN_ID) return
+  if (Number.parseInt(chainIdHex, 16) === A().chainId) return
   try {
     await provider.request({
       method: 'wallet_switchEthereumChain',
-      params: [{ chainId: `0x${TARGET_CHAIN_ID.toString(16)}` }],
+      params: [{ chainId: `0x${A().chainId.toString(16)}` }],
     })
   } catch (err) {
     const code = (err as { code?: number })?.code
@@ -89,11 +82,11 @@ export async function ensureSepolia(): Promise<void> {
         method: 'wallet_addEthereumChain',
         params: [
           {
-            chainId: `0x${TARGET_CHAIN_ID.toString(16)}`,
-            chainName: 'Sepolia',
-            nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
-            rpcUrls: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://rpc.sepolia.org'],
-            blockExplorerUrls: ['https://sepolia.etherscan.io'],
+            chainId: `0x${A().chainId.toString(16)}`,
+            chainName: A().chain.name,
+            nativeCurrency: A().chain.nativeCurrency,
+            rpcUrls: [A().rpc],
+            blockExplorerUrls: [A().explorer],
           },
         ],
       })
@@ -108,7 +101,7 @@ export async function fetchChainState(address: Address): Promise<ChainIdentitySt
   const client = readClient()
 
   const tokenId = (await client.readContract({
-    address: IDENTITY_ADDRESS,
+    address: A().identity,
     abi: identityAbi,
     functionName: 'tokenIdOf',
     args: [address],
@@ -118,8 +111,8 @@ export async function fetchChainState(address: Address): Promise<ChainIdentitySt
   const equipped: Equipped = { head: null, body: null, accessory: null, pet: null }
   if (tokenId > 0n) {
     const [name, items] = await Promise.all([
-      client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'nameOf', args: [tokenId] }) as Promise<string>,
-      client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'getEquipped', args: [tokenId] }) as Promise<
+      client.readContract({ address: A().identity, abi: identityAbi, functionName: 'nameOf', args: [tokenId] }) as Promise<string>,
+      client.readContract({ address: A().identity, abi: identityAbi, functionName: 'getEquipped', args: [tokenId] }) as Promise<
         [Address, bigint][]
       >,
     ])
@@ -139,7 +132,7 @@ export async function fetchChainState(address: Address): Promise<ChainIdentitySt
   const allIds = ALL_CHAIN_IDS.map((id) => BigInt(id))
   const accounts = allIds.map(() => address)
   const balances = (await client.readContract({
-    address: PARTS_ADDRESS,
+    address: A().parts,
     abi: partsAbi,
     functionName: 'balanceOfBatch',
     args: [accounts, allIds],
@@ -161,7 +154,7 @@ export async function fetchChainState(address: Address): Promise<ChainIdentitySt
 export async function mintIdentity(owner: Address, name: string, profileURI: string): Promise<Hash> {
   const wallet = walletClient(owner)
   const hash = await wallet.writeContract({
-    address: IDENTITY_ADDRESS,
+    address: A().identity,
     abi: identityAbi,
     functionName: 'mint',
     args: [name, profileURI],
@@ -174,7 +167,7 @@ export async function mintIdentity(owner: Address, name: string, profileURI: str
 /** 链上名称查重:名称是否可铸造(大小写不敏感,与合约 mint 校验一致) */
 export async function checkNameAvailable(name: string): Promise<boolean> {
   return (await readClient().readContract({
-    address: IDENTITY_ADDRESS,
+    address: A().identity,
     abi: identityAbi,
     functionName: 'nameAvailable',
     args: [name],
@@ -191,7 +184,7 @@ export interface MintedAgent {
 export async function fetchMintedAgents(): Promise<MintedAgent[]> {
   const client = readClient()
   const total = (await client.readContract({
-    address: IDENTITY_ADDRESS,
+    address: A().identity,
     abi: identityAbi,
     functionName: 'totalMinted',
   })) as bigint
@@ -200,8 +193,8 @@ export async function fetchMintedAgents(): Promise<MintedAgent[]> {
     Array.from({ length: Number(total) }, (_, i) => BigInt(i + 1)).map(async (id) => {
       try {
         const [name, owner] = await Promise.all([
-          client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'nameOf', args: [id] }) as Promise<string>,
-          client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'ownerOf', args: [id] }) as Promise<Address>,
+          client.readContract({ address: A().identity, abi: identityAbi, functionName: 'nameOf', args: [id] }) as Promise<string>,
+          client.readContract({ address: A().identity, abi: identityAbi, functionName: 'ownerOf', args: [id] }) as Promise<Address>,
         ])
         return { tokenId: Number(id), name, owner }
       } catch {
@@ -223,10 +216,10 @@ export async function fetchAgentPublic(tokenId: number): Promise<{
   const client = readClient()
   const id = BigInt(tokenId)
   const [name, owner, bio, items] = await Promise.all([
-    client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'nameOf', args: [id] }) as Promise<string>,
-    client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'ownerOf', args: [id] }) as Promise<Address>,
-    client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'profileURIOf', args: [id] }) as Promise<string>,
-    client.readContract({ address: IDENTITY_ADDRESS, abi: identityAbi, functionName: 'getEquipped', args: [id] }) as Promise<[Address, bigint][]>,
+    client.readContract({ address: A().identity, abi: identityAbi, functionName: 'nameOf', args: [id] }) as Promise<string>,
+    client.readContract({ address: A().identity, abi: identityAbi, functionName: 'ownerOf', args: [id] }) as Promise<Address>,
+    client.readContract({ address: A().identity, abi: identityAbi, functionName: 'profileURIOf', args: [id] }) as Promise<string>,
+    client.readContract({ address: A().identity, abi: identityAbi, functionName: 'getEquipped', args: [id] }) as Promise<[Address, bigint][]>,
   ])
   const equipped: Equipped = { head: null, body: null, accessory: null, pet: null }
   items.forEach((item, slot) => {
@@ -251,7 +244,7 @@ export async function setPersonaOnChain(
 ): Promise<Hash> {
   const wallet = walletClient(owner)
   const hash = await wallet.writeContract({
-    address: IDENTITY_ADDRESS,
+    address: A().identity,
     abi: identityAbi,
     functionName: 'setPersona',
     args: [BigInt(tokenId), uri, contentHash],
@@ -264,7 +257,7 @@ export async function setPersonaOnChain(
 /** 读取链上人格配置指针(无配置时返回空) */
 export async function fetchPersona(tokenId: number): Promise<{ uri: string; contentHash: `0x${string}` }> {
   const res = (await readClient().readContract({
-    address: IDENTITY_ADDRESS,
+    address: A().identity,
     abi: identityAbi,
     functionName: 'personaOf',
     args: [BigInt(tokenId)],
@@ -281,27 +274,27 @@ export async function equipPart(owner: Address, tokenId: number, slot: number, p
   const wallet = walletClient(owner)
 
   const approved = (await client.readContract({
-    address: PARTS_ADDRESS,
+    address: A().parts,
     abi: partsAbi,
     functionName: 'isApprovedForAll',
-    args: [owner, IDENTITY_ADDRESS],
+    args: [owner, A().identity],
   })) as boolean
   if (!approved) {
     const approveHash = await wallet.writeContract({
-      address: PARTS_ADDRESS,
+      address: A().parts,
       abi: partsAbi,
       functionName: 'setApprovalForAll',
-      args: [IDENTITY_ADDRESS, true],
+      args: [A().identity, true],
       gas: 100000n,
     })
     await client.waitForTransactionReceipt({ hash: approveHash })
   }
 
   const hash = await wallet.writeContract({
-    address: IDENTITY_ADDRESS,
+    address: A().identity,
     abi: identityAbi,
     functionName: 'equip',
-    args: [BigInt(tokenId), slot, PARTS_ADDRESS, BigInt(partChainId)],
+    args: [BigInt(tokenId), slot, A().parts, BigInt(partChainId)],
     gas: 400000n,
   })
   await client.waitForTransactionReceipt({ hash })
@@ -312,7 +305,7 @@ export async function equipPart(owner: Address, tokenId: number, slot: number, p
 export async function unequipPart(owner: Address, tokenId: number, slot: number): Promise<Hash> {
   const wallet = walletClient(owner)
   const hash = await wallet.writeContract({
-    address: IDENTITY_ADDRESS,
+    address: A().identity,
     abi: identityAbi,
     functionName: 'unequip',
     args: [BigInt(tokenId), slot],
@@ -329,7 +322,7 @@ export async function unequipPart(owner: Address, tokenId: number, slot: number)
 /** 判断地址是否为 DIDParts owner */
 export async function isPartsOwner(account: Address): Promise<boolean> {
   const owner = (await readClient().readContract({
-    address: PARTS_ADDRESS,
+    address: A().parts,
     abi: partsAbi,
     functionName: 'owner',
   })) as Address
@@ -339,7 +332,7 @@ export async function isPartsOwner(account: Address): Promise<boolean> {
 /** 判断地址是否被授权为 DIDParts minter */
 export async function isPartsMinter(account: Address): Promise<boolean> {
   return (await readClient().readContract({
-    address: PARTS_ADDRESS,
+    address: A().parts,
     abi: partsAbi,
     functionName: 'minters',
     args: [account],
@@ -354,13 +347,13 @@ export async function fetchPartStates(): Promise<ChainPartState[]> {
     allIds.map((id, idx) => {
       const p = chainParts[idx]
       const infoPromise = client.readContract({
-        address: PARTS_ADDRESS,
+        address: A().parts,
         abi: partsAbi,
         functionName: 'parts',
         args: [id],
       }) as Promise<[number, number, bigint, boolean, boolean]>
       const totalPromise = client.readContract({
-        address: PARTS_ADDRESS,
+        address: A().parts,
         abi: partsAbi,
         functionName: 'totalSupply',
         args: [id],
@@ -391,7 +384,7 @@ export async function registerPart(
 ): Promise<Hash> {
   const wallet = walletClient(owner)
   const hash = await wallet.writeContract({
-    address: PARTS_ADDRESS,
+    address: A().parts,
     abi: partsAbi,
     functionName: 'registerPart',
     args: [BigInt(chainId), slot, rarity, BigInt(maxSupply)],
@@ -432,7 +425,7 @@ export async function mintPartsBatch(owner: Address, to: Address, ids: bigint[],
   }
   const wallet = walletClient(owner)
   const hash = await wallet.writeContract({
-    address: PARTS_ADDRESS,
+    address: A().parts,
     abi: partsAbi,
     functionName: 'mintPartBatch',
     args: [to, ids, amounts],
@@ -459,8 +452,8 @@ export function explainChainError(err: unknown): string {
   if (/NotTokenOwner/.test(msg)) return '只有 Agent 持有者本人可以操作'
   if (/NotAuthorized/.test(msg)) return '没有权限修改该 Agent 的人格配置'
   if (/NothingEquipped/.test(msg)) return '该插槽没有装备中的配件'
-  if (/insufficient funds/i.test(msg)) return '钱包 Sepolia ETH 余额不足,请先领取测试币'
+  if (/insufficient funds/i.test(msg)) return '钱包测试币余额不足,请先领取测试币'
   return `链上操作失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`
 }
 
-export { TARGET_CHAIN_ID } from './contracts'
+

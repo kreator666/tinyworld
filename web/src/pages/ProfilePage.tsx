@@ -8,9 +8,109 @@ import { nftLibrary } from '../mock/data'
 import PaperDoll from '../components/PaperDoll'
 import { personaTemplates, toneOptions, topicOptions } from '../mock/data'
 import { rarityDot } from '../components/NFTCard'
-import { IDENTITY_ADDRESS, TARGET_CHAIN_ID } from '../lib/contracts'
 import { explainChainError, fetchAgentPublic, fetchPersona, setPersonaOnChain } from '../lib/chain'
+import { useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay } from '../data/equipmentCatalog'
+import { getAgentStatus, installSkill, listSkills, uninstallSkill, type AgentStatus, type SkillInfo } from '../lib/agentApi'
+
+// Agent 运行时状态面板:记忆统计 + 技能安装/卸载(M2)
+function AgentStatusPanel({ tokenId }: { tokenId: number }) {
+  const showToast = useAppStore((s) => s.showToast)
+  const [status, setStatus] = useState<AgentStatus | null>(null)
+  const [allSkills, setAllSkills] = useState<SkillInfo[]>([])
+  const [offline, setOffline] = useState(false)
+  const [acting, setActing] = useState<string | null>(null)
+
+  const reload = () =>
+    Promise.all([getAgentStatus(tokenId), listSkills()])
+      .then(([st, sk]) => {
+        setStatus(st)
+        setAllSkills(sk)
+        setOffline(false)
+      })
+      .catch(() => setOffline(true))
+
+  useEffect(() => {
+    reload()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenId])
+
+  const toggleSkill = async (skill: SkillInfo) => {
+    const installed = !!status?.skills.some((s) => s.id === skill.id)
+    setActing(skill.id)
+    try {
+      if (installed) {
+        await uninstallSkill(tokenId, skill.id)
+        showToast(`已卸载技能「${skill.name}」`)
+      } else {
+        const r = await installSkill(tokenId, skill.id)
+        showToast(`已安装技能「${skill.name}」${r.note ? `(${r.note})` : ''}`)
+      }
+      await reload()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '操作失败')
+    } finally {
+      setActing(null)
+    }
+  }
+
+  return (
+    <div className="glass p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold">📡 Agent 状态</h3>
+        {status && (
+          <span className={`tag !text-[10px] ${status.personaFromChain ? 'border-neon-cyan/40 text-neon-cyan' : 'text-slate-500'}`}>
+            {status.personaFromChain ? '人格已上链' : '默认人格'}
+          </span>
+        )}
+      </div>
+      {offline ? (
+        <p className="text-xs text-slate-500">Agent 服务未启动(cd agent && npm run dev)</p>
+      ) : !status ? (
+        <p className="text-xs text-slate-500 animate-pulse">读取中…</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            <div className="glass !rounded-xl p-2.5 text-center">
+              <div className="text-lg font-bold bg-neon-grad bg-clip-text text-transparent">{status.episodicCount}</div>
+              <div className="text-[10px] text-slate-500">情景记忆</div>
+            </div>
+            <div className="glass !rounded-xl p-2.5 text-center">
+              <div className="text-lg font-bold bg-neon-grad bg-clip-text text-transparent">{status.semanticCount}</div>
+              <div className="text-[10px] text-slate-500">语义记忆</div>
+            </div>
+          </div>
+          <div className="text-xs font-medium text-neon-purple mb-2">技能({status.skills.length}/{allSkills.length})</div>
+          <div className="space-y-2">
+            {allSkills.map((sk) => {
+              const installed = status.skills.some((s) => s.id === sk.id)
+              return (
+                <div key={sk.id} className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-xs">{sk.name}</div>
+                    {sk.description && <div className="text-[10px] text-slate-500 truncate">{sk.description}</div>}
+                  </div>
+                  <button
+                    className={`shrink-0 !text-[10px] !px-2 !py-1 rounded-lg transition ${
+                      installed
+                        ? 'bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-rose-500/20 hover:border-rose-400/50 hover:text-rose-300'
+                        : 'btn-primary'
+                    }`}
+                    disabled={acting === sk.id}
+                    onClick={() => toggleSkill(sk)}
+                  >
+                    {acting === sk.id ? '处理中…' : installed ? '✓ 已安装' : '安装'}
+                  </button>
+                </div>
+              )
+            })}
+            {allSkills.length === 0 && <p className="text-[10px] text-slate-500">暂无可安装技能</p>}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
 function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: (v: boolean) => void; label: string; desc: string }) {
   return (
@@ -32,6 +132,7 @@ function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: (v: bool
 // 页面 3:个人主页(Agent 展示 + 控制台)
 // /profile = 自己的主页(含 Agent 控制台);/profile/:tokenId = 他人主页(仅公开信息 + 社交按钮)
 export default function ProfilePage() {
+  const active = useChainConfig((s) => s.active)
   const nav = useNavigate()
   const { tokenId: paramTokenId } = useParams()
   const { connected, address, login, did, inventory, aiProfile, saveAIProfile, resetAIProfile, following, favorites, toggleFollow, toggleFavorite, ensureChatWith, showToast } = useAppStore()
@@ -47,7 +148,7 @@ export default function ProfilePage() {
   const [otherLoading, setOtherLoading] = useState(false)
   const [otherError, setOtherError] = useState<string | null>(null)
 
-  const isSepolia = login?.chainId === TARGET_CHAIN_ID
+  const isSepolia = login?.chainId === active.chainId
 
   // 访问他人主页:从链上读取该 Agent 的公开信息
   useEffect(() => {
@@ -59,9 +160,9 @@ export default function ProfilePage() {
         setOther({
           name: a.name,
           bio: a.bio,
-          chain: 'Sepolia',
+          chain: active.name,
           mintedAt: '—',
-          contract: IDENTITY_ADDRESS,
+          contract: active.identity,
           address: a.owner,
           equipped: a.equipped,
         }),
@@ -115,9 +216,9 @@ export default function ProfilePage() {
       ? {
           name: didName || '未命名 Agent',
           bio: '',
-          chain: 'Sepolia',
+          chain: active.name,
           mintedAt: '—',
-          contract: IDENTITY_ADDRESS,
+          contract: active.identity,
           address: address ?? '0x0',
           equipped: chainEquipped,
         }
@@ -348,6 +449,9 @@ export default function ProfilePage() {
             <button className="btn-ghost !text-sm" onClick={reset}>重置 AI 人设</button>
           </div>
         </div>
+
+        {/* Agent 运行时状态:记忆统计 + 技能管理(M2,仅本人) */}
+        {tokenId > 0 && <AgentStatusPanel tokenId={tokenId} />}
       </div>
       )}
 

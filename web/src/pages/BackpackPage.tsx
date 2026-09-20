@@ -6,7 +6,8 @@ import { useChainStore } from '../store/chainStore'
 import { nftLibrary } from '../mock/data'
 import NFTCard, { rarityDot, rarityStyle } from '../components/NFTCard'
 import PaperDoll from '../components/PaperDoll'
-import { chainParts, explorerAddress, explorerTx, TARGET_CHAIN_ID } from '../lib/contracts'
+import { chainParts } from '../lib/contracts'
+import { explorerAddress, explorerTx, useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay } from '../data/equipmentCatalog'
 
 const tabs: { key: NFTCategory | 'did'; label: string }[] = [
@@ -19,15 +20,16 @@ const tabs: { key: NFTCategory | 'did'; label: string }[] = [
 
 const SLOT_MAP = { head: 0, body: 1, accessory: 2, pet: 3 }
 
-// 资产背包:数据来源为链上合约(Sepolia)
+// 资产背包:数据来源为链上合约(当前目标链)
 export default function BackpackPage() {
+  const active = useChainConfig((s) => s.active)
   const { connected, address, login } = useAppStore()
   const { tokenId, didName, equipped, parts, loading, error, refresh, equip, unequip } = useChainStore()
   const [tab, setTab] = useState<(typeof tabs)[number]['key']>('did')
   const [acting, setActing] = useState<string | null>(null)
   const [lastTx, setLastTx] = useState<string | null>(null)
   const showToast = useAppStore((s) => s.showToast)
-  const isSepolia = login?.chainId === TARGET_CHAIN_ID
+  const isSepolia = login?.chainId === active.chainId
 
   useEffect(() => {
     if (connected && isSepolia && address) refresh(address as `0x${string}`)
@@ -74,7 +76,7 @@ export default function BackpackPage() {
     if (!connected || !isSepolia) {
       return (
         <div className="glass p-10 text-center text-slate-500 max-w-md">
-          {connected ? '⚠️ 请切换到 Sepolia 网络以查看链上资产' : '请先连接钱包以查看链上资产'}
+          {connected ? `⚠️ 请切换到 ${active.name} 网络以查看链上资产` : '请先连接钱包以查看链上资产'}
           <br />
           <Link to="/mint" className="btn-primary inline-block mt-4 text-sm">去铸造 Agent</Link>
         </div>
@@ -105,8 +107,8 @@ export default function BackpackPage() {
               </div>
             </div>
             <div className="mt-4 space-y-1.5 text-xs text-slate-400 font-mono">
-              <div>chain: Sepolia</div>
-              <div>contract: <a className="text-neon-cyan hover:underline" href={explorerAddress('0x363AF72fC15af43BfEA47C1ED09128Cd994946c1')} target="_blank" rel="noreferrer">DIDIdentity</a></div>
+              <div>chain: {active.name}</div>
+              <div>contract: <a className="text-neon-cyan hover:underline" href={explorerAddress(active.identity)} target="_blank" rel="noreferrer">DIDIdentity</a></div>
               <div>owner: {address}</div>
               <div>数量: 1(专属)</div>
             </div>
@@ -145,7 +147,7 @@ export default function BackpackPage() {
                 imageUrl: display?.imageUrl || p.local.imageUrl,
                 owned: p.balance > 0,
                 count: p.balance,
-                chain: 'Sepolia' as ChainType,
+                chain: active.name,
               }
             : {
                 id: p.localId,
@@ -158,7 +160,7 @@ export default function BackpackPage() {
                 gradient: 'from-slate-500 to-slate-700',
                 owned: p.balance > 0,
                 hash: '0x0',
-                chain: 'Sepolia' as ChainType,
+                chain: active.name,
                 count: p.balance,
               }
           const worn = equipped[tab as NFTCategory] === p.localId
@@ -200,7 +202,7 @@ export default function BackpackPage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
       <h2 className="text-2xl font-bold mb-1">资产背包</h2>
-      <p className="text-sm text-slate-400 mb-5">链上资产(连接 Sepolia 后自动读取)</p>
+      <p className="text-sm text-slate-400 mb-5">链上资产(连接 {active.name} 后自动读取)</p>
 
       <div className="flex gap-2 mb-6 flex-wrap">
         {tabs.map((t) => (

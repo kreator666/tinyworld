@@ -1,5 +1,5 @@
 import { createPublicClient, http, keccak256, toBytes, type Address } from 'viem'
-import { sepolia } from 'viem/chains'
+import { sepolia, avalancheFuji } from 'viem/chains'
 import { config } from '../config'
 import type { AIProfile } from '../types'
 
@@ -8,7 +8,7 @@ import type { AIProfile } from '../types'
 // 校验不过宁可拒绝装载,防止链下人格数据被篡改(见设计文档 §4.3)
 // ============================================================
 
-// 只需要三个只读方法,ABI 内联即可,避免依赖整份合约 ABI 文件
+// 只需要只读方法,ABI 内联即可,避免依赖整份合约 ABI 文件
 const identityAbi = [
   {
     type: 'function',
@@ -40,11 +40,70 @@ const identityAbi = [
       },
     ],
   },
+  {
+    type: 'function',
+    name: 'totalMinted',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'ownerOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'agentPermissions',
+    stateMutability: 'view',
+    inputs: [
+      { name: '', type: 'uint256' },
+      { name: '', type: 'address' },
+    ],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'getEquipped',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [
+      {
+        name: 'items',
+        type: 'tuple[4]',
+        components: [
+          { name: 'collection', type: 'address' },
+          { name: 'id', type: 'uint256' },
+        ],
+      },
+    ],
+  },
 ] as const
 
+// DIDParts(ERC1155)只用到 balanceOf 查持有量
+const partsAbi = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'account', type: 'address' },
+      { name: 'id', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const
+
+// 权限位(与合约 DIDIdentity 的 PERMISSION_* 常量一致)
+export const PERMISSION_SOCIAL = 2n
+
+// 按目标链创建只读客户端(目前仅用到身份合约的 view 方法,链定义只影响编码细节)
+const VIEM_CHAINS = { [sepolia.id]: sepolia, [avalancheFuji.id]: avalancheFuji } as const
 const client = createPublicClient({
-  chain: sepolia,
-  transport: http(config.sepoliaRpc),
+  chain: VIEM_CHAINS[config.chain.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
+  transport: http(config.chain.rpc),
 })
 
 // 链上无人格时的兜底人格(与前端 web/src/store/appStore.ts 的 defaultAIProfile 一致)
@@ -75,7 +134,7 @@ export class PersonaError extends Error {}
 /** 地址 → tokenId;未铸造返回 0(合约约定) */
 export async function resolveTokenId(owner: Address): Promise<number> {
   const tokenId = (await client.readContract({
-    address: config.identityAddress,
+    address: config.chain.identityAddress,
     abi: identityAbi,
     functionName: 'tokenIdOf',
     args: [owner],
@@ -109,14 +168,14 @@ function decodePersonaUri(uri: string, contentHash: string): AIProfile {
 export async function fetchPersonaFromChain(tokenId: number): Promise<LoadedPersona> {
   const [res, name] = await Promise.all([
     client.readContract({
-      address: config.identityAddress,
+      address: config.chain.identityAddress,
       abi: identityAbi,
       functionName: 'personaOf',
       args: [BigInt(tokenId)],
       // viem 对命名 tuple 返回对象 { uri, contentHash },做兼容处理
     }) as Promise<{ uri: string; contentHash: `0x${string}` } | [string, `0x${string}`]>,
     client.readContract({
-      address: config.identityAddress,
+      address: config.chain.identityAddress,
       abi: identityAbi,
       functionName: 'nameOf',
       args: [BigInt(tokenId)],
@@ -147,4 +206,91 @@ export async function loadPersona(tokenId: number, force = false): Promise<Loade
 
 export function getCachedPersona(tokenId: number): LoadedPersona | undefined {
   return personaCache.get(tokenId)
+}
+
+/** 链上 agentPermissions[tokenId][agentAddr] 位掩码(安装需要权限的技能前校验) */
+export async function getAgentPermissions(tokenId: number, agentAddr: Address): Promise<bigint> {
+  return (await client.readContract({
+    address: config.chain.identityAddress,
+    abi: identityAbi,
+    functionName: 'agentPermissions',
+    args: [BigInt(tokenId), agentAddr],
+  })) as bigint
+}
+
+export interface AgentSummary {
+  tokenId: number
+  name: string
+  owner: string
+}
+
+/** 列出最新铸造的 N 个 Agent(social-greeter 的 list_new_agents 用) */
+export async function listRecentAgents(limit = 5): Promise<AgentSummary[]> {
+  const total = Number(
+    (await client.readContract({
+      address: config.chain.identityAddress,
+      abi: identityAbi,
+      functionName: 'totalMinted',
+    })) as bigint,
+  )
+  const from = Math.max(1, total - limit + 1)
+  const tokenIds: number[] = []
+  for (let i = total; i >= from; i--) tokenIds.push(i)
+  return Promise.all(
+    tokenIds.map(async (tokenId) => {
+      const [name, owner] = await Promise.all([
+        client.readContract({
+          address: config.chain.identityAddress,
+          abi: identityAbi,
+          functionName: 'nameOf',
+          args: [BigInt(tokenId)],
+        }) as Promise<string>,
+        client.readContract({
+          address: config.chain.identityAddress,
+          abi: identityAbi,
+          functionName: 'ownerOf',
+          args: [BigInt(tokenId)],
+        }) as Promise<Address>,
+      ])
+      return { tokenId, name, owner }
+    }),
+  )
+}
+
+export interface EquipmentItem {
+  slot: number // getEquipped 返回的固定 4 槽位下标
+  collection: string
+  partId: number
+  balance: number // 主人在 DIDParts 里持有该部件的数量
+}
+
+/** 读链上装备(getEquipped)并按 DIDParts balanceOf 概述持有(defi-quote 的 get_my_equipment 用) */
+export async function getEquipment(tokenId: number): Promise<EquipmentItem[]> {
+  const [items, owner] = await Promise.all([
+    client.readContract({
+      address: config.chain.identityAddress,
+      abi: identityAbi,
+      functionName: 'getEquipped',
+      args: [BigInt(tokenId)],
+    }) as Promise<readonly { collection: Address; id: bigint }[]>,
+    client.readContract({
+      address: config.chain.identityAddress,
+      abi: identityAbi,
+      functionName: 'ownerOf',
+      args: [BigInt(tokenId)],
+    }) as Promise<Address>,
+  ])
+  const result: EquipmentItem[] = []
+  for (let slot = 0; slot < items.length; slot++) {
+    const { collection, id } = items[slot]
+    if (id === 0n) continue // 空槽位
+    const balance = (await client.readContract({
+      address: config.chain.partsAddress,
+      abi: partsAbi,
+      functionName: 'balanceOf',
+      args: [owner, id],
+    })) as bigint
+    result.push({ slot, collection, partId: Number(id), balance: Number(balance) })
+  }
+  return result
 }
