@@ -84,8 +84,9 @@ export async function getInstalledSkills(tokenId: number): Promise<InstalledSkil
 
 export interface InstallResult {
   manifest: SkillManifest
-  // passed = 链上权限校验通过;skipped = 未配置 AGENT_SERVICE_ADDRESS 跳过校验;none = 无需权限
+  // passed = 链上权限校验通过;skipped = 跳过校验(原因见 note);none = 无需权限
   permissionCheck: 'passed' | 'skipped' | 'none'
+  note?: string
 }
 
 /** 安装技能:需要 social 权限的先查链上 agentPermissions 的 PERMISSION_SOCIAL 位 */
@@ -94,10 +95,12 @@ export async function installSkill(tokenId: number, skillId: string): Promise<In
   if (!def) throw new SkillError(`未知技能: ${skillId}`)
 
   let permissionCheck: InstallResult['permissionCheck'] = 'none'
+  let note: string | undefined
   if (def.manifest.permissions.includes('social')) {
     const agentAddr = config.agentServiceAddress
     if (!agentAddr) {
       permissionCheck = 'skipped'
+      note = '未配置 AGENT_SERVICE_ADDRESS,已跳过链上权限校验'
     } else {
       if (!isAddress(agentAddr)) throw new SkillError('AGENT_SERVICE_ADDRESS 不是合法地址')
       const perms = await getAgentPermissions(tokenId, agentAddr as Address)
@@ -110,13 +113,19 @@ export async function installSkill(tokenId: number, skillId: string): Promise<In
       permissionCheck = 'passed'
     }
   }
+  // defi 权限:链上模块注册表(registerModule)本期未启用,跳过该校验;
+  // 资金安全由策略引擎(限额/白名单/冷却/熔断/审批)兜底
+  if (def.manifest.permissions.includes('defi')) {
+    permissionCheck = 'skipped'
+    note = '链上模块注册表本期未启用,defi 权限校验跳过,由策略引擎兜底'
+  }
 
   const db = await getDb()
   await db.query(
     'INSERT INTO agent_skills (token_id, skill_id) VALUES ($1, $2) ON CONFLICT (token_id, skill_id) DO NOTHING',
     [tokenId, skillId],
   )
-  return { manifest: def.manifest, permissionCheck }
+  return { manifest: def.manifest, permissionCheck, note }
 }
 
 /** 卸载技能;返回是否确实存在该安装记录 */

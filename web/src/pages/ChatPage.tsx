@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import ChatBubble from '../components/ChatBubble'
-import { chatWithAgent } from '../lib/agentApi'
-import { fetchMintedAgents } from '../lib/chain'
+import { chatWithAgent, getInbox } from '../lib/agentApi'
+import { fetchMintedAgents, type MintedAgent } from '../lib/chain'
 import { useChainConfig } from '../store/chainConfigStore'
 
 // 页面 5:消息聊天界面 —— 纯社交,只列别人的链上 Agent;自己的 Agent 在 /assistant 助手页
@@ -19,6 +19,11 @@ export default function ChatPage() {
   const [loadingAgents, setLoadingAgents] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const nav = useNavigate()
+  // 收件箱轮询用的缓存与去重状态
+  const agentsRef = useRef<Map<number, MintedAgent>>(new Map())
+  const seenMsgRef = useRef<Set<string>>(new Set())
+  const inboxSinceRef = useRef<string | null>(null)
+  const recentRepliesRef = useRef<Map<string, string>>(new Map()) // sessionId → send() 已即时展示的回复文本
 
   const isSepolia = login?.chainId === activeChain.chainId
   const active = chats.find((c) => c.id === activeChatId) ?? chats[0]
@@ -28,9 +33,42 @@ export default function ChatPage() {
     if (!connected || !isSepolia) return
     setLoadingAgents(true)
     fetchMintedAgents()
-      .then((list) => list.filter((a) => a.tokenId !== myTokenId).forEach((a) => upsertChainSession(a, false)))
+      .then((list) => {
+        list.forEach((a) => agentsRef.current.set(a.tokenId, a))
+        list.filter((a) => a.tokenId !== myTokenId).forEach((a) => upsertChainSession(a, false))
+      })
       .catch((e) => console.warn('读取链上 Agent 列表失败:', e))
       .finally(() => setLoadingAgents(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, isSepolia, myTokenId])
+
+  // 收件箱轮询:其他 Agent 主动发来/回复的消息,按发送方落进对应会话
+  useEffect(() => {
+    if (!connected || !isSepolia || myTokenId === 0) return
+    const tick = async () => {
+      try {
+        const msgs = await getInbox(myTokenId, inboxSinceRef.current ?? undefined)
+        for (const m of msgs) {
+          if (seenMsgRef.current.has(m.id)) continue
+          const peer = agentsRef.current.get(m.fromTokenId)
+          if (!peer) continue // 链上 Agent 列表还没加载完,下轮再处理
+          seenMsgRef.current.add(m.id)
+          inboxSinceRef.current = m.createdAt
+          const sid = upsertChainSession(peer, false)
+          // 跳过 send() 已即时展示过的回复(后端同时落了 social_messages,避免重复)
+          if (recentRepliesRef.current.get(sid) === m.content) {
+            recentRepliesRef.current.delete(sid)
+            continue
+          }
+          appendPeerMessage(sid, m.content)
+        }
+      } catch {
+        // agent 服务未启动时静默,下轮重试
+      }
+    }
+    tick()
+    const timer = setInterval(tick, 15000)
+    return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, isSepolia, myTokenId])
 
@@ -49,8 +87,11 @@ export default function ChatPage() {
     if (!toChainAgent) return
 
     setTypingChatId(sessionId)
-    chatWithAgent(active.agentTokenId!, text)
-      .then((r) => appendPeerMessage(sessionId, r.reply))
+    chatWithAgent(active.agentTokenId!, text, myTokenId > 0 ? myTokenId : undefined)
+      .then((r) => {
+        recentRepliesRef.current.set(sessionId, r.reply)
+        appendPeerMessage(sessionId, r.reply)
+      })
       .catch((err) => {
         // 网络层失败(服务没起)与业务错误(未铸造/LLM 异常)分开提示
         const msg = err instanceof TypeError

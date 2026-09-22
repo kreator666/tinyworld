@@ -17,6 +17,10 @@ import {
 import { initSchema, closeDb, listChains, seedChains } from './db'
 import { ALL_CHAINS } from './config'
 import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill } from './skills'
+import { startScheduler, stopScheduler } from './core/scheduler'
+import { getInbox, recordSocialMessage } from './core/social'
+import { getApproval, listApprovals, resolveApproval } from './core/approvals'
+import { executeProposal } from './skills/defi-swap'
 
 // ============================================================
 // API 网关(hono):健康检查、人格调试、对话,以及 M2 的记忆/技能管理端点
@@ -91,16 +95,43 @@ app.post('/agents/by-owner/:address/chat', async (c) => {
   }
 })
 
-// 按 tokenId 直连(调试/内部用)
+// 按 tokenId 直连(调试/内部用);带 fromTokenId 时是社交场景,双方消息落 social_messages
 app.post('/agents/:tokenId/chat', async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
-  const body = await c.req.json<{ message?: string }>().catch(() => null)
+  const body = await c.req.json<{ message?: string; fromTokenId?: number }>().catch(() => null)
   const message = body?.message?.trim()
   if (!message) return c.json({ error: 'message 不能为空' }, 400)
+  const fromTokenId = body?.fromTokenId
+  if (fromTokenId !== undefined && (!Number.isInteger(fromTokenId) || fromTokenId <= 0)) {
+    return c.json({ error: 'fromTokenId 不合法' }, 400)
+  }
   try {
     const result = await chatWithAgent(tokenId, message)
+    // 社交线程:真人消息(fromTokenId→tokenId, kind='user')+ Agent 回复(tokenId→fromTokenId, kind='auto')
+    if (fromTokenId !== undefined) {
+      await recordSocialMessage(fromTokenId, tokenId, message, 'user')
+      await recordSocialMessage(tokenId, fromTokenId, result.reply, 'auto')
+    }
     return c.json({ reply: result.reply, tokenId, refused: result.refused })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// ============================================================
+// M3:社交收件箱
+// ============================================================
+
+// 该 Agent 收到的社交消息(按时间正序,?since=<ISO> 增量拉取)
+app.get('/agents/:tokenId/inbox', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  const since = c.req.query('since')
+  if (since && Number.isNaN(Date.parse(since))) return c.json({ error: 'since 不是合法时间' }, 400)
+  try {
+    const messages = await getInbox(tokenId, since)
+    return c.json({ messages })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -182,13 +213,13 @@ app.post('/agents/:tokenId/skills', async (c) => {
   const skillId = body?.skillId?.trim()
   if (!skillId) return c.json({ error: 'skillId 不能为空' }, 400)
   try {
-    const { manifest, permissionCheck } = await installSkill(tokenId, skillId)
+    const { manifest, permissionCheck, note } = await installSkill(tokenId, skillId)
     invalidateAgent(tokenId) // 工具集变了,下次对话重建 Agent 实例
     return c.json({
       ok: true,
       skill: manifest,
       permissionCheck,
-      ...(permissionCheck === 'skipped' ? { note: '未配置 AGENT_SERVICE_ADDRESS,已跳过链上权限校验' } : {}),
+      ...(note ? { note } : {}),
     })
   } catch (err) {
     return handleErr(c, err)
@@ -279,6 +310,58 @@ app.post('/conversations/:id/chat', async (c) => {
   }
 })
 
+// ============================================================
+// M4:DeFi 审批
+// ============================================================
+
+// 该 Agent 的审批列表(pending 在前)
+app.get('/agents/:tokenId/approvals', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const approvals = await listApprovals(tokenId)
+    return c.json({ approvals })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 人工放行:执行提案,写 tx_hash,status=executed/failed
+app.post('/approvals/:id/approve', async (c) => {
+  const id = c.req.param('id')
+  try {
+    const approval = await getApproval(id)
+    if (!approval) return c.json({ error: '审批单不存在' }, 404)
+    if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
+    try {
+      const { txHash, amountOut } = await executeProposal(approval.tokenId, approval.proposal)
+      await resolveApproval(id, 'executed', txHash)
+      return c.json({ ok: true, status: 'executed', txHash, amountOut, explorer: `${config.chain.explorer}/tx/${txHash}` })
+    } catch (err) {
+      // 执行失败(滑点/余额不足/revert):标 failed,保留人工处置痕迹
+      await resolveApproval(id, 'failed')
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ ok: false, status: 'failed', error: msg.slice(0, 200) }, 502)
+    }
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 人工拒绝
+app.post('/approvals/:id/reject', async (c) => {
+  const id = c.req.param('id')
+  try {
+    const approval = await getApproval(id)
+    if (!approval) return c.json({ error: '审批单不存在' }, 404)
+    if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
+    await resolveApproval(id, 'rejected')
+    return c.json({ ok: true, status: 'rejected' })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
 /** 统一错误出口:人格完整性问题 422,技能问题按其 status,LLM 网关异常 502,其余 500 */
 function handleErr(c: Context, err: unknown) {
   if (err instanceof PersonaError) {
@@ -312,12 +395,14 @@ async function main() {
     })),
   )
   await syncSkillsToDb()
+  startScheduler() // M3:心跳驱动自主社交
   serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`Agent 服务已启动: http://localhost:${info.port} (模型: ${config.llmModel}, 链: ${config.chain.name})`)
   })
-  // 正常退出时优雅关闭 PGlite,避免数据目录残留锁/半成品 checkpoint
+  // 正常退出时优雅关闭调度器与 PGlite,避免数据目录残留锁/半成品 checkpoint
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     process.on(sig, () => {
+      stopScheduler()
       closeDb().finally(() => process.exit(0))
     })
   }

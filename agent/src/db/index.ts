@@ -122,6 +122,30 @@ export async function initSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS messages_conv_idx ON messages (conversation_id, created_at);
+
+    -- 社交消息(M3):Agent 间/真人对 Agent 的广场私信,心跳调度器读写
+    CREATE TABLE IF NOT EXISTS social_messages (
+      id TEXT PRIMARY KEY,
+      from_token_id INTEGER NOT NULL,
+      to_token_id INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'auto' CHECK (kind IN ('auto', 'user')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS social_msg_to_idx ON social_messages (to_token_id, created_at);
+
+    -- DeFi 审批(M4):超限额/白名单外/熔断时的交易提案,等人工放行
+    CREATE TABLE IF NOT EXISTS approvals (
+      id TEXT PRIMARY KEY,
+      token_id INTEGER NOT NULL,
+      proposal JSONB NOT NULL,
+      agent_reason TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'executed', 'failed')),
+      tx_hash TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      resolved_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS approvals_token_idx ON approvals (token_id, created_at);
   `)
 }
 

@@ -30,12 +30,13 @@ export interface ChatResult {
 
 const HISTORY_LIMIT = 20 // 每个 Agent 只保留最近 20 轮对话
 
-/** 把人格字段组织成中文 system prompt;名字入 prompt,保证每个 Agent 有自己的身份 */
-function buildInstructions(profile: AIProfile, name: string): string {
+/** 把人格字段组织成中文 system prompt;名字/主人地址/链入 prompt,保证 Agent 知道自己的身份与主人的链上信息(心跳社交也复用) */
+export function buildInstructions(profile: AIProfile, name: string, ctx?: { owner: string; tokenId: number }): string {
   const topics = profile.topics.length > 0 ? profile.topics.join('、') : '不限'
   const lines = [
     `你是「${name}」在链上的 AI 分身(Agent),以第一人称与来访者聊天,就像 ${name} 本人在说话一样,不要暴露自己是程序或语言模型。`,
     `被问到"你是谁"时,回答你是 ${name}(的 Agent 身份),不要泛化成别的身份。`,
+    ctx ? `你的链上身份:tokenId ${ctx.tokenId},当前链 ${config.chain.name};主人的钱包地址是 ${ctx.owner}。主人问"我有什么资产/我钱包里有什么"时,直接调用 get_wallet_assets 工具查这个地址,不要反问主人要地址。` : '',
     `人设模板:${profile.template}`,
     profile.personality ? `性格:${profile.personality}` : '',
     `语气风格:${profile.tone}`,
@@ -43,9 +44,9 @@ function buildInstructions(profile: AIProfile, name: string): string {
     profile.blacklist ? `绝对不要谈论以下话题:${profile.blacklist}。对方提起时礼貌地把话题岔开。` : '',
     `回复要符合语气风格,简短自然,像真人发消息,不要使用 markdown 格式。`,
     `如果需要使用工具,先调用工具拿到结果,再用口语化的方式转述,不要照抄 JSON。`,
-    `有工具能完成的任务(起草文案、查询等),必须调用对应工具完成,不要自己代劳。`,
+    `有工具能完成的任务(起草文案、查询、兑换等),必须调用对应工具完成,不要自己代劳。`,
     `涉及价格、行情等实时信息时,必须调用工具查询,以工具结果为准;不要凭记忆里的旧数字回答。`,
-    `被问到实时信息(价格、行情、链上数据等)而没有对应工具可用时,坦白说自己现在查不了,不要编造数字。`,
+    `涉及链上数据(余额、资产、装备、交易)的回答必须来自工具结果;没有工具能查就如实说查不了,禁止假装查过、禁止编造数字。`,
   ]
   return lines.filter(Boolean).join('\n')
 }
@@ -61,7 +62,7 @@ async function agentFor(persona: LoadedPersona): Promise<Agent> {
   const tools = await getToolsFor(persona.tokenId)
   const agent = new Agent({
     name: `agent-${persona.tokenId}`,
-    instructions: buildInstructions(persona.profile, persona.name),
+    instructions: buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }),
     model: openai(config.llmModel),
     tools,
   })

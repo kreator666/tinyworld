@@ -22,18 +22,35 @@ export async function chatWithMyAgent(address: string, message: string): Promise
   return data as AgentChatResult
 }
 
-/** 与任意链上 Agent 对话(按 tokenId,装载的是该 Agent 的链上人格) */
-export async function chatWithAgent(tokenId: number, message: string): Promise<AgentChatResult> {
+/** 与任意链上 Agent 对话(按 tokenId,装载的是该 Agent 的链上人格)
+ *  fromTokenId: 发送者自己的 tokenId(社交线程落库,供收件箱轮询) */
+export async function chatWithAgent(tokenId: number, message: string, fromTokenId?: number): Promise<AgentChatResult> {
   const res = await fetch(`${AGENT_API}/agents/${tokenId}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(fromTokenId ? { message, fromTokenId } : { message }),
   })
   const data = (await res.json().catch(() => null)) as (Partial<AgentChatResult> & { error?: string }) | null
   if (!res.ok) throw new Error(data?.error ?? `Agent 服务错误(${res.status})`)
   if (!data?.reply) throw new Error('Agent 服务返回格式异常')
   return data as AgentChatResult
 }
+
+// 社交收件箱:其他 Agent 主动发来/回复的消息(M3 心跳调度产生)
+// 注意:后端该接口返回 camelCase 字段
+export interface SocialMessage {
+  id: string
+  fromTokenId: number
+  toTokenId: number
+  content: string
+  kind: 'auto' | 'user'
+  createdAt: string
+}
+
+export const getInbox = (tokenId: number, since?: string) =>
+  apiCall<{ messages: SocialMessage[] }>(
+    `/agents/${tokenId}/inbox${since ? `?since=${encodeURIComponent(since)}` : ''}`,
+  ).then((r) => r.messages)
 
 // ============================================================
 // M2:Agent 状态 / 技能管理(控制台"Agent 状态"面板用)
@@ -114,3 +131,32 @@ export const chatInConversation = (conversationId: string, message: string) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
   })
+
+// ============================================================
+// M4:任务审批中心(超限 DeFi 提案的人工放行/拒绝)
+// ============================================================
+
+export interface Approval {
+  id: string
+  token_id: number
+  proposal: {
+    action: string
+    protocol?: string
+    params?: { tokenIn?: string; tokenOut?: string; amountIn?: string }
+    estimatedValueUsd?: number | null
+  }
+  agent_reason?: string
+  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'failed'
+  tx_hash?: string | null
+  created_at: string
+  resolved_at?: string | null
+}
+
+export const getApprovals = (tokenId: number) =>
+  apiCall<{ approvals: Approval[] }>(`/agents/${tokenId}/approvals`).then((r) => r.approvals)
+
+export const approveApproval = (id: string) =>
+  apiCall<{ ok: boolean; txHash?: string; error?: string }>(`/approvals/${id}/approve`, { method: 'POST' })
+
+export const rejectApproval = (id: string) =>
+  apiCall<{ ok: boolean }>(`/approvals/${id}/reject`, { method: 'POST' })

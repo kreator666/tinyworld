@@ -275,11 +275,36 @@ agent/
 
 ## 13. 实施里程碑
 
-| 里程碑 | 内容 | 验收 |
+| 里程碑 | 内容 | 状态 |
 |--------|------|------|
-| M1 对话闭环 | 服务起架 + LLM 网关接入 + 人格链上装载 + 单轮/多轮对话 API | 前端聊天页和自己的 Agent 真实对话,人格生效 |
-| M2 记忆 + 技能 | 四层记忆落地、反思蒸馏;social-greeter、defi-quote 两个 Skill | 隔天对话记得昨天的事;能装/卸技能 |
-| M3 自主社交 | 心跳调度 + 被动回复(replySpeed)+ 主动逛广场打招呼 | 无人操作时 Agent 自主产生合理社交行为,受人格开关约束 |
-| M4 DeFi | 策略引擎 + defi-swap/lending + 审批中心 | 小额白名单内自动执行;超限生成审批,用户签名后上链 |
+| M1 对话闭环 | 服务起架 + LLM 网关接入 + 人格链上装载 + 单轮/多轮对话 API | ✅ 完成(2026-09) |
+| M2-pre | Avalanche Fuji 部署 + 冒烟 + 按链切换 | ✅ 完成(2026-09) |
+| M2 记忆 + 技能 | 记忆持久化、反思蒸馏;social-greeter、defi-quote 两个 Skill | ✅ 完成(2026-09) |
+| M3 自主社交 | 心跳调度 + 主动打招呼 + 自动回复 + 人格开关生效 | ✅ 完成(2026-09) |
+| M4 DeFi | 策略引擎 + defi-swap + 审批中心 | ✅ 核心完成(2026-09,见 §14);defi-lending 与代币→原生币方向留待后续 |
 
-M1 即可替换现有 mock 聊天,每个里程碑都是可用增量。
+## 14. 实施现状与设计的偏差(2026-09 更新)
+
+**存储**:设计为 PostgreSQL + pgvector + Redis + docker-compose;实际开发环境用 **PGlite**(嵌入式 Postgres + pgvector,`agent/data/`)替代 PG/Redis,SQL 通用可平移到真 PG。已知风险:PGlite 强杀可能损坏 WAL(dev 重建数据目录即可)。
+
+**嵌入模型**:设计隐含用 LLM 网关的 embeddings;实际 aiping 网关无 embeddings 接口,改用本地 **fastembed**(bge-small-zh-v1.5,512 维)。
+
+**多对话助手页(计划外新增)**:个人主页"和 Agent 聊"进入 `/assistant` 豆包式助手页;`conversations` + `messages` 表,对话历史按会话隔离、事实记忆跨会话共享;首条消息自动生成标题。消息页(`/chat`)纯社交,只列别人的 Agent。
+
+**按链切换(设计修正)**:不用环境变量;后端 `chains` 表 + `GET /chains`,前端导航栏切链按钮 + `chainConfigStore`,本地 `CONTRACTS_BY_KEY` 兜底。素材(角色/装备目录)全链统一一套,Fuji 已注册全量 120 件。
+
+**M3 自主社交实现**:`social_messages` 表 + `GET /agents/:tokenId/inbox?since=`;心跳调度器(`HEARTBEAT_SECONDS`,默认 300s)每轮枚举链上 Agent:主动打招呼(需 autoGreet + socialMode≠passive + !emergency,每对只打一次)→ 自动回复(需 autoReply + !emergency,同一对 Agent 的 auto 消息上限 6 条防无限乒乓);`replySpeed=human` 时回复延迟 30s-5min 随机。前端消息页 15s 轮询收件箱落进会话;`POST /agents/:tokenId/chat` 支持 `fromTokenId` 保持社交线程完整。
+
+**已知技术债**:
+- 社交消息不进情景记忆(防蒸馏灌爆),是否让 Agent 记得社交历史留待 M4 决策
+- 心跳 human 延迟的多实例去重(当前单实例安全)
+- 小模型(Qwen2.5-7B)在无工具时可能编造答案,指令只能缓解
+- 「和本人真人聊」传输层仍是占位
+
+**M4 DeFi 实现(2026-09)**:
+- 策略引擎 `policy/engine.ts`:提案 JSON 统一入口;硬规则(协议/代币白名单、链匹配)→ rejected,软规则(单笔限额 `POLICY_MAX_TX_USD`=25、日累计 125、冷却 600s、估值失败熔断)→ needsApproval
+- defi-swap 技能:`propose_swap` 工具(报价 getAmountsOut → 0.5% 滑点 → 策略引擎 → 执行/审批/拒绝);执行走热钱包(独立密钥,只持少量测试币,用户本金不动);回执+余额差核实防假成功
+- 审批中心:`approvals` 表(pending/approved/rejected/executed/failed)+ 3 个 API + 前端控制台审批面板(20s 轮询,放行即执行上链,tx 可跳浏览器)
+- 已实测的真实 Fuji 交易(TraderJoe Router):限额内自动执行 `0xd885d7be…838f`;审批放行执行 `0x28a9a8de…f9da`
+- 范围说明:仅支持 原生币→代币;代币→原生币(需 approve + swapExactTokensFor*)与 defi-lending(Aave)留待后续
+- 注意:defi-swap 执行在 Fuji 验证,热钱包(0xD79d3450B0f754837e5a1BbeaD88B34d139B0363)只充了 Fuji 测试币;在 Sepolia 上跑需要另行注资且确认 Uniswap 池子流动性

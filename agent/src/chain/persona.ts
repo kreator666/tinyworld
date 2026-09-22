@@ -1,4 +1,4 @@
-import { createPublicClient, http, keccak256, toBytes, type Address } from 'viem'
+import { createPublicClient, formatEther, formatUnits, http, keccak256, toBytes, type Address } from 'viem'
 import { sepolia, avalancheFuji } from 'viem/chains'
 import { config } from '../config'
 import type { AIProfile } from '../types'
@@ -124,6 +124,7 @@ export const defaultAIProfile: AIProfile = {
 export interface LoadedPersona {
   tokenId: number
   name: string // 链上 Agent 名称(nameOf),用于身份区分
+  owner: string // 主人钱包地址(ownerOf),回答「我的资产」类问题时直接用
   profile: AIProfile
   fromChain: boolean // false = 链上无人格,用的默认兜底
   contentHash: string
@@ -166,7 +167,7 @@ function decodePersonaUri(uri: string, contentHash: string): AIProfile {
 
 /** 从链上读取并校验人格(uri 为空则返回默认人格兜底);同时读链上名称用于身份区分 */
 export async function fetchPersonaFromChain(tokenId: number): Promise<LoadedPersona> {
-  const [res, name] = await Promise.all([
+  const [res, name, owner] = await Promise.all([
     client.readContract({
       address: config.chain.identityAddress,
       abi: identityAbi,
@@ -180,15 +181,21 @@ export async function fetchPersonaFromChain(tokenId: number): Promise<LoadedPers
       functionName: 'nameOf',
       args: [BigInt(tokenId)],
     }) as Promise<string>,
+    client.readContract({
+      address: config.chain.identityAddress,
+      abi: identityAbi,
+      functionName: 'ownerOf',
+      args: [BigInt(tokenId)],
+    }) as Promise<Address>,
   ])
   const uri = Array.isArray(res) ? res[0] : res.uri
   const contentHash = (Array.isArray(res) ? res[1] : res.contentHash) ?? '0x'
 
   if (!uri) {
-    return { tokenId, name, profile: defaultAIProfile, fromChain: false, contentHash }
+    return { tokenId, name, owner, profile: defaultAIProfile, fromChain: false, contentHash }
   }
   const profile = decodePersonaUri(uri, contentHash)
-  return { tokenId, name, profile, fromChain: true, contentHash }
+  return { tokenId, name, owner, profile, fromChain: true, contentHash }
 }
 
 // 人格缓存:每个 tokenId 只装载一次,reload 接口强制刷新
@@ -222,6 +229,38 @@ export interface AgentSummary {
   tokenId: number
   name: string
   owner: string
+}
+
+/** 列出全部已铸造的 Agent(心跳调度器每轮枚举用) */
+export async function listMintedAgents(): Promise<AgentSummary[]> {
+  const total = Number(
+    (await client.readContract({
+      address: config.chain.identityAddress,
+      abi: identityAbi,
+      functionName: 'totalMinted',
+    })) as bigint,
+  )
+  const tokenIds: number[] = []
+  for (let i = 1; i <= total; i++) tokenIds.push(i)
+  return Promise.all(
+    tokenIds.map(async (tokenId) => {
+      const [name, owner] = await Promise.all([
+        client.readContract({
+          address: config.chain.identityAddress,
+          abi: identityAbi,
+          functionName: 'nameOf',
+          args: [BigInt(tokenId)],
+        }) as Promise<string>,
+        client.readContract({
+          address: config.chain.identityAddress,
+          abi: identityAbi,
+          functionName: 'ownerOf',
+          args: [BigInt(tokenId)],
+        }) as Promise<Address>,
+      ])
+      return { tokenId, name, owner }
+    }),
+  )
 }
 
 /** 列出最新铸造的 N 个 Agent(social-greeter 的 list_new_agents 用) */
@@ -293,4 +332,50 @@ export async function getEquipment(tokenId: number): Promise<EquipmentItem[]> {
     result.push({ slot, collection, partId: Number(id), balance: Number(balance) })
   }
   return result
+}
+
+// ============================================================
+// 钱包资产查询(get_wallet_assets 工具用):原生币 + USDC + DID 装备
+// ============================================================
+
+const erc20Abi = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+export interface WalletAssets {
+  address: string
+  nativeBalance: string // 已换算成可读单位,如 '0.495'
+  nativeSymbol: string
+  usdcBalance: string // 已换算(6 位小数)
+  equipment: EquipmentItem[]
+}
+
+export async function getWalletAssets(address: Address, tokenId: number): Promise<WalletAssets> {
+  const [nativeBal, usdcBal, equipment] = await Promise.all([
+    client.getBalance({ address }),
+    config.chain.defi.usdc === ZERO_ADDRESS
+      ? Promise.resolve(0n) // 该链无已核实 USDC 配置
+      : (client.readContract({
+          address: config.chain.defi.usdc,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [address],
+        }) as Promise<bigint>),
+    getEquipment(tokenId),
+  ])
+  return {
+    address,
+    nativeBalance: formatEther(nativeBal),
+    nativeSymbol: config.chain.defi.nativeSymbol,
+    usdcBalance: formatUnits(usdcBal, 6),
+    equipment,
+  }
 }

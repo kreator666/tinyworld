@@ -12,6 +12,126 @@ import { explainChainError, fetchAgentPublic, fetchPersona, setPersonaOnChain } 
 import { useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay } from '../data/equipmentCatalog'
 import { getAgentStatus, installSkill, listSkills, uninstallSkill, type AgentStatus, type SkillInfo } from '../lib/agentApi'
+import { approveApproval, getApprovals, rejectApproval, type Approval } from '../lib/agentApi'
+import { explorerTx } from '../store/chainConfigStore'
+
+// 任务审批中心:Agent 的 DeFi 提案超限后在这里由本人放行/拒绝(M4)
+function ApprovalCenter({ tokenId }: { tokenId: number }) {
+  const showToast = useAppStore((s) => s.showToast)
+  const [approvals, setApprovals] = useState<Approval[]>([])
+  const [offline, setOffline] = useState(false)
+  const [acting, setActing] = useState<string | null>(null)
+
+  const reload = () =>
+    getApprovals(tokenId)
+      .then((list) => {
+        setApprovals(list)
+        setOffline(false)
+      })
+      .catch(() => setOffline(true))
+
+  useEffect(() => {
+    reload()
+    const timer = setInterval(reload, 20000) // 轮询:Agent 随时可能产生新提案
+    return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenId])
+
+  const act = async (a: Approval, action: 'approve' | 'reject') => {
+    setActing(a.id)
+    try {
+      if (action === 'approve') {
+        const r = await approveApproval(a.id)
+        showToast(r.txHash ? '✅ 已放行并执行上链' : '已放行')
+      } else {
+        await rejectApproval(a.id)
+        showToast('已拒绝该提案')
+      }
+      await reload()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '操作失败')
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const describe = (a: Approval) => {
+    const p = a.proposal
+    if (p.action === 'swap' && p.params) {
+      return `兑换 ${p.params.amountIn} ${p.params.tokenIn} → ${p.params.tokenOut}`
+    }
+    return p.action
+  }
+
+  const pending = approvals.filter((a) => a.status === 'pending')
+  const history = approvals.filter((a) => a.status !== 'pending').slice(0, 5)
+
+  if (offline || approvals.length === 0) return null // 服务未启动或无提案时不占位
+
+  return (
+    <div className="glass p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold">🖋️ 任务审批中心</h3>
+        {pending.length > 0 && (
+          <span className="tag !text-[10px] border-amber-400/50 text-amber-300">{pending.length} 待审批</span>
+        )}
+      </div>
+
+      {pending.length > 0 && (
+        <div className="space-y-3 mb-4">
+          {pending.map((a) => (
+            <div key={a.id} className="glass !rounded-xl p-3 border-amber-400/30">
+              <div className="text-sm font-medium">{describe(a)}</div>
+              <div className="text-[11px] text-slate-500 mt-1">
+                {a.proposal.estimatedValueUsd != null && <>约 ${a.proposal.estimatedValueUsd.toFixed(2)} · </>}
+                {a.proposal.protocol} · {new Date(a.created_at).toLocaleString('zh-CN')}
+              </div>
+              {a.agent_reason && <p className="text-xs text-slate-400 mt-1.5">Agent 理由:{a.agent_reason}</p>}
+              <div className="flex gap-2 mt-3">
+                <button
+                  className="btn-primary flex-1 !text-xs !py-1.5"
+                  disabled={acting === a.id}
+                  onClick={() => act(a, 'approve')}
+                >
+                  {acting === a.id ? '执行中…' : '✅ 放行并执行'}
+                </button>
+                <button
+                  className="btn-ghost flex-1 !text-xs !py-1.5 hover:border-rose-400/50 hover:text-rose-300"
+                  disabled={acting === a.id}
+                  onClick={() => act(a, 'reject')}
+                >
+                  ❌ 拒绝
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="border-t border-white/10 pt-3">
+          <div className="text-xs text-slate-500 mb-2">最近处理</div>
+          <div className="space-y-1.5">
+            {history.map((a) => (
+              <div key={a.id} className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 truncate">{describe(a)}</span>
+                {a.status === 'executed' && a.tx_hash ? (
+                  <a className="text-neon-cyan hover:underline shrink-0 ml-2" href={explorerTx(a.tx_hash)} target="_blank" rel="noreferrer">
+                    已上链 ↗
+                  </a>
+                ) : (
+                  <span className={`shrink-0 ml-2 ${a.status === 'rejected' ? 'text-rose-400' : a.status === 'failed' ? 'text-amber-400' : 'text-slate-500'}`}>
+                    {a.status === 'rejected' ? '已拒绝' : a.status === 'failed' ? '执行失败' : a.status}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // Agent 运行时状态面板:记忆统计 + 技能安装/卸载(M2)
 function AgentStatusPanel({ tokenId }: { tokenId: number }) {
@@ -455,6 +575,8 @@ export default function ProfilePage() {
 
         {/* Agent 运行时状态:记忆统计 + 技能管理(M2,仅本人) */}
         {tokenId > 0 && <AgentStatusPanel tokenId={tokenId} />}
+        {/* 任务审批中心(M4,仅本人) */}
+        {tokenId > 0 && <ApprovalCenter tokenId={tokenId} />}
       </div>
       )}
 
