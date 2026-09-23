@@ -8,15 +8,93 @@ import { nftLibrary } from '../mock/data'
 import PaperDoll from '../components/PaperDoll'
 import { personaTemplates, toneOptions, topicOptions } from '../mock/data'
 import { rarityDot } from '../components/NFTCard'
-import { explainChainError, fetchAgentPublic, fetchPersona, setPersonaOnChain } from '../lib/chain'
+import { explainChainError, fetchAgentPublic, fetchPersona, setPersonaOnChain, ensureTargetChain, approveErc20 } from '../lib/chain'
 import { useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay } from '../data/equipmentCatalog'
-import { getAgentStatus, installSkill, listSkills, uninstallSkill, type AgentStatus, type SkillInfo } from '../lib/agentApi'
+import {
+  getAgentStatus,
+  installSkill,
+  listSkills,
+  uninstallSkill,
+  getSwapMode,
+  setSwapMode,
+  type AgentStatus,
+  type SkillInfo,
+  type SwapMode,
+} from '../lib/agentApi'
 import { approveApproval, getApprovals, rejectApproval, type Approval } from '../lib/agentApi'
 import { explorerTx } from '../store/chainConfigStore'
 
+// 兑换执行模式切换(M4):热钱包自动 vs 用户钱包签名
+function SwapModeSection({ tokenId }: { tokenId: number }) {
+  const showToast = useAppStore((s) => s.showToast)
+  const [mode, setMode] = useState<SwapMode>('user_wallet')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    getSwapMode(tokenId)
+      .then((m) => setMode(m))
+      .catch(() => showToast('读取兑换模式失败'))
+      .finally(() => setLoading(false))
+  }, [tokenId])
+
+  const change = async (next: SwapMode) => {
+    if (next === mode) return
+    setSaving(true)
+    try {
+      await setSwapMode(tokenId, next)
+      setMode(next)
+      showToast(next === 'user_wallet' ? '已切换为"我的钱包签名"模式' : '已切换为"热钱包自动执行"模式')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '切换失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="glass p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold">💱 兑换执行模式</h3>
+      </div>
+      {loading ? (
+        <p className="text-xs text-slate-500 animate-pulse">读取中…</p>
+      ) : (
+        <div className="space-y-2">
+          <button
+            onClick={() => change('hot_wallet')}
+            disabled={saving}
+            className={`w-full text-left px-3 py-2 rounded-lg text-xs transition border ${
+              mode === 'hot_wallet'
+                ? 'bg-neon-grad/20 border-neon-purple/50 text-white'
+                : 'glass border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <div className="font-medium">🔥 热钱包自动执行</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">Agent 用专属热钱包自动签名、上链,限额内无需你操作</div>
+          </button>
+          <button
+            onClick={() => change('user_wallet')}
+            disabled={saving}
+            className={`w-full text-left px-3 py-2 rounded-lg text-xs transition border ${
+              mode === 'user_wallet'
+                ? 'bg-neon-grad/20 border-neon-purple/50 text-white'
+                : 'glass border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <div className="font-medium">🔑 我的钱包签名</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">Agent 只组装交易,由你的钱包签名,Agent 负责广播;Gas 你自己付</div>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // 任务审批中心:Agent 的 DeFi 提案超限后在这里由本人放行/拒绝(M4)
-function ApprovalCenter({ tokenId }: { tokenId: number }) {
+// 用户资金路径(如 USDC→AVAX)需要主人钱包先完成 ERC20 approve,再调用后端放行
+function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string }) {
   const showToast = useAppStore((s) => s.showToast)
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [offline, setOffline] = useState(false)
@@ -41,6 +119,14 @@ function ApprovalCenter({ tokenId }: { tokenId: number }) {
     setActing(a.id)
     try {
       if (action === 'approve') {
+        // 用户资金路径:需要先由主人钱包完成 ERC20 approve,后端才能 transferFrom
+        if (a.signatureRequest) {
+          await ensureTargetChain()
+          const { token, spender, amount } = a.signatureRequest
+          showToast('请在钱包中确认 USDC approve 授权')
+          await approveErc20(address as `0x${string}`, token as `0x${string}`, spender as `0x${string}`, BigInt(amount))
+          showToast('USDC 授权已上链,正在放行执行')
+        }
         const r = await approveApproval(a.id)
         showToast(r.txHash ? '✅ 已放行并执行上链' : '已放行')
       } else {
@@ -87,6 +173,12 @@ function ApprovalCenter({ tokenId }: { tokenId: number }) {
                 {a.proposal.protocol} · {new Date(a.created_at).toLocaleString('zh-CN')}
               </div>
               {a.agent_reason && <p className="text-xs text-slate-400 mt-1.5">Agent 理由:{a.agent_reason}</p>}
+              {a.signatureRequest && (
+                <p className="text-xs text-amber-300 mt-1.5">
+                  ⚠️ 该提案需先用你的钱包对 {a.signatureRequest.tokenSymbol} 授权({a.signatureRequest.spender.slice(0, 6)}…
+                  {a.signatureRequest.spender.slice(-4)}),放行时会弹出签名
+                </p>
+              )}
               <div className="flex gap-2 mt-3">
                 <button
                   className="btn-primary flex-1 !text-xs !py-1.5"
@@ -575,8 +667,10 @@ export default function ProfilePage() {
 
         {/* Agent 运行时状态:记忆统计 + 技能管理(M2,仅本人) */}
         {tokenId > 0 && <AgentStatusPanel tokenId={tokenId} />}
+        {/* 兑换执行模式切换(M4,仅本人) */}
+        {tokenId > 0 && <SwapModeSection tokenId={tokenId} />}
         {/* 任务审批中心(M4,仅本人) */}
-        {tokenId > 0 && <ApprovalCenter tokenId={tokenId} />}
+        {tokenId > 0 && <ApprovalCenter tokenId={tokenId} address={address ?? ''} />}
       </div>
       )}
 

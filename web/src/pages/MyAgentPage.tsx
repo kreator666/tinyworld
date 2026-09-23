@@ -10,12 +10,15 @@ import {
   listMessages,
   type Conversation,
   type ConversationMessage,
+  type UnsignedTx,
 } from '../lib/agentApi'
+import { sendTransactions } from '../lib/chain'
 
 // 我的 Agent 助手(豆包式):只属于自己的 Agent 对话,支持多个会话,历史存后端
 export default function MyAgentPage() {
   const showToast = useAppStore((s) => s.showToast)
   const { tokenId, didName } = useChainStore()
+  const address = useAppStore((s) => s.address)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ConversationMessage[]>([])
@@ -23,6 +26,8 @@ export default function MyAgentPage() {
   const [sending, setSending] = useState(false)
   const [offline, setOffline] = useState(false)
   const [loadingList, setLoadingList] = useState(true)
+  const [pendingSignTx, setPendingSignTx] = useState<{ unsignedTxs: UnsignedTx[]; note?: string } | null>(null)
+  const [signing, setSigning] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
   const reloadConversations = useCallback(
@@ -89,6 +94,7 @@ export default function MyAgentPage() {
     const text = draft.trim()
     if (!text || sending || tokenId === 0) return
     setSending(true)
+    setPendingSignTx(null) // 新消息发送时清空上一条待签名
     try {
       // 没有会话就先建一个
       let cid = activeId
@@ -107,14 +113,32 @@ export default function MyAgentPage() {
       setDraft('')
       const r = await chatInConversation(cid, text)
       // 从后端重拉,保证与落库一致(含自动生成的标题)
-      const [msgs] = await Promise.all([listMessages(cid)])
+      const msgs = await listMessages(cid)
       setMessages(msgs)
       if (r.refused) showToast('人格开关拦截了这次回复')
+      if (r.action?.type === 'sign_tx') {
+        setPendingSignTx({ unsignedTxs: r.action.unsignedTxs, note: r.action.note })
+      }
       reloadConversations()
     } catch (err) {
       showToast(err instanceof TypeError ? 'Agent 服务未启动(cd agent && npm run dev)' : '发送失败,请重试')
     } finally {
       setSending(false)
+    }
+  }
+
+  /** 用户钱包签名模式:钱包直接发送 unsigned tx(sendTransactions 内部会切链) */
+  const signAndBroadcast = async () => {
+    if (!pendingSignTx || !address || tokenId === 0) return
+    setSigning(true)
+    try {
+      const txHashes = await sendTransactions(address as `0x${string}`, pendingSignTx.unsignedTxs)
+      showToast(`已上链 ${txHashes[0].slice(0, 10)}…${txHashes[0].slice(-4)}`)
+      setPendingSignTx(null)
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '签名或发送失败')
+    } finally {
+      setSigning(false)
     }
   }
 
@@ -187,6 +211,29 @@ export default function MyAgentPage() {
               </div>
             ))}
             {sending && <div className="text-xs text-slate-500 animate-pulse">🤖 正在思考…</div>}
+            {pendingSignTx && !signing && (
+              <div className="flex justify-start">
+                <div className="max-w-[85%] glass rounded-xl p-3 border border-neon-purple/40">
+                  <div className="text-sm flex items-center gap-2">
+                    <span>🔏</span>
+                    <span>需要你的钱包签名以完成兑换</span>
+                  </div>
+                  {pendingSignTx.note && <p className="text-xs text-slate-400 mt-1.5">{pendingSignTx.note}</p>}
+                  <div className="text-[10px] text-slate-500 mt-1.5">
+                    共 {pendingSignTx.unsignedTxs.length} 笔待签交易
+                  </div>
+                  <button
+                    className="btn-primary w-full mt-3 !text-xs !py-1.5"
+                    onClick={signAndBroadcast}
+                    disabled={!address || signing}
+                  >
+                    签名并发送
+                  </button>
+                  {!address && <p className="text-[10px] text-rose-400 mt-1.5">请先连接钱包</p>}
+                </div>
+              </div>
+            )}
+            {signing && <div className="text-xs text-slate-500 animate-pulse">⏳ 等待钱包签名…</div>}
           </div>
           <div className="border-t border-white/10 p-3 flex items-center gap-2">
             <input

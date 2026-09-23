@@ -4,7 +4,6 @@ import { useAppStore } from '../store/appStore'
 import {
   getAvailableWallets,
   connectAndSign,
-  setActiveProvider,
   type DiscoveredWallet,
   type EIP6963ProviderDetail,
   WalletError,
@@ -30,6 +29,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
     let mounted = true
     getAvailableWallets().then((list) => {
       if (!mounted) return
+      console.log('[WalletModal] discovered wallets', list)
       setWallets(list)
       setScanning(false)
     })
@@ -39,6 +39,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
   }, [])
 
   const handlePick = async (wallet: DiscoveredWallet) => {
+    console.log('[WalletModal] handlePick', wallet.name, wallet.installed, wallet.detail)
     if (!wallet.installed || !wallet.detail) {
       showToast(`${wallet.name} 未安装，请先安装钱包扩展`)
       return
@@ -50,8 +51,6 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
     try {
       const result = await connectAndSign(wallet.detail, wallet.name)
       setPhase('signing')
-      // 暂存 provider 供后续链上交易使用
-      setActiveProvider(wallet.detail.provider)
       connect({
         address: result.address,
         signature: result.signature,

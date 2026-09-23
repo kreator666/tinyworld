@@ -7,6 +7,21 @@ export interface AgentChatResult {
   reply: string
   tokenId: number
   refused: boolean // true = 人格开关拦截(emergency / autoReply=false)
+  action?: SignTxAction
+}
+
+export interface UnsignedTx {
+  to: string
+  data: string
+  value: string // wei
+  chainId: number
+  description: string
+}
+
+export interface SignTxAction {
+  type: 'sign_tx'
+  unsignedTxs: UnsignedTx[]
+  note?: string
 }
 
 /** 与自己的 Agent 对话;服务不可达时抛错,由调用方降级提示 */
@@ -126,7 +141,7 @@ export const listMessages = (conversationId: string) =>
   apiCall<{ messages: ConversationMessage[] }>(`/conversations/${conversationId}/messages`).then((r) => r.messages)
 
 export const chatInConversation = (conversationId: string, message: string) =>
-  apiCall<{ reply: string; refused: boolean }>(`/conversations/${conversationId}/chat`, {
+  apiCall<{ reply: string; refused: boolean; action?: SignTxAction }>(`/conversations/${conversationId}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
@@ -135,6 +150,15 @@ export const chatInConversation = (conversationId: string, message: string) =>
 // ============================================================
 // M4:任务审批中心(超限 DeFi 提案的人工放行/拒绝)
 // ============================================================
+
+export interface SignatureRequest {
+  type: 'erc20_approve'
+  token: string
+  tokenSymbol: string
+  spender: string
+  amount: string
+  decimals: number
+}
 
 export interface Approval {
   id: string
@@ -145,6 +169,7 @@ export interface Approval {
     params?: { tokenIn?: string; tokenOut?: string; amountIn?: string }
     estimatedValueUsd?: number | null
   }
+  signatureRequest?: SignatureRequest | null
   agent_reason?: string
   status: 'pending' | 'approved' | 'rejected' | 'executed' | 'failed'
   tx_hash?: string | null
@@ -160,3 +185,26 @@ export const approveApproval = (id: string) =>
 
 export const rejectApproval = (id: string) =>
   apiCall<{ ok: boolean }>(`/approvals/${id}/reject`, { method: 'POST' })
+
+// ============================================================
+// M4:Agent 设置 + 用户钱包签名广播
+// ============================================================
+
+export type SwapMode = 'hot_wallet' | 'user_wallet'
+
+export const getSwapMode = (tokenId: number) =>
+  apiCall<{ tokenId: number; swapMode: SwapMode }>(`/agents/${tokenId}/settings`).then((r) => r.swapMode)
+
+export const setSwapMode = (tokenId: number, swapMode: SwapMode) =>
+  apiCall<{ ok: boolean; swapMode: SwapMode }>(`/agents/${tokenId}/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ swapMode }),
+  })
+
+export const broadcastSignedTxs = (tokenId: number, signedTxs: string[]) =>
+  apiCall<{ ok: boolean; txHashes: string[]; explorer: string }>(`/agents/${tokenId}/broadcast`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signedTxs }),
+  })

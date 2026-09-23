@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server'
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
-import { isAddress, type Address } from 'viem'
+import { isAddress, type Address, type Hex } from 'viem'
 import { config } from './config'
 import { PersonaError, loadPersona, resolveTokenId } from './chain/persona'
 import { chatWithAgent, invalidateAgent, reloadAgent } from './core/agent'
@@ -20,6 +20,8 @@ import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToD
 import { startScheduler, stopScheduler } from './core/scheduler'
 import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
+import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
+import { broadcastSignedTx } from './chain/defi'
 import { executeProposal } from './skills/defi-swap'
 
 // ============================================================
@@ -28,8 +30,12 @@ import { executeProposal } from './skills/defi-swap'
 
 const app = new Hono()
 
-// 前端 dev 服务器固定跑在 5173
-app.use('/*', cors({ origin: ['http://localhost:5173'] }))
+// 前端 dev 服务器固定跑在 5173;生产环境可通过 CORS_ORIGIN 追加来源,多个用逗号分隔
+const defaultOrigins = ['http://localhost:5173']
+const corsOrigins = process.env.CORS_ORIGIN
+  ? [...defaultOrigins, ...process.env.CORS_ORIGIN.split(',').map((s) => s.trim())]
+  : defaultOrigins
+app.use('/*', cors({ origin: corsOrigins }))
 
 app.get('/health', (c) => c.json({ ok: true }))
 
@@ -89,7 +95,7 @@ app.post('/agents/by-owner/:address/chat', async (c) => {
     const tokenId = await resolveTokenId(address as Address)
     if (tokenId === 0) return c.json({ error: '该地址还没有铸造 Agent,请先去铸造' }, 404)
     const result = await chatWithAgent(tokenId, message)
-    return c.json({ reply: result.reply, tokenId, refused: result.refused })
+    return c.json({ reply: result.reply, tokenId, refused: result.refused, action: result.action })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -113,7 +119,7 @@ app.post('/agents/:tokenId/chat', async (c) => {
       await recordSocialMessage(fromTokenId, tokenId, message, 'user')
       await recordSocialMessage(tokenId, fromTokenId, result.reply, 'auto')
     }
-    return c.json({ reply: result.reply, tokenId, refused: result.refused })
+    return c.json({ reply: result.reply, tokenId, refused: result.refused, action: result.action })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -304,7 +310,7 @@ app.post('/conversations/:id/chat', async (c) => {
     if (!conv) return c.json({ error: '会话不存在' }, 404)
     const result = await chatInConversation(conv.tokenId, id, message)
     if (result === null) return c.json({ error: '会话不存在' }, 404)
-    return c.json({ reply: result.reply, refused: result.refused })
+    return c.json({ reply: result.reply, refused: result.refused, action: result.action })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -357,6 +363,62 @@ app.post('/approvals/:id/reject', async (c) => {
     if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
     await resolveApproval(id, 'rejected')
     return c.json({ ok: true, status: 'rejected' })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// ============================================================
+// M4:Agent 设置(兑换执行模式等)
+// ============================================================
+
+// 查询 Agent 设置
+app.get('/agents/:tokenId/settings', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const swapMode = await getSwapMode(tokenId)
+    return c.json({ tokenId, swapMode })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 更新 Agent 设置
+app.post('/agents/:tokenId/settings', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  const body = await c.req.json<{ swapMode?: SwapMode }>().catch(() => null)
+  if (!body?.swapMode || (body.swapMode !== 'hot_wallet' && body.swapMode !== 'user_wallet')) {
+    return c.json({ error: 'swapMode 必须是 hot_wallet 或 user_wallet' }, 400)
+  }
+  try {
+    await setSwapMode(tokenId, body.swapMode)
+    return c.json({ ok: true, tokenId, swapMode: body.swapMode })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 用户钱包签名模式:后端广播签名后的 raw transaction
+app.post('/agents/:tokenId/broadcast', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  const body = await c.req.json<{ signedTxs?: string[] }>().catch(() => null)
+  if (!body?.signedTxs || !Array.isArray(body.signedTxs) || body.signedTxs.length === 0) {
+    return c.json({ error: 'signedTxs 不能为空数组' }, 400)
+  }
+  try {
+    const txHashes: Hex[] = []
+    for (const signedTx of body.signedTxs) {
+      const hash = await broadcastSignedTx(signedTx as Hex)
+      txHashes.push(hash)
+    }
+    return c.json({
+      ok: true,
+      txHashes,
+      explorer: config.chain.explorer,
+    })
   } catch (err) {
     return handleErr(c, err)
   }

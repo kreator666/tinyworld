@@ -185,27 +185,47 @@ export async function connectAndSign(detail: EIP6963ProviderDetail, providerName
   }
 
   const provider = detail.provider
+  console.log('[connectAndSign] provider', providerName, provider)
 
   let accounts: unknown
+  let workingProvider: EIP1193Provider = provider
   try {
     accounts = await provider.request({ method: 'eth_requestAccounts' })
+    console.log('[connectAndSign] accounts', accounts)
   } catch (err) {
+    console.error('[connectAndSign] eth_requestAccounts failed', err)
     const msg = err instanceof Error ? err.message : String(err)
     if (msg.includes('User rejected') || msg.includes('rejected') || msg.includes('denied')) {
       throw new WalletError('USER_REJECTED', '用户拒绝了钱包连接')
     }
-    throw new WalletError('CONNECT_FAILED', `连接钱包失败: ${msg}`)
+    // 兼容 EIP-6963 provider 不响应时,回退到 window.ethereum
+    const winEth = typeof window !== 'undefined' ? (window as unknown as { ethereum?: EIP1193Provider }).ethereum : undefined
+    if (winEth?.request && winEth !== provider) {
+      try {
+        accounts = await winEth.request({ method: 'eth_requestAccounts' })
+        workingProvider = winEth
+        console.log('[connectAndSign] fallback accounts', accounts)
+      } catch (fallbackErr) {
+        const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+        throw new WalletError('CONNECT_FAILED', `连接钱包失败: ${fbMsg}`)
+      }
+    } else {
+      throw new WalletError('CONNECT_FAILED', `连接钱包失败: ${msg}`)
+    }
   }
+
+  // 把实际能用的 provider 存下来,供后续链上交易使用
+  setActiveProvider(workingProvider)
 
   const addressList = Array.isArray(accounts) ? (accounts as string[]) : []
   if (!addressList.length) {
-    throw new WalletError('NO_ACCOUNTS', '钱包未返回地址')
+    throw new WalletError('NO_ACCOUNTS', '钱包未返回地址,请确认已在 MetaMask 中解锁并授权本站点')
   }
   const address = addressList[0].toLowerCase() as Address
 
   let chainIdRaw: unknown
   try {
-    chainIdRaw = await provider.request({ method: 'eth_chainId' })
+    chainIdRaw = await workingProvider.request({ method: 'eth_chainId' })
   } catch {
     chainIdRaw = '0x1'
   }
@@ -214,18 +234,21 @@ export async function connectAndSign(detail: EIP6963ProviderDetail, providerName
   const client = createWalletClient({
     account: address,
     chain: { id: chainId, name: 'Unknown', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [] } } },
-    transport: custom(provider),
+    transport: custom(workingProvider),
   })
 
   const nonce = generateNonce()
   const timestamp = Date.now()
   const typedData = getTypedData(chainId, address, nonce, timestamp)
+  console.log('[connectAndSign] signing typed data', typedData)
 
   let signature: `0x${string}`
   try {
     signature = await client.signTypedData(typedData)
+    console.log('[connectAndSign] signature', signature)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    console.error('[connectAndSign] signTypedData failed', err)
     if (msg.includes('User rejected') || msg.includes('rejected') || msg.includes('denied')) {
       throw new WalletError('SIGN_REJECTED', '用户拒绝了签名')
     }

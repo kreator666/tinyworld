@@ -1,8 +1,24 @@
 import { createPublicClient, createWalletClient, custom, http, zeroAddress, type Address, type Hash } from 'viem'
+import type { UnsignedTx } from './agentApi'
 import type { Equipped } from '../types'
 import { getActiveProvider } from './wallet'
 import { SLOT_TO_CATEGORY, chainParts, identityAbi, partByChainId, partsAbi } from './contracts'
 import { getActiveChain } from '../store/chainConfigStore'
+import { avalancheFuji, sepolia } from 'viem/chains'
+
+// 最小 ERC20 ABI:审批中心对用户资金路径(USDC→AVAX)需要先 approve 热钱包
+const erc20Abi = [
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+] as const
 
 // 激活链配置(运行时读取,跟随导航栏切链按钮)
 const A = getActiveChain
@@ -64,16 +80,24 @@ function walletClient(account: Address) {
   return createWalletClient({ account, chain: A().chain, transport: custom(provider) })
 }
 
-/** 确保钱包切到目标链(未添加过则先添加网络;链名/币种/RPC 全部来自按链配置) */
-export async function ensureTargetChain(): Promise<void> {
+/** 按 chainId 取链配置(用于发送后端组装的 unsigned tx 时切到对应网络) */
+function chainById(chainId: number) {
+  if (chainId === avalancheFuji.id) return { chain: avalancheFuji, name: 'Fuji', rpc: 'https://api.avax-test.network/ext/bc/C/rpc', explorer: 'https://testnet.snowtrace.io' }
+  if (chainId === sepolia.id) return { chain: sepolia, name: 'Sepolia', rpc: 'https://ethereum-sepolia-rpc.publicnode.com', explorer: 'https://sepolia.etherscan.io' }
+  throw new Error(`不支持的链 ID: ${chainId}`)
+}
+
+/** 确保钱包切到指定链(未添加过则先添加网络) */
+export async function ensureChain(chainId: number): Promise<void> {
   const provider = getActiveProvider()
   if (!provider) throw new Error('未检测到钱包扩展')
   const chainIdHex = (await provider.request({ method: 'eth_chainId' })) as string
-  if (Number.parseInt(chainIdHex, 16) === A().chainId) return
+  if (Number.parseInt(chainIdHex, 16) === chainId) return
+  const target = chainById(chainId)
   try {
     await provider.request({
       method: 'wallet_switchEthereumChain',
-      params: [{ chainId: `0x${A().chainId.toString(16)}` }],
+      params: [{ chainId: `0x${chainId.toString(16)}` }],
     })
   } catch (err) {
     const code = (err as { code?: number })?.code
@@ -82,11 +106,11 @@ export async function ensureTargetChain(): Promise<void> {
         method: 'wallet_addEthereumChain',
         params: [
           {
-            chainId: `0x${A().chainId.toString(16)}`,
-            chainName: A().chain.name,
-            nativeCurrency: A().chain.nativeCurrency,
-            rpcUrls: [A().rpc],
-            blockExplorerUrls: [A().explorer],
+            chainId: `0x${chainId.toString(16)}`,
+            chainName: target.chain.name,
+            nativeCurrency: target.chain.nativeCurrency,
+            rpcUrls: [target.rpc],
+            blockExplorerUrls: [target.explorer],
           },
         ],
       })
@@ -94,6 +118,11 @@ export async function ensureTargetChain(): Promise<void> {
     }
     throw err
   }
+}
+
+/** 确保钱包切到目标链(未添加过则先添加网络;链名/币种/RPC 全部来自按链配置) */
+export async function ensureTargetChain(): Promise<void> {
+  return ensureChain(A().chainId)
 }
 
 /** 读取地址的链上身份与配件资产(使用 balanceOfBatch 优化,避免 120 次单读) */
@@ -433,6 +462,136 @@ export async function mintPartsBatch(owner: Address, to: Address, ids: bigint[],
   })
   await readClient().waitForTransactionReceipt({ hash })
   return hash
+}
+
+/** 用户钱包对指定 spender 做 ERC20 approve(USDC→AVAX 资金路径的前置签名) */
+export async function approveErc20(owner: Address, token: Address, spender: Address, amount: bigint): Promise<Hash> {
+  const wallet = walletClient(owner)
+  const hash = await wallet.writeContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [spender, amount],
+    gas: 100000n,
+  })
+  await readClient().waitForTransactionReceipt({ hash })
+  return hash
+}
+
+function requestWithTimeout<T>(
+  provider: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> },
+  args: { method: string; params?: unknown[] },
+  ms = 12000,
+): Promise<T> {
+  return Promise.race([
+    provider.request(args) as Promise<T>,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('钱包请求超时,未收到响应')), ms)),
+  ])
+}
+
+function getWindowEthereum() {
+  return typeof window !== 'undefined' ? (window as unknown as { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum : undefined
+}
+
+/** 拿一个能用的 provider:activeProvider 失效时回退到 window.ethereum */
+async function getUsableProvider(): Promise<NonNullable<ReturnType<typeof getWindowEthereum>>> {
+  const active = getActiveProvider()
+  if (active) {
+    try {
+      await requestWithTimeout<string>(active, { method: 'eth_chainId' }, 3000)
+      return active
+    } catch (err) {
+      console.warn('[sendTransactions] activeProvider 失效,尝试 window.ethereum 回退', err)
+    }
+  }
+  const winEth = getWindowEthereum()
+  if (winEth?.request) {
+    try {
+      await requestWithTimeout<string>(winEth as NonNullable<typeof winEth>, { method: 'eth_chainId' }, 3000)
+      return winEth as NonNullable<typeof winEth>
+    } catch (err) {
+      console.warn('[sendTransactions] window.ethereum 也不可用', err)
+    }
+  }
+  throw new Error('未检测到已连接的钱包,请先连接')
+}
+
+/** 确保钱包已连接到当前站点(刷新后 activeProvider 可能丢失,但 window.ethereum 仍在) */
+async function ensureAccounts(provider: NonNullable<ReturnType<typeof getWindowEthereum>>): Promise<void> {
+  const accounts = (await requestWithTimeout<unknown[]>(provider, { method: 'eth_accounts' }, 3000)) ?? []
+  if (accounts.length === 0) {
+    await requestWithTimeout<unknown[]>(provider, { method: 'eth_requestAccounts' }, 30000)
+  }
+}
+
+/** 用户钱包对 unsigned tx 逐笔签名并发送(兼容不支持 eth_signTransaction 的钱包如 MetaMask) */
+export async function sendTransactions(owner: Address, unsignedTxs: UnsignedTx[]): Promise<string[]> {
+  if (unsignedTxs.length === 0) throw new Error('没有待发送交易')
+  const targetChainId = unsignedTxs[0].chainId
+  if (unsignedTxs.some((tx) => tx.chainId !== targetChainId)) {
+    throw new Error('待发送交易必须属于同一条链')
+  }
+
+  const provider = await getUsableProvider()
+
+  // 刷新后或钱包未授权时,先触发连接弹窗;否则 eth_sendTransaction 可能不弹窗直接失败
+  await ensureAccounts(provider)
+
+  // 自动切链,避免用户手动切链导致体验中断
+  const chainIdHex = (await requestWithTimeout<string>(provider, { method: 'eth_chainId' }, 3000)) ?? '0x1'
+  const currentChainId = Number.parseInt(chainIdHex, 16)
+  if (currentChainId !== targetChainId) {
+    const target = chainById(targetChainId)
+    try {
+      await provider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: `0x${targetChainId.toString(16)}` }],
+      })
+    } catch (err) {
+      const code = (err as { code?: number })?.code
+      if (code === 4902) {
+        await provider.request({
+          method: 'wallet_addEthereumChain',
+          params: [
+            {
+              chainId: `0x${targetChainId.toString(16)}`,
+              chainName: target.chain.name,
+              nativeCurrency: target.chain.nativeCurrency,
+              rpcUrls: [target.rpc],
+              blockExplorerUrls: [target.explorer],
+            },
+          ],
+        })
+      } else {
+        throw new Error(`请先将钱包切换到 ${target.name} 网络(当前链 ID ${currentChainId},需要 ${targetChainId})`)
+      }
+    }
+  }
+
+  const target = chainById(targetChainId)
+  const txHashes: string[] = []
+  for (const tx of unsignedTxs) {
+    console.log('[sendTransactions] eth_sendTransaction', { from: owner, to: tx.to, value: tx.value })
+    const hash = (await requestWithTimeout<string>(provider, {
+      method: 'eth_sendTransaction',
+      params: [
+        {
+          from: owner,
+          to: tx.to,
+          data: tx.data,
+          value: `0x${BigInt(tx.value).toString(16)}`,
+        },
+      ],
+    }, 60000)) as string
+    console.log('[sendTransactions] tx hash', hash)
+    txHashes.push(hash)
+    // 多笔交易(approve + swap)时等待前一笔确认,避免 nonce/依赖问题
+    if (unsignedTxs.length > 1) {
+      const publicClient = createPublicClient({ chain: target.chain, transport: http(target.rpc) })
+      await publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}` })
+    }
+  }
+  return txHashes
 }
 
 /** 把链上错误翻译成中文提示 */

@@ -146,6 +146,13 @@ export async function initSchema(): Promise<void> {
       resolved_at TIMESTAMPTZ
     );
     CREATE INDEX IF NOT EXISTS approvals_token_idx ON approvals (token_id, created_at);
+
+    -- Agent 级设置(M4):兑换执行模式等可由主人调整的开关
+    CREATE TABLE IF NOT EXISTS agent_settings (
+      token_id INTEGER PRIMARY KEY,
+      swap_mode TEXT NOT NULL DEFAULT 'hot_wallet' CHECK (swap_mode IN ('hot_wallet', 'user_wallet')),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `)
 }
 

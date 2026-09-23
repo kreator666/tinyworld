@@ -1,5 +1,6 @@
 import { config } from '../config'
 import { getDb } from '../db'
+import type { UnsignedTx } from '../chain/defi'
 
 // ============================================================
 // 策略引擎(M4,设计文档 §7.2):所有链上写操作的必经关卡
@@ -7,19 +8,34 @@ import { getDb } from '../db'
 // 阈值走 env(POLICY_MAX_TX_USD 等,见 config.ts),默认单笔 $25、日累计 $125、冷却 10 分钟
 // ============================================================
 
+export type ExecutionMode = 'hot_wallet' | 'user_wallet'
+
 /** 交易提案(defi-swap 生成,审批放行后按 proposal.params 原样执行) */
 export interface Proposal {
   action: 'swap'
   protocol: string // router 地址
   chainId: number
   params: {
-    tokenIn: string // 'native' 表示原生币(AVAX/ETH)
-    tokenOut: string // ERC20 地址
-    amountInWei: string // bigint 序列化
+    tokenIn: string // 'native' 表示原生币(AVAX/ETH),否则为 ERC20 地址(用户资金路径)
+    tokenOut: string // ERC20 地址,或 'native'(代币换原生币)
+    amountIn: string // 最小单位字符串(native=wei,USDC=6 位)
     amountOutMin: string
+    owner?: string // 用户资金路径:出资人(主人)地址,代执行时 transferFrom 的 from
   }
+  executionMode: ExecutionMode // 由 Agent 设置或用户显式指定
   estimatedValueUsd: number | null // null = 价格源失败(熔断信号)
   reason: string // Agent 给出的提案理由(审计用)
+  // 用户钱包签名模式:Agent 组装好但尚未签名的交易(前端钱包签名后后端广播)
+  unsignedTxs?: UnsignedTx[]
+  // 需要用户钱包签名的前置动作(目前仅 ERC20 approve);前端拿到后弹钱包插件签名
+  signatureRequest?: {
+    type: 'erc20_approve'
+    token: string
+    tokenSymbol: string
+    spender: string
+    amount: string // 最小单位字符串
+    decimals: number
+  }
 }
 
 export interface Verdict {
@@ -75,12 +91,12 @@ export async function evaluateProposal(p: Proposal): Promise<Verdict> {
     hardFail.push(`协议不在白名单: ${p.protocol}(当前链仅允许 ${config.chain.defi.router})`)
   }
 
-  // 代币白名单
+  // 代币白名单('native' 表示原生币,两个方向都允许)
   const whitelist = tokenWhitelist()
   if (p.params.tokenIn !== 'native' && !whitelist.includes(p.params.tokenIn.toLowerCase())) {
     hardFail.push(`tokenIn 不在白名单: ${p.params.tokenIn}`)
   }
-  if (!whitelist.includes(p.params.tokenOut.toLowerCase())) {
+  if (p.params.tokenOut !== 'native' && !whitelist.includes(p.params.tokenOut.toLowerCase())) {
     hardFail.push(`tokenOut 不在白名单: ${p.params.tokenOut}`)
   }
 
