@@ -1,7 +1,7 @@
 // Agent 运行时服务(agent/ 包)的对话接口
 // base 可用 VITE_AGENT_API 覆盖,默认本地 dev 端口 4111
 
-const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? 'http://localhost:4111'
+const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? ''
 
 export interface AgentChatResult {
   reply: string

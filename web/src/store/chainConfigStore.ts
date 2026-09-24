@@ -14,7 +14,7 @@ interface ChainConfigState {
   hydrateFromApi: () => Promise<void>
 }
 
-const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? 'http://localhost:4111'
+const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? ''
 
 export const useChainConfig = create<ChainConfigState>((set, get) => ({
   active: CONTRACTS_BY_KEY.sepolia,
