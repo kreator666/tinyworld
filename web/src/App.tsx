@@ -18,7 +18,16 @@ import MyAgentPage from './pages/MyAgentPage'
 // 未连接钱包守卫:其余页面一律跳回首页
 function Guard({ children }: { children: ReactNode }) {
   const connected = useAppStore((s) => s.connected)
+  const hydrated = useAppStore((s) => s.hydrated)
   const loc = useLocation()
+  // 等待持久化恢复完成后再判断登录态,避免刷新/链切换后错误跳回首页
+  if (!hydrated) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center text-white/70">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+      </div>
+    )
+  }
   if (!connected) return <Navigate to="/" state={{ from: loc.pathname }} replace />
   return <>{children}</>
 }
@@ -68,6 +77,13 @@ function WalletEvents() {
 }
 
 export default function App() {
+  const setHydrated = useAppStore((s) => s.setHydrated)
+
+  useEffect(() => {
+    // 持久化恢复默认同步完成,用 useEffect 标记 hydrated 可确保 Guard 不会永远等待
+    setHydrated(true)
+  }, [setHydrated])
+
   return (
     <HashRouter>
       <div className="min-h-full flex flex-col">

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { AIProfile, ChatSession, DIDIdentity, Equipped, NFTCategory, NFTItem, WalletLogin } from '../types'
 import { aiReplies, nftLibrary } from '../mock/data'
 
@@ -26,6 +27,7 @@ interface AppState {
   login: WalletLogin | null
   connect: (login: WalletLogin) => void
   disconnect: () => void
+  setHydrated: (hydrated: boolean) => void
   // DID 身份
   did: DIDIdentity | null
   mintDID: (name: string, bio: string, chain: DIDIdentity['chain'], equipped: Equipped) => void
@@ -54,19 +56,25 @@ interface AppState {
   // 全局提示
   toast: string | null
   showToast: (msg: string) => void
+  // 持久化恢复完成标记
+  hydrated: boolean
 }
 
 const now = () => new Date().toTimeString().slice(0, 5)
 let msgSeq = 100
 
-export const useAppStore = create<AppState>((set, get) => ({
-  connected: false,
-  address: null,
-  provider: null,
-  login: null,
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      connected: false,
+      address: null,
+      provider: null,
+      login: null,
   connect: (login) =>
     set({ connected: true, provider: login.provider, address: login.address, login }),
   disconnect: () => set({ connected: false, provider: null, address: null, login: null }),
+  setHydrated: (hydrated) => set({ hydrated }),
+  hydrated: false,
 
   did: null,
   mintDID: (name, bio, chain, equipped) =>
@@ -196,4 +204,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ toast: msg })
     setTimeout(() => set({ toast: null }), 2600)
   },
-}))
+}),
+{
+  name: 'app-store',
+  // 只持久化钱包登录态,避免链上数据/聊天列表等过期数据被固化
+  partialize: (state) => ({
+    connected: state.connected,
+    address: state.address,
+    provider: state.provider,
+    login: state.login,
+  }),
+})
+)
