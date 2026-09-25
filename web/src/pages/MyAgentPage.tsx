@@ -4,6 +4,7 @@ import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import {
   chatInConversation,
+  confirmSign,
   createConversation,
   deleteConversation,
   listConversations,
@@ -26,7 +27,7 @@ export default function MyAgentPage() {
   const [sending, setSending] = useState(false)
   const [offline, setOffline] = useState(false)
   const [loadingList, setLoadingList] = useState(true)
-  const [pendingSignTx, setPendingSignTx] = useState<{ unsignedTxs: UnsignedTx[]; note?: string } | null>(null)
+  const [pendingSignTx, setPendingSignTx] = useState<{ unsignedTxs: UnsignedTx[]; note?: string; proposal?: Record<string, unknown> } | null>(null)
   const [signing, setSigning] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -117,7 +118,7 @@ export default function MyAgentPage() {
       setMessages(msgs)
       if (r.refused) showToast('人格开关拦截了这次回复')
       if (r.action?.type === 'sign_tx') {
-        setPendingSignTx({ unsignedTxs: r.action.unsignedTxs, note: r.action.note })
+        setPendingSignTx({ unsignedTxs: r.action.unsignedTxs, note: r.action.note, proposal: r.action.proposal })
       }
       reloadConversations()
     } catch (err) {
@@ -127,13 +128,21 @@ export default function MyAgentPage() {
     }
   }
 
-  /** 用户钱包签名模式:钱包直接发送 unsigned tx(sendTransactions 内部会切链) */
+  /** 用户钱包签名模式:钱包直接发送 unsigned tx(sendTransactions 内部会切链),成功回写后端 */
   const signAndBroadcast = async () => {
     if (!pendingSignTx || !address || tokenId === 0) return
     setSigning(true)
     try {
       const txHashes = await sendTransactions(address as `0x${string}`, pendingSignTx.unsignedTxs)
-      showToast(`已上链 ${txHashes[0].slice(0, 10)}…${txHashes[0].slice(-4)}`)
+      const swapTxHash = txHashes[txHashes.length - 1]
+      showToast(`已上链 ${swapTxHash.slice(0, 10)}…${swapTxHash.slice(-4)}`)
+      if (pendingSignTx.proposal) {
+        try {
+          await confirmSign(tokenId, swapTxHash, pendingSignTx.proposal)
+        } catch (e) {
+          console.warn('上报签名结果到 Agent 服务失败', e)
+        }
+      }
       setPendingSignTx(null)
     } catch (err) {
       showToast(err instanceof Error ? err.message : '签名或发送失败')

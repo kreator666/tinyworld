@@ -22,7 +22,8 @@ import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
-import { executeProposal } from './skills/defi-swap'
+import { executeProposal, recordDefiTask } from './skills/defi-swap'
+import type { Proposal } from './policy/engine'
 
 // ============================================================
 // API 网关(hono):健康检查、人格调试、对话,以及 M2 的记忆/技能管理端点
@@ -419,6 +420,30 @@ app.post('/agents/:tokenId/broadcast', async (c) => {
       txHashes,
       explorer: config.chain.explorer,
     })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 用户钱包签名模式:前端已用钱包直接发送交易,把结果回写后端(限额/审计)
+app.post('/agents/:tokenId/sign-confirm', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  const body = await c.req.json<{ txHash?: string; proposal?: { action: string } }>().catch(() => null)
+  if (!body?.txHash || typeof body.txHash !== 'string') {
+    return c.json({ error: 'txHash 不能为空' }, 400)
+  }
+  if (!body?.proposal || body.proposal.action !== 'swap') {
+    return c.json({ error: 'proposal 不合法' }, 400)
+  }
+  try {
+    const proposal = body.proposal as Proposal
+    await recordDefiTask(tokenId, proposal, {
+      txHash: body.txHash,
+      amountOut: '0',
+      usdValue: proposal.estimatedValueUsd ?? null,
+    })
+    return c.json({ ok: true })
   } catch (err) {
     return handleErr(c, err)
   }

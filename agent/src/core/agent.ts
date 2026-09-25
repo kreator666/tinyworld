@@ -5,6 +5,7 @@ import type { Address } from 'viem'
 import { config } from '../config'
 import { loadPersona, type LoadedPersona, getWalletAssets } from '../chain/persona'
 import type { UnsignedTx } from '../chain/defi'
+import type { Proposal } from '../policy/engine'
 import { retrieveContext, writeEpisodic } from './memory'
 import { getToolsFor } from '../skills'
 import { createTool } from '@mastra/core/tools'
@@ -31,6 +32,16 @@ export interface SignTxAction {
   type: 'sign_tx'
   unsignedTxs: UnsignedTx[]
   note?: string
+  /** 用户钱包签名模式:Agent 组装交易时对应的提案,签名完成后回传后端记 tasks 表(限额/审计) */
+  proposal?: {
+    action: 'swap'
+    protocol: string
+    chainId: number
+    params: Proposal['params']
+    executionMode: Proposal['executionMode']
+    estimatedValueUsd: number | null
+    reason: string
+  }
 }
 
 export interface ChatResult {

@@ -22,6 +22,8 @@ export interface SignTxAction {
   type: 'sign_tx'
   unsignedTxs: UnsignedTx[]
   note?: string
+  /** 用户钱包签名模式:Agent 组装交易时对应的提案,签名完成后回传后端记 tasks 表(限额/审计) */
+  proposal?: Record<string, unknown>
 }
 
 /** 与自己的 Agent 对话;服务不可达时抛错,由调用方降级提示 */
@@ -207,4 +209,12 @@ export const broadcastSignedTxs = (tokenId: number, signedTxs: string[]) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ signedTxs }),
+  })
+
+/** 用户钱包签名模式:前端已用钱包直接发送交易,把结果回写后端(限额/审计) */
+export const confirmSign = (tokenId: number, txHash: string, proposal: Record<string, unknown>) =>
+  apiCall<{ ok: boolean }>(`/agents/${tokenId}/sign-confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ txHash, proposal }),
   })

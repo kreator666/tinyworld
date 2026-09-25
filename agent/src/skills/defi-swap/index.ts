@@ -65,7 +65,7 @@ async function estimateValueUsd(amountIn: bigint, nativeIn: boolean): Promise<nu
 }
 
 /** 已执行的 defi 交易落 tasks 表(审计 + 策略引擎日累计/冷却的数据源) */
-async function recordDefiTask(
+export async function recordDefiTask(
   tokenId: number,
   proposal: Proposal,
   result: { txHash: string; amountOut: string; usdValue: number | null },
@@ -79,6 +79,19 @@ async function recordDefiTask(
     JSON.stringify({ action: proposal.action, params: proposal.params, reason: proposal.reason }),
     JSON.stringify(result),
   ])
+}
+
+/** 把完整 Proposal 中需要回传后端记 tasks 表的字段抽出来,附加到 sign_tx action */
+function recordingProposal(p: Proposal) {
+  return {
+    action: p.action,
+    protocol: p.protocol,
+    chainId: p.chainId,
+    params: p.params,
+    executionMode: p.executionMode,
+    estimatedValueUsd: p.estimatedValueUsd,
+    reason: p.reason,
+  }
 }
 
 /**
@@ -226,10 +239,15 @@ function makeProposeSwap(tokenId: number) {
             BigInt(proposal.params.amountOutMin),
             tokenOut,
           )
-        proposal.unsignedTxs = [unsignedTx]
-        const action = { type: 'sign_tx' as const, unsignedTxs: proposal.unsignedTxs, note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认` }
-        setPendingSignAction(tokenId, action)
-        return { verdict: 'sign', ...action }
+          proposal.unsignedTxs = [unsignedTx]
+          const action = {
+            type: 'sign_tx' as const,
+            unsignedTxs: proposal.unsignedTxs,
+            note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认`,
+            proposal: recordingProposal(proposal),
+          }
+          setPendingSignAction(tokenId, action)
+          return { verdict: 'sign', ...action }
         }
 
         // hot_wallet 模式
@@ -267,7 +285,12 @@ function makeProposeSwap(tokenId: number) {
           buildUnsignedTokenToNativeSwap(owner, tokenIn, BigInt(proposal.params.amountIn), BigInt(proposal.params.amountOutMin)),
         )
         proposal.unsignedTxs = unsignedTxs
-        const action = { type: 'sign_tx' as const, unsignedTxs, note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认(${unsignedTxs.length} 笔交易)` }
+        const action = {
+          type: 'sign_tx' as const,
+          unsignedTxs,
+          note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认(${unsignedTxs.length} 笔交易)`,
+          proposal: recordingProposal(proposal),
+        }
         setPendingSignAction(tokenId, action)
         return { verdict: 'sign', ...action }
       }
