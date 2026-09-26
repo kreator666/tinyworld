@@ -211,10 +211,13 @@ export const broadcastSignedTxs = (tokenId: number, signedTxs: string[]) =>
     body: JSON.stringify({ signedTxs }),
   })
 
-/** 用户钱包签名模式:前端已用钱包直接发送交易,把结果回写后端(限额/审计) */
-export const confirmSign = (tokenId: number, txHash: string, proposal: Record<string, unknown>) =>
-  apiCall<{ ok: boolean }>(`/agents/${tokenId}/sign-confirm`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ txHash, proposal }),
-  })
+/** 用户钱包签名模式:交易已由钱包发出;后端核实回执、记审计,并在会话里主动告知结果 */
+export const confirmSign = (tokenId: number, txHash: string, proposal: Record<string, unknown>, conversationId?: string) =>
+  apiCall<{ ok: boolean; confirmed: boolean; reverted?: boolean; amountOut?: string | null; notice?: string; explorer?: string }>(
+    `/agents/${tokenId}/sign-confirm`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ txHash, proposal, conversationId }),
+    },
+  )

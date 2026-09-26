@@ -15,6 +15,8 @@ import {
   listMessages,
 } from './core/conversation'
 import { initSchema, closeDb, listChains, seedChains } from './db'
+import { appendAssistantMessage } from './core/conversation'
+import { waitForTxReceipt, parseSwapAmountOut } from './chain/defi'
 import { ALL_CHAINS } from './config'
 import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill } from './skills'
 import { startScheduler, stopScheduler } from './core/scheduler'
@@ -22,7 +24,7 @@ import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
-import { executeProposal, recordDefiTask } from './skills/defi-swap'
+import { executeProposal, recordDefiTask, describeSwapResult } from './skills/defi-swap'
 import type { Proposal } from './policy/engine'
 
 // ============================================================
@@ -425,27 +427,54 @@ app.post('/agents/:tokenId/broadcast', async (c) => {
   }
 })
 
-// 用户钱包签名模式:前端已用钱包直接发送交易,把结果回写后端(限额/审计)
+// 用户钱包签名模式:前端已用钱包直接发送交易;后端核实回执(Swap 事件解析实际输出),
+// 记 tasks 审计表,并在会话里追加一条 assistant 消息主动告知主人结果
 app.post('/agents/:tokenId/sign-confirm', async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
-  const body = await c.req.json<{ txHash?: string; proposal?: { action: string } }>().catch(() => null)
+  const body = await c.req
+    .json<{ txHash?: string; proposal?: { action: string }; conversationId?: string }>()
+    .catch(() => null)
   if (!body?.txHash || typeof body.txHash !== 'string') {
     return c.json({ error: 'txHash 不能为空' }, 400)
   }
   if (!body?.proposal || body.proposal.action !== 'swap') {
     return c.json({ error: 'proposal 不合法' }, 400)
   }
+  const proposal = body.proposal as Proposal
   try {
-    const proposal = body.proposal as Proposal
+    const receipt = await waitForTxReceipt(body.txHash as Hex)
+    if (receipt.status !== 'success') {
+      // revert:记失败任务(不计入限额),主动告知失败
+      await recordDefiTask(tokenId, proposal, { txHash: body.txHash, amountOut: '0', usdValue: null }, 'failed')
+      const notice = describeSwapResult(proposal, { confirmed: false, reverted: true, amountOut: null })
+      if (body.conversationId) await appendAssistantMessage(body.conversationId, notice)
+      return c.json({ ok: true, confirmed: false, reverted: true, notice })
+    }
+    const parsed = parseSwapAmountOut(receipt)
+    const amountOut = parsed?.amountOut ?? null
     await recordDefiTask(tokenId, proposal, {
       txHash: body.txHash,
-      amountOut: '0',
+      amountOut: amountOut?.toString() ?? '0',
       usdValue: proposal.estimatedValueUsd ?? null,
     })
-    return c.json({ ok: true })
+    const notice = describeSwapResult(proposal, { confirmed: true, reverted: false, amountOut })
+    if (body.conversationId) await appendAssistantMessage(body.conversationId, notice)
+    return c.json({
+      ok: true,
+      confirmed: true,
+      amountOut: amountOut?.toString() ?? null,
+      notice,
+      explorer: `${config.chain.explorer}/tx/${body.txHash}`,
+    })
   } catch (err) {
-    return handleErr(c, err)
+    // 回执超时/链上查询失败:不阻塞前端,记一笔待确认(金额 0),让 Agent 稍后自查
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn('[sign-confirm] 回执核实失败,按待确认处理:', msg)
+    await recordDefiTask(tokenId, proposal, { txHash: body.txHash, amountOut: '0', usdValue: proposal.estimatedValueUsd ?? null })
+    const notice = describeSwapResult(proposal, { confirmed: false, reverted: false, amountOut: null })
+    if (body.conversationId) await appendAssistantMessage(body.conversationId, notice)
+    return c.json({ ok: true, confirmed: false, amountOut: null, notice })
   }
 })
 

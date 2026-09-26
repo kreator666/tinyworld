@@ -29,6 +29,7 @@ export default function MyAgentPage() {
   const [loadingList, setLoadingList] = useState(true)
   const [pendingSignTx, setPendingSignTx] = useState<{ unsignedTxs: UnsignedTx[]; note?: string; proposal?: Record<string, unknown> } | null>(null)
   const [signing, setSigning] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
   const reloadConversations = useCallback(
@@ -128,22 +129,29 @@ export default function MyAgentPage() {
     }
   }
 
-  /** 用户钱包签名模式:钱包直接发送 unsigned tx(sendTransactions 内部会切链),成功回写后端 */
+  /** 用户钱包签名模式:钱包直接发送 unsigned tx,然后等后端核实回执,Agent 主动告知结果 */
   const signAndBroadcast = async () => {
     if (!pendingSignTx || !address || tokenId === 0) return
     setSigning(true)
     try {
       const txHashes = await sendTransactions(address as `0x${string}`, pendingSignTx.unsignedTxs)
       const swapTxHash = txHashes[txHashes.length - 1]
-      showToast(`已上链 ${swapTxHash.slice(0, 10)}…${swapTxHash.slice(-4)}`)
+      setConfirming(true)
+      showToast('交易已上链,正在等链上确认结果…')
       if (pendingSignTx.proposal) {
         try {
-          await confirmSign(tokenId, swapTxHash, pendingSignTx.proposal)
+          // 后端会等回执、解析 Swap 实际输出,并在会话里追加一条确认消息
+          await confirmSign(tokenId, swapTxHash, pendingSignTx.proposal, activeId ?? undefined)
+          if (activeId) {
+            const msgs = await listMessages(activeId)
+            setMessages(msgs)
+          }
         } catch (e) {
           console.warn('上报签名结果到 Agent 服务失败', e)
         }
       }
       setPendingSignTx(null)
+      setConfirming(false)
     } catch (err) {
       showToast(err instanceof Error ? err.message : '签名或发送失败')
     } finally {
@@ -243,6 +251,7 @@ export default function MyAgentPage() {
               </div>
             )}
             {signing && <div className="text-xs text-slate-500 animate-pulse">⏳ 等待钱包签名…</div>}
+            {confirming && <div className="text-xs text-slate-500 animate-pulse">⛓️ 正在等链上确认,稍后我会主动告诉你结果…</div>}
           </div>
           <div className="border-t border-white/10 p-3 flex items-center gap-2">
             <input

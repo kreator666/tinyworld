@@ -64,21 +64,44 @@ async function estimateValueUsd(amountIn: bigint, nativeIn: boolean): Promise<nu
   }
 }
 
-/** 已执行的 defi 交易落 tasks 表(审计 + 策略引擎日累计/冷却的数据源) */
+/** 已执行的 defi 交易落 tasks 表(审计 + 策略引擎日累计/冷却的数据源);status 支持 done/failed */
 export async function recordDefiTask(
   tokenId: number,
   proposal: Proposal,
   result: { txHash: string; amountOut: string; usdValue: number | null },
+  status: 'done' | 'failed' = 'done',
 ) {
   const db = await getDb()
   await db.query('INSERT INTO tasks (id, token_id, type, status, payload, result) VALUES ($1, $2, $3, $4, $5, $6)', [
     randomUUID(),
     tokenId,
     'defi',
-    'done',
+    status,
     JSON.stringify({ action: proposal.action, params: proposal.params, reason: proposal.reason }),
     JSON.stringify(result),
   ])
+}
+
+/** 人类可读的兑换结果描述(签名确认后主动告知主人用) */
+export function describeSwapResult(
+  proposal: Proposal,
+  r: { confirmed: boolean; reverted: boolean; amountOut: bigint | null },
+): string {
+  const { tokenIn, tokenOut } = proposal.params
+  const inIsNative = tokenIn === 'native'
+  const outSymbol = inIsNative ? 'USDC' : config.chain.defi.nativeSymbol
+  const inSymbol = inIsNative ? config.chain.defi.nativeSymbol : 'USDC'
+  const inDecimals = inIsNative ? 18 : USDC_DECIMALS
+  const outDecimals = inIsNative ? USDC_DECIMALS : 18
+  const amountInHuman = formatUnits(BigInt(proposal.params.amountIn), inDecimals)
+  if (r.reverted) {
+    return `刚才那笔兑换没能成交:${amountInHuman} ${inSymbol} → ${outSymbol} 的交易在链上执行失败(revert)。资金还在你的钱包里,没有动。要我重新组装一笔吗?`
+  }
+  if (!r.confirmed || r.amountOut == null) {
+    return `你的签名交易已广播,但链上还没确认到账,我把哈希记下了,稍后帮你盯一下。`
+  }
+  const amountOutHuman = formatUnits(r.amountOut, outDecimals)
+  return `已确认你的兑换成交:${amountInHuman} ${inSymbol} 换得 ${amountOutHuman} ${outSymbol}。交易哈希和明细都在任务记录里,要我帮你看看接下来怎么安排这笔 ${outSymbol} 吗?`
 }
 
 /** 把完整 Proposal 中需要回传后端记 tasks 表的字段抽出来,附加到 sign_tx action */

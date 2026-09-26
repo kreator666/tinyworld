@@ -352,6 +352,7 @@ export default function ProfilePage() {
   const [form, setForm] = useState<AIProfile>(aiProfile)
   const [zoomMeta, setZoomMeta] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [consoleOpen, setConsoleOpen] = useState(false) // 人格控制台长表单默认收起,需要时再展开
 
   // 访客模式:URL 带 tokenId 且不是自己的 Agent
   const visitingTokenId = paramTokenId ? Number(paramTokenId) : null
@@ -584,15 +585,31 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* 右栏:私有 Agent 配置面板(仅本人可见) */}
+      {/* 右栏:私有 Agent 面板(仅本人可见)。按「要操作的事 → 运行状态 → 基础配置」排序:
+          审批中心/兑换模式常需要立即处理,置顶;人格表单最长,折叠收纳,默认收起 */}
       {isSelf && (
       <div className="space-y-4">
-        <div className="glass neon-border p-5">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="font-semibold">🤖 Agent 控制台</h3>
-            <span className="tag !text-[10px] text-slate-500">仅本人可见</span>
-          </div>
+        {/* ① 任务审批中心:有待办时最需要立即看到 */}
+        {tokenId > 0 && <ApprovalCenter tokenId={tokenId} address={address ?? ''} />}
+        {/* ② 兑换执行模式:资金安全相关设置 */}
+        {tokenId > 0 && <SwapModeSection tokenId={tokenId} />}
+        {/* ③ Agent 运行时状态:记忆统计 + 技能管理(M2) */}
+        {tokenId > 0 && <AgentStatusPanel tokenId={tokenId} />}
 
+        {/* ④ Agent 控制台:人格/行为/权限配置(长表单,可折叠) */}
+        <div className="glass neon-border p-5">
+          <button className="w-full flex items-center justify-between" onClick={() => setConsoleOpen((v) => !v)}>
+            <h3 className="font-semibold">🤖 Agent 控制台</h3>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-500 hidden sm:block">
+                {form.template} · {form.tone}{form.emergency ? ' · 🚨已接管' : ''}
+              </span>
+              <span className="tag !text-[10px] text-slate-500">仅本人可见</span>
+              <span className={`text-slate-400 transition-transform ${consoleOpen ? 'rotate-180' : ''}`}>▾</span>
+            </div>
+          </button>
+          {consoleOpen && (
+          <>
           {/* 模块 1:人格基础设定 */}
           <div className="border-t border-white/10 mt-3 pt-3">
             <div className="text-sm font-medium text-neon-purple mb-2">① 人格基础设定</div>
@@ -663,14 +680,9 @@ export default function ProfilePage() {
             </button>
             <button className="btn-ghost !text-sm" onClick={reset}>重置 AI 人设</button>
           </div>
+          </>
+          )}
         </div>
-
-        {/* Agent 运行时状态:记忆统计 + 技能管理(M2,仅本人) */}
-        {tokenId > 0 && <AgentStatusPanel tokenId={tokenId} />}
-        {/* 兑换执行模式切换(M4,仅本人) */}
-        {tokenId > 0 && <SwapModeSection tokenId={tokenId} />}
-        {/* 任务审批中心(M4,仅本人) */}
-        {tokenId > 0 && <ApprovalCenter tokenId={tokenId} address={address ?? ''} />}
       </div>
       )}
 

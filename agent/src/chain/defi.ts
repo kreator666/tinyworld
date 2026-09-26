@@ -365,3 +365,38 @@ export function buildUnsignedErc20Approve(token: Address, spender: Address, amou
 export async function broadcastSignedTx(serializedSignedTx: Hex): Promise<Hex> {
   return publicClient.sendRawTransaction({ serializedTransaction: serializedSignedTx })
 }
+
+// ============================================================
+// 交易回执核实(sign-confirm 用):等回执 + 从 Swap 事件解析实际输出
+// ============================================================
+
+/** 等待交易回执;超时抛错 */
+export async function waitForTxReceipt(txHash: Hex, timeoutMs = 90_000) {
+  return publicClient.waitForTransactionReceipt({ hash: txHash, timeout: timeoutMs })
+}
+
+// Uniswap V2 Pair Swap 事件:Swap(address sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address to)
+const SWAP_EVENT_TOPIC = '0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822' as Hex
+
+export interface SwapAmountOut {
+  amountOut: bigint
+  /** 事件里的 token0/token1 输出(取决于交易对顺序,调用方按白名单代币方向选用) */
+  amount0Out: bigint
+  amount1Out: bigint
+}
+
+/**
+ * 从交易回执的日志里解析 Swap 事件的实际输出数量。
+ * V2 兑换只发生在一个交易对上,取最后一条 Swap 事件(有些 router 会走多跳,末跳的 to 才是最终接收者)。
+ * 找不到 Swap 事件返回 null(调用方按 amountOut='0' 处理)。
+ */
+export function parseSwapAmountOut(receipt: { logs: { topics: unknown[]; data: Hex }[] }): SwapAmountOut | null {
+  const swapLogs = receipt.logs.filter((l) => (l.topics[0] as Hex) === SWAP_EVENT_TOPIC)
+  if (swapLogs.length === 0) return null
+  const last = swapLogs[swapLogs.length - 1]
+  // topics: [topic0, sender(indexed), to(indexed)];data: 4×uint256(amount0In, amount1In, amount0Out, amount1Out)
+  const data = last.data.slice(2)
+  const amount0Out = BigInt(`0x${data.slice(128, 192)}`)
+  const amount1Out = BigInt(`0x${data.slice(192, 256)}`)
+  return { amount0Out, amount1Out, amountOut: amount0Out > 0n ? amount0Out : amount1Out }
+}

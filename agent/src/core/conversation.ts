@@ -91,6 +91,19 @@ export async function listMessages(conversationId: string): Promise<Conversation
   return res.rows.map((r) => ({ id: r.id, role: r.role, content: r.content, createdAt: r.created_at }))
 }
 
+/** 追加一条 assistant 消息(不经过 LLM),用于链上事件确认后的主动告知;会话不存在则忽略 */
+export async function appendAssistantMessage(conversationId: string, content: string): Promise<void> {
+  const db = await getDb()
+  if (!(await getConversation(conversationId))) return
+  await db.query('INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)', [
+    randomUUID(),
+    conversationId,
+    'assistant',
+    content,
+  ])
+  await db.query('UPDATE conversations SET updated_at = now() WHERE id = $1', [conversationId])
+}
+
 /** 用 LLM 给会话起标题(≤15 字);失败/超时就用首条消息截断兜底 */
 async function generateTitle(firstMessage: string): Promise<string> {
   const fallback = firstMessage.replace(/\s+/g, ' ').slice(0, TITLE_MAX_LEN)
