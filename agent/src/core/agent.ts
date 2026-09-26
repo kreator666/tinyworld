@@ -7,7 +7,7 @@ import { loadPersona, type LoadedPersona, getWalletAssets } from '../chain/perso
 import type { UnsignedTx } from '../chain/defi'
 import type { Proposal } from '../policy/engine'
 import { retrieveContext, writeEpisodic } from './memory'
-import { getToolsFor } from '../skills'
+import { getToolsFor, ensureDefaultSkills } from '../skills'
 import { createTool } from '@mastra/core/tools'
 import type { AIProfile } from '../types'
 
@@ -161,6 +161,10 @@ export async function runAgentTurn(
   if (!profile.autoReply) {
     return { refused: true, reply: '主人关闭了自动回复,我暂时不能代为聊天,等主人本人来回复你吧。' }
   }
+
+  // 新 Agent 首聊时自动补齐默认技能(社交/行情/兑换);有新增则让缓存的 Agent 实例重建,工具集才完整
+  const addedSkills = await ensureDefaultSkills(persona.tokenId)
+  if (addedSkills.length > 0) invalidateAgent(persona.tokenId)
 
   // 记忆检索:语义 topK + 最近情景,作为额外 system 消息拼在会话历史前(memory=false 时不读)
   let messages: ChatMessage[] = [...history, { role: 'user', content: message }]

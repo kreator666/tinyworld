@@ -18,7 +18,7 @@ import { initSchema, closeDb, listChains, seedChains } from './db'
 import { appendAssistantMessage } from './core/conversation'
 import { waitForTxReceipt, parseSwapAmountOut } from './chain/defi'
 import { ALL_CHAINS } from './config'
-import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill } from './skills'
+import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill, ensureDefaultSkills } from './skills'
 import { startScheduler, stopScheduler } from './core/scheduler'
 import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
@@ -150,11 +150,13 @@ app.get('/agents/:tokenId/inbox', async (c) => {
 // M2:Agent 状态 / 记忆管理
 // ============================================================
 
-// Agent 状态:链上名称、人格来源、记忆统计、已装技能
+// Agent 状态:链上名称、人格来源、记忆统计、已装技能(默认技能自动补齐,首查即 3/3)
 app.get('/agents/:tokenId/status', async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    const addedSkills = await ensureDefaultSkills(tokenId)
+    if (addedSkills.length > 0) invalidateAgent(tokenId)
     const [persona, counts, skills] = await Promise.all([
       loadPersona(tokenId),
       getMemoryCounts(tokenId),

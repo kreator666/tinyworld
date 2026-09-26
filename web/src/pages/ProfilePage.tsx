@@ -293,6 +293,7 @@ function AgentStatusPanel({ tokenId }: { tokenId: number }) {
             </div>
           </div>
           <div className="text-xs font-medium text-neon-purple mb-2">技能({status.skills.length}/{allSkills.length})</div>
+          <p className="text-[10px] text-slate-500 mb-2 -mt-1">内置技能默认全部启用,可按需卸载/装回</p>
           <div className="space-y-2">
             {allSkills.map((sk) => {
               const installed = status.skills.some((s) => s.id === sk.id)

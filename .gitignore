@@ -46,7 +46,7 @@ Thumbs.db
 *.temp
 
 # Agent 本地数据(PGlite 数据库文件)
-agent/data/
+agent/data*/
 
 # fastembed 本地模型缓存
 agent/local_cache/

@@ -50,6 +50,30 @@ export function listSkills(): SkillManifest[] {
   return [...builtins.values()].map((d) => d.manifest)
 }
 
+/** 随 Agent 运行时默认启用的一组内置技能(新 Agent 首次装载时自动安装,无需主人手动装) */
+export const DEFAULT_SKILL_IDS = ['social-greeter', 'defi-quote', 'defi-swap']
+
+/**
+ * 确保默认技能已安装(幂等):比对 DB 里现有安装记录,只补缺口。
+ * 每次都以 DB 为准,所以主人手动卸载后不会反复装回(重启服务也尊重卸载)。
+ * 返回本次新安装的技能 id 列表(空数组 = 原本已齐全)。
+ */
+export async function ensureDefaultSkills(tokenId: number): Promise<string[]> {
+  const db = await getDb()
+  const res = await db.query<{ skill_id: string }>('SELECT skill_id FROM agent_skills WHERE token_id = $1', [tokenId])
+  const installed = new Set(res.rows.map((r) => r.skill_id))
+  const added: string[] = []
+  for (const skillId of DEFAULT_SKILL_IDS) {
+    if (installed.has(skillId) || !builtins.has(skillId)) continue
+    await db.query('INSERT INTO agent_skills (token_id, skill_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+      tokenId,
+      skillId,
+    ])
+    added.push(skillId)
+  }
+  return added
+}
+
 /** 启动时把内置技能清单 upsert 进 skills 表 */
 export async function syncSkillsToDb(): Promise<void> {
   const db = await getDb()
