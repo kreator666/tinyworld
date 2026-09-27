@@ -17,7 +17,8 @@ interface ChainConfigState {
 const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? ''
 
 export const useChainConfig = create<ChainConfigState>((set, get) => ({
-  active: CONTRACTS_BY_KEY.sepolia,
+  // 默认激活 Fuji:Agent 服务的 defi-swap/USDC 资产都部署在 Fuji,避免用户手动切链
+  active: CONTRACTS_BY_KEY.fuji,
   chains: Object.values(CONTRACTS_BY_KEY),
 
   setActive: (key) => {
