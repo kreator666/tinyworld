@@ -4,12 +4,14 @@ import {
   http,
   isHex,
   formatUnits,
+  encodeFunctionData,
   type Address,
   type Hex,
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { sepolia, avalancheFuji } from 'viem/chains'
 import { config } from '../config'
+import type { UnsignedTx } from './defi'
 
 // ============================================================
 // Aave v3 链交互(M4+):热钱包资金存入/取出赚供给收益(Supply APY)
@@ -335,3 +337,74 @@ export const aavePublicClient = publicClient
 
 /** 金额格式化辅助 */
 export { formatUnits }
+
+// ============================================================
+// 用户钱包签名模式(M4+):Agent 只组装 unsigned tx,前端钱包签名
+// 存款:ERC20 需 approve+supply 两笔;原生币 depositETH 一笔(payable)
+// 取款:ERC20 pool.withdraw 一笔即可(直接烧调用者的 aToken,无需 approve);
+//      原生币走网关 withdrawETH,但需先把 aToken approve 给网关(两笔)
+// ============================================================
+
+/** 组装 ERC20 存入 Aave 的 unsigned supply(授权检查由调用方先做完) */
+export function buildUnsignedSupply(asset: Address, amount: bigint, onBehalfOf: Address): UnsignedTx {
+  const data = encodeFunctionData({
+    abi: poolAbi,
+    functionName: 'supply',
+    args: [asset, amount, onBehalfOf, 0],
+  })
+  return {
+    to: config.chain.aave.pool,
+    data,
+    value: '0',
+    chainId: config.chain.chainId,
+    description: `存入 Aave ${asset.slice(0, 6)}…${asset.slice(-4)}`,
+  }
+}
+
+/** 组装原生币存入 Aave 的 unsigned depositETH(经 Gateway,payable) */
+export function buildUnsignedNativeSupply(amount: bigint, onBehalfOf: Address): UnsignedTx {
+  const data = encodeFunctionData({
+    abi: gatewayAbi,
+    functionName: 'depositETH',
+    args: [config.chain.aave.pool, onBehalfOf, 0],
+  })
+  return {
+    to: NATIVE_GATEWAY,
+    data,
+    value: amount.toString(),
+    chainId: config.chain.chainId,
+    description: `存入 Aave ${config.chain.defi.nativeSymbol}`,
+  }
+}
+
+/** 组装 ERC20 取回的 unsigned withdraw(用户直接收 ERC20,无需授权) */
+export function buildUnsignedWithdraw(asset: Address, amount: bigint, to: Address): UnsignedTx {
+  const data = encodeFunctionData({
+    abi: poolAbi,
+    functionName: 'withdraw',
+    args: [asset, amount, to],
+  })
+  return {
+    to: config.chain.aave.pool,
+    data,
+    value: '0',
+    chainId: config.chain.chainId,
+    description: `从 Aave 取回 ${asset.slice(0, 6)}…${asset.slice(-4)}`,
+  }
+}
+
+/** 组装原生币取回的 unsigned withdrawETH(经 Gateway;调用方需先组装 aToken approve) */
+export function buildUnsignedNativeWithdraw(amount: bigint, to: Address): UnsignedTx {
+  const data = encodeFunctionData({
+    abi: gatewayAbi,
+    functionName: 'withdrawETH',
+    args: [config.chain.aave.pool, amount, to],
+  })
+  return {
+    to: NATIVE_GATEWAY,
+    data,
+    value: '0',
+    chainId: config.chain.chainId,
+    description: `从 Aave 取回 ${config.chain.defi.nativeSymbol}`,
+  }
+}

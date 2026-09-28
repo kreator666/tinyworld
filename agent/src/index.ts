@@ -434,7 +434,7 @@ app.post('/agents/:tokenId/broadcast', async (c) => {
   }
 })
 
-// 用户钱包签名模式:前端已用钱包直接发送交易;后端核实回执(Swap 事件解析实际输出),
+// 用户钱包签名模式:前端已用钱包直接发送交易;后端核实回执(swap 解析 Swap 事件实际输出),
 // 记 tasks 审计表,并在会话里追加一条 assistant 消息主动告知主人结果
 app.post('/agents/:tokenId/sign-confirm', async (c) => {
   const tokenId = parseTokenId(c)
@@ -445,8 +445,9 @@ app.post('/agents/:tokenId/sign-confirm', async (c) => {
   if (!body?.txHash || typeof body.txHash !== 'string') {
     return c.json({ error: 'txHash 不能为空' }, 400)
   }
-  if (!body?.proposal || body.proposal.action !== 'swap') {
-    return c.json({ error: 'proposal 不合法' }, 400)
+  const action = body?.proposal?.action
+  if (!action || !['swap', 'supply', 'withdraw'].includes(action)) {
+    return c.json({ error: 'proposal.action 必须是 swap / supply / withdraw' }, 400)
   }
   const proposal = body.proposal as Proposal
   try {
@@ -458,7 +459,8 @@ app.post('/agents/:tokenId/sign-confirm', async (c) => {
       if (body.conversationId) await appendAssistantMessage(body.conversationId, notice)
       return c.json({ ok: true, confirmed: false, reverted: true, notice })
     }
-    const parsed = parseSwapAmountOut(receipt)
+    // 仅 swap 需要解析 Swap 事件拿实际输出;supply/withdraw 以提案金额为准
+    const parsed = action === 'swap' ? parseSwapAmountOut(receipt) : null
     const amountOut = parsed?.amountOut ?? null
     await recordDefiTask(tokenId, proposal, {
       txHash: body.txHash,

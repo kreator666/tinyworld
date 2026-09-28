@@ -9,17 +9,27 @@ import {
   getLendingWalletAddress,
   getReserveInfo,
   getTokenAllowance,
+  buildUnsignedNativeSupply,
+  buildUnsignedSupply,
+  buildUnsignedNativeWithdraw,
+  buildUnsignedWithdraw,
   supplyErc20,
   supplyNative,
   withdrawErc20,
   withdrawNative,
+  NATIVE_GATEWAY,
   type ReserveInfo,
 } from '../../chain/aave'
+import { buildUnsignedErc20Approve } from '../../chain/defi'
 import { getNativeBalance, getTokenBalance, hasAgentKey } from '../../chain/defi'
 import { getAvaxPriceUsd } from '../../core/price'
+import { getSwapMode } from '../../core/settings'
 import { createApproval } from '../../core/approvals'
 import { evaluateProposal, type Proposal } from '../../policy/engine'
+import { setPendingSignAction } from '../../core/agent'
+import { loadPersona } from '../../chain/persona'
 import { recordDefiTask } from '../defi-swap'
+import type { UnsignedTx } from '../../chain/defi'
 import type { SkillDef } from '../registry'
 
 // ============================================================
@@ -77,11 +87,25 @@ async function recordLendingTask(
   ])
 }
 
+/** 把完整 Proposal 中需要回传后端记 tasks 表的字段抽出来,附加到 sign_tx action */
+function recordingProposal(p: Proposal) {
+  return {
+    action: p.action,
+    protocol: p.protocol,
+    chainId: p.chainId,
+    params: p.params,
+    executionMode: p.executionMode,
+    estimatedValueUsd: p.estimatedValueUsd,
+    reason: p.reason,
+  }
+}
+
 /** supply 提案 */
 async function buildSupplyProposal(
   token: { address: Address; isNative: boolean },
   amountInHuman: string,
   reason: string,
+  executionMode: Proposal['executionMode'],
 ): Promise<Proposal> {
   const decimals = token.isNative ? 18 : USDC_DECIMALS
   const amount = token.isNative ? parseEther(amountInHuman) : parseUnits(amountInHuman, decimals)
@@ -91,7 +115,7 @@ async function buildSupplyProposal(
     action: 'supply',
     protocol: config.chain.aave.pool,
     chainId: config.chain.chainId,
-    executionMode: 'hot_wallet',
+    executionMode,
     params: {
       tokenIn: token.isNative ? 'native' : token.address,
       tokenOut: config.chain.defi.nativeSymbol === 'AVAX' ? 'aToken(WAVAX)' : 'aToken',
@@ -107,6 +131,7 @@ async function buildWithdrawProposal(
   token: { address: Address; isNative: boolean },
   amountInHuman: string,
   reason: string,
+  executionMode: Proposal['executionMode'],
 ): Promise<Proposal> {
   const decimals = token.isNative ? 18 : USDC_DECIMALS
   const amount = token.isNative ? parseEther(amountInHuman) : parseUnits(amountInHuman, decimals)
@@ -116,7 +141,7 @@ async function buildWithdrawProposal(
     action: 'withdraw',
     protocol: config.chain.aave.pool,
     chainId: config.chain.chainId,
-    executionMode: 'hot_wallet',
+    executionMode,
     params: {
       tokenIn: token.isNative ? 'native' : token.address,
       tokenOut: token.isNative ? 'native' : token.address,
@@ -155,7 +180,7 @@ function makeProposeSupply(tokenId: number) {
   return createTool({
     id: 'propose_supply',
     description:
-      '把热钱包资金存入 Aave 赚供给收益(类似银行活期理财)。支持 AVAX 和 USDC。限额/冷却/熔断由策略引擎把关,超限会转审批中心由主人放行。',
+      '把资金存入 Aave 赚供给收益(类似银行活期理财)。支持 AVAX 和 USDC。执行模式跟随「兑换执行模式」设置:热钱包自动执行,或主人钱包签名(返回 verdict=sign 时需主人点【签名并发送】)。限额/冷却/熔断由策略引擎把关,超限转审批中心。',
     inputSchema: z.object({
       tokenIn: z.string().describe('存入币种:AVAX 或 USDC'),
       amountIn: z.string().describe('存入数量(人类单位,如 "0.05")'),
@@ -175,23 +200,8 @@ function makeProposeSupply(tokenId: number) {
       const token = resolveToken(context.tokenIn)
       if (!token) return { verdict: 'rejected', error: `无法识别的币种: ${context.tokenIn}(支持 AVAX/USDC)` }
 
-      if (!hasAgentKey()) {
-        return { verdict: 'rejected', error: '未配置执行密钥(AGENT_PRIVATE_KEY),无法执行存款' }
-      }
-      const wallet = getLendingWalletAddress()!
-
-      // 余额预检(链上只读)
-      const decimals = token.isNative ? 18 : USDC_DECIMALS
-      const amount = token.isNative ? parseEther(context.amountIn) : parseUnits(context.amountIn, decimals)
-      const balance = token.isNative ? await getNativeBalance(wallet) : await getTokenBalance(token.address, wallet)
-      if (token.isNative) {
-        // 原生币要预留 gas(按 0.01 估算)
-        if (balance < amount + parseEther('0.01')) {
-          return { verdict: 'rejected', error: `热钱包 AVAX 不足(需 ${context.amountIn} + gas,当前 ${formatEther(balance)})` }
-        }
-      } else if (balance < amount) {
-        return { verdict: 'rejected', error: `热钱包 ${symbolOf(token)} 不足(需 ${context.amountIn},当前 ${formatUnits(balance, decimals)})` }
-      }
+      const executionMode = await getSwapMode(tokenId)
+      const isNative = token.isNative
 
       // 实时 APY 报价(链上只读)
       let reserve: ReserveInfo
@@ -200,11 +210,67 @@ function makeProposeSupply(tokenId: number) {
       } catch (err) {
         return { verdict: 'rejected', error: `读取 Aave 储备数据失败: ${err instanceof Error ? err.message : String(err)}` }
       }
+      const symbol = symbolOf(token)
+      const decimals = isNative ? 18 : USDC_DECIMALS
+      const amount = isNative ? parseEther(context.amountIn) : parseUnits(context.amountIn, decimals)
 
-      const proposal = await buildSupplyProposal(token, context.amountIn, context.reason)
+      const proposal = await buildSupplyProposal(token, context.amountIn, context.reason, executionMode)
       const { verdict, reasons } = await evaluateProposal(proposal)
-      const note = `当前 ${symbolOf(token)} 供给 APY ≈ ${(reserve.supplyApy * 100).toFixed(2)}%,估值 $${proposal.estimatedValueUsd?.toFixed(4) ?? '未知'}`
+      const note = `这笔存款:\n- 存入 ${context.amountIn} ${symbol}\n- 当前 APY 约 ${(reserve.supplyApy * 100).toFixed(2)}%\n- 利息按秒累积,随时可取`
       if (verdict === 'rejected') return { verdict, reasons, note }
+
+      // ---- 用户钱包签名模式:组装交易,前端弹钱包签名 ----
+      if (executionMode === 'user_wallet') {
+        const persona = await loadPersona(tokenId)
+        const user = persona.owner as Address
+
+        // 用户余额预检(链上只读,提前给出口径一致的报错)
+        const userBalance = isNative ? await getNativeBalance(user) : await getTokenBalance(token.address, user)
+        if (isNative) {
+          if (userBalance < amount + parseEther('0.01')) {
+            return { verdict: 'rejected', error: `你的 AVAX 不足(需 ${context.amountIn} + gas,当前 ${formatEther(userBalance)})` }
+          }
+        } else if (userBalance < amount) {
+          return { verdict: 'rejected', error: `你的 ${symbol} 不足(需 ${context.amountIn},当前 ${formatUnits(userBalance, decimals)})` }
+        }
+
+        const unsignedTxs: UnsignedTx[] = []
+        if (isNative) {
+          unsignedTxs.push(buildUnsignedNativeSupply(amount, user))
+        } else {
+          const allowance = await getTokenAllowance(token.address, user, config.chain.aave.pool)
+          if (allowance < amount) {
+            unsignedTxs.push(buildUnsignedErc20Approve(token.address, config.chain.aave.pool, amount))
+          }
+          unsignedTxs.push(buildUnsignedSupply(token.address, amount, user))
+        }
+        proposal.unsignedTxs = unsignedTxs
+        const action = {
+          type: 'sign_tx' as const,
+          unsignedTxs,
+          note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认(${unsignedTxs.length} 笔交易)`,
+          proposal: recordingProposal(proposal),
+        }
+        setPendingSignAction(tokenId, action)
+        return { verdict: 'sign', ...action }
+      }
+
+      // ---- 热钱包自动模式 ----
+      if (!hasAgentKey()) {
+        return { verdict: 'rejected', error: '未配置执行密钥(AGENT_PRIVATE_KEY),无法执行存款' }
+      }
+      const wallet = getLendingWalletAddress()!
+
+      // 余额预检(链上只读)
+      const balance = isNative ? await getNativeBalance(wallet) : await getTokenBalance(token.address, wallet)
+      if (isNative) {
+        // 原生币要预留 gas(按 0.01 估算)
+        if (balance < amount + parseEther('0.01')) {
+          return { verdict: 'rejected', error: `热钱包 AVAX 不足(需 ${context.amountIn} + gas,当前 ${formatEther(balance)})` }
+        }
+      } else if (balance < amount) {
+        return { verdict: 'rejected', error: `热钱包 ${symbol} 不足(需 ${context.amountIn},当前 ${formatUnits(balance, decimals)})` }
+      }
 
       if (verdict === 'needsApproval') {
         const approval = await createApproval(tokenId, proposal, context.reason)
@@ -246,16 +312,23 @@ function makeProposeWithdraw(tokenId: number) {
       const token = resolveToken(context.tokenOut)
       if (!token) return { verdict: 'rejected', error: `无法识别的币种: ${context.tokenOut}(支持 AVAX/USDC)` }
 
-      if (!hasAgentKey()) {
-        return { verdict: 'rejected', error: '未配置执行密钥(AGENT_PRIVATE_KEY),无法执行取出' }
-      }
-      const wallet = getLendingWalletAddress()!
-
+      const executionMode = await getSwapMode(tokenId)
+      // 用户钱包模式下查用户(owner)的 aToken 余额;热钱包模式查热钱包
       const reserve = await getReserveInfo(token.address)
       const decimals = token.isNative ? 18 : USDC_DECIMALS
-      const supplied = await getATokenBalance(reserve.aToken, wallet)
+      const isNative = token.isNative
+      const symbol = symbolOf(token)
+      const actor =
+        executionMode === 'user_wallet' ? ((await loadPersona(tokenId)).owner as Address) : getLendingWalletAddress()
+
+      if (executionMode !== 'user_wallet' && !hasAgentKey()) {
+        return { verdict: 'rejected', error: '未配置执行密钥(AGENT_PRIVATE_KEY),无法执行取出' }
+      }
+      if (!actor) return { verdict: 'rejected', error: '未配置执行密钥(AGENT_PRIVATE_KEY)' }
+
+      const supplied = await getATokenBalance(reserve.aToken, actor)
       if (supplied === 0n) {
-        return { verdict: 'rejected', error: `热钱包没有 ${symbolOf(token)} 存款` }
+        return { verdict: 'rejected', error: `${executionMode === 'user_wallet' ? '你' : '热钱包'}没有 ${symbol} 存款` }
       }
 
       // 全部取出 or 指定数量
@@ -263,7 +336,7 @@ function makeProposeWithdraw(tokenId: number) {
       if (context.amountOut.trim().toLowerCase() === 'all') {
         amount = supplied
       } else {
-        amount = token.isNative ? parseEther(context.amountOut) : parseUnits(context.amountOut, decimals)
+        amount = isNative ? parseEther(context.amountOut) : parseUnits(context.amountOut, decimals)
         if (amount <= 0n) return { verdict: 'rejected', error: 'amountOut 必须大于 0' }
         if (amount > supplied) {
           return { verdict: 'rejected', error: `存款不足(持有 ${formatUnits(supplied, decimals)},要取 ${context.amountOut})` }
@@ -271,11 +344,37 @@ function makeProposeWithdraw(tokenId: number) {
       }
       const amountHuman = formatUnits(amount, decimals)
 
-      const proposal = await buildWithdrawProposal(token, amountHuman, context.reason)
+      const proposal = await buildWithdrawProposal(token, amountHuman, context.reason, executionMode)
       const { verdict, reasons } = await evaluateProposal(proposal)
-      const note = `将取回 ≈${amountHuman} ${symbolOf(token)}(含已累积利息)`
+      const note = `将取回 ≈${amountHuman} ${symbol}(含已累积利息)`
       if (verdict === 'rejected') return { verdict, reasons, note }
 
+      // ---- 用户钱包签名模式 ----
+      if (executionMode === 'user_wallet') {
+        const unsignedTxs: UnsignedTx[] = []
+        if (isNative) {
+          // 网关 withdrawETH 会 transferFrom 用户的 aToken,需先 approve aToken→网关
+          const allowance = await getTokenAllowance(reserve.aToken, actor, NATIVE_GATEWAY)
+          if (allowance < amount) {
+            unsignedTxs.push(buildUnsignedErc20Approve(reserve.aToken, NATIVE_GATEWAY, amount))
+          }
+          unsignedTxs.push(buildUnsignedNativeWithdraw(amount, actor))
+        } else {
+          // ERC20 直接 pool.withdraw,烧的是调用者的 aToken,无需授权
+          unsignedTxs.push(buildUnsignedWithdraw(token.address, amount, actor))
+        }
+        proposal.unsignedTxs = unsignedTxs
+        const action = {
+          type: 'sign_tx' as const,
+          unsignedTxs,
+          note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认(${unsignedTxs.length} 笔交易)`,
+          proposal: recordingProposal(proposal),
+        }
+        setPendingSignAction(tokenId, action)
+        return { verdict: 'sign', ...action }
+      }
+
+      // ---- 热钱包自动模式 ----
       if (verdict === 'needsApproval') {
         const approval = await createApproval(tokenId, proposal, context.reason)
         return { verdict, reasons, approvalId: approval.id, note: `${note};已生成审批单,等主人确认` }
@@ -307,7 +406,10 @@ function makeGetPosition(tokenId: number) {
     }),
     execute: async () => {
       try {
-        const wallet = getLendingWalletAddress()
+        // 跟随兑换执行模式:user_wallet 查主人钱包仓位,hot_wallet 查热钱包
+        const mode = await getSwapMode(tokenId)
+        const wallet =
+          mode === 'user_wallet' ? ((await loadPersona(tokenId)).owner as Address) : getLendingWalletAddress()
         if (!wallet) return { positions: [], total: 0, error: '未配置执行密钥(AGENT_PRIVATE_KEY)' }
         const targets = [
           { symbol: config.chain.defi.nativeSymbol, address: config.chain.defi.wNative, decimals: 18 },
@@ -338,7 +440,7 @@ export const defiLending: SkillDef = {
     name: '借贷理财',
     version: '0.1.0',
     description:
-      'Aave v3 借贷理财(热钱包资金)。存入 AVAX/USDC 赚供给收益,随时连本带息取回,支持只读仓位查询。执行前经策略引擎限额/冷却/熔断把关。',
+      'Aave v3 借贷理财。存入 AVAX/USDC 赚供给收益,随时连本带息取回,支持只读仓位查询。支持两种执行模式:热钱包自动执行;或主人钱包签名(Agent 只组装交易,前端弹钱包确认)。执行前经策略引擎限额/冷却/熔断把关。',
     tools: ['propose_supply', 'propose_withdraw', 'get_lending_position'],
     permissions: ['defi'],
   },

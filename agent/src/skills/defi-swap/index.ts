@@ -82,18 +82,32 @@ export async function recordDefiTask(
   ])
 }
 
-/** 人类可读的兑换结果描述(签名确认后主动告知主人用) */
+/** 人类可读的交易结果描述(签名确认后主动告知主人用;覆盖 swap 与 supply/withdraw) */
 export function describeSwapResult(
   proposal: Proposal,
   r: { confirmed: boolean; reverted: boolean; amountOut: bigint | null },
 ): string {
-  const { tokenIn, tokenOut } = proposal.params
-  const inIsNative = tokenIn === 'native'
-  const outSymbol = inIsNative ? 'USDC' : config.chain.defi.nativeSymbol
+  const { action, params } = proposal
+  const inIsNative = params.tokenIn === 'native'
   const inSymbol = inIsNative ? config.chain.defi.nativeSymbol : 'USDC'
   const inDecimals = inIsNative ? 18 : USDC_DECIMALS
+  const amountInHuman = formatUnits(BigInt(params.amountIn), inDecimals)
+
+  // 借贷类:统一文案
+  if (action === 'supply') {
+    if (r.reverted) return `刚才那笔存款没能成交:${amountInHuman} ${inSymbol} 存入 Aave 的交易在链上执行失败(revert),资金还在你的钱包里。要我重新组装一笔吗?`
+    if (!r.confirmed) return `你的存款交易已广播,链上还没确认到账,我把哈希记下了,稍后帮你盯一下。`
+    return `已确认你的存款成交:${amountInHuman} ${inSymbol} 已存入 Aave,利息按秒累积,随时可取。`
+  }
+  if (action === 'withdraw') {
+    if (r.reverted) return `刚才那笔取回没能成交:从 Aave 取 ${amountInHuman} ${inSymbol} 的交易在链上执行失败(revert),存款还在 Aave 里。要我重新组装一笔吗?`
+    if (!r.confirmed) return `你的取回交易已广播,链上还没确认到账,我把哈希记下了,稍后帮你盯一下。`
+    return `已确认取回成交:约 ${amountInHuman} ${inSymbol}(含已累积利息)已回到你的钱包。`
+  }
+
+  // swap:按方向还原符号
+  const outSymbol = inIsNative ? 'USDC' : config.chain.defi.nativeSymbol
   const outDecimals = inIsNative ? USDC_DECIMALS : 18
-  const amountInHuman = formatUnits(BigInt(proposal.params.amountIn), inDecimals)
   if (r.reverted) {
     return `刚才那笔兑换没能成交:${amountInHuman} ${inSymbol} → ${outSymbol} 的交易在链上执行失败(revert)。资金还在你的钱包里,没有动。要我重新组装一笔吗?`
   }

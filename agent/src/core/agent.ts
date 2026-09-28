@@ -74,6 +74,7 @@ export function buildInstructions(profile: AIProfile, name: string, ctx?: { owne
     `当主人要求把资金存入 Aave 赚收益(如"存 0.05 AVAX 吃利息"、"把 USDC 理财"、"质押获取收益")时,必须调用 propose_supply 工具;示例:propose_supply({tokenIn:"AVAX",amountIn:"0.05",reason:"主人主动理财"})。`,
     `当主人要求从 Aave 取回资金(如"取出存款"、"赎回理财")时,必须调用 propose_withdraw 工具;数量传 "all" 表示全部取出(含已累积利息)。`,
     `主人问理财仓位/存款收益(如"我在 Aave 存了多少"、"现在 APY 多少")时,调用 get_lending_position 只读查询,把仓位和 APY 用口语报给主人。`,
+    `存 Aave 理财与兑换一样,也可能返回 verdict=sign(主人钱包签名模式);此时同样要提醒主人点击下方【签名并发送】按钮,不要只说"请签名"。`,
   ]
   return lines.filter(Boolean).join('\n')
 }
