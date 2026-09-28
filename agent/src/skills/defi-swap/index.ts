@@ -125,7 +125,8 @@ export async function executeProposal(
   tokenId: number,
   proposal: Proposal,
 ): Promise<{ txHash: string; amountOut: string }> {
-  const { tokenIn, tokenOut, amountIn, amountOutMin, owner } = proposal.params
+  const { tokenIn, tokenOut, amountIn, owner } = proposal.params
+  const amountOutMin = proposal.params.amountOutMin! // swap 提案必定携带(滑点保护)
   let result: { txHash: string; amountOut: bigint }
   if (tokenIn === 'native') {
     // 热钱包自有资金:原生币 → 代币
@@ -250,7 +251,7 @@ function makeProposeSwap(tokenId: number) {
         if (!tokenOut) return { verdict: 'rejected', error: `无法识别的 tokenOut: ${context.tokenOut}` }
         const proposal = await buildNativeProposal(context.amountIn, tokenOut, context.reason, executionMode)
         const { verdict, reasons } = await evaluateProposal(proposal)
-        const quotedOut = formatUnits(BigInt(proposal.params.amountOutMin), USDC_DECIMALS)
+        const quotedOut = formatUnits(BigInt(proposal.params.amountOutMin!), USDC_DECIMALS)
         const note = `约可换得 ≥${quotedOut} USDC(估值 $${proposal.estimatedValueUsd?.toFixed(4) ?? '未知'})`
         if (verdict === 'rejected') return { verdict, reasons, note }
 
@@ -259,7 +260,7 @@ function makeProposeSwap(tokenId: number) {
           const unsignedTx = buildUnsignedNativeToTokenSwap(
             user,
             BigInt(proposal.params.amountIn),
-            BigInt(proposal.params.amountOutMin),
+            BigInt(proposal.params.amountOutMin!),
             tokenOut,
           )
           proposal.unsignedTxs = [unsignedTx]
@@ -292,7 +293,7 @@ function makeProposeSwap(tokenId: number) {
       const owner = persona.owner as Address
       const proposal = await buildUserProposal(context.amountIn, tokenIn, owner, context.reason, executionMode)
       const { verdict, reasons } = await evaluateProposal(proposal)
-      const quotedOut = formatEther(BigInt(proposal.params.amountOutMin))
+      const quotedOut = formatEther(BigInt(proposal.params.amountOutMin!))
       const note = `约可换得 ≥${quotedOut} AVAX(估值 $${proposal.estimatedValueUsd?.toFixed(4) ?? '未知'})`
       if (verdict === 'rejected') return { verdict, reasons, note }
 
@@ -305,7 +306,7 @@ function makeProposeSwap(tokenId: number) {
           unsignedTxs.push(buildUnsignedErc20Approve(tokenIn, router, BigInt(proposal.params.amountIn)))
         }
         unsignedTxs.push(
-          buildUnsignedTokenToNativeSwap(owner, tokenIn, BigInt(proposal.params.amountIn), BigInt(proposal.params.amountOutMin)),
+          buildUnsignedTokenToNativeSwap(owner, tokenIn, BigInt(proposal.params.amountIn), BigInt(proposal.params.amountOutMin!)),
         )
         proposal.unsignedTxs = unsignedTxs
         const action = {

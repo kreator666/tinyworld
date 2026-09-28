@@ -10,16 +10,18 @@ import type { UnsignedTx } from '../chain/defi'
 
 export type ExecutionMode = 'hot_wallet' | 'user_wallet'
 
-/** 交易提案(defi-swap 生成,审批放行后按 proposal.params 原样执行) */
+export type ProposalAction = 'swap' | 'supply' | 'withdraw'
+
+/** 交易提案(defi-swap / defi-lending 生成,审批放行后按 proposal.params 原样执行) */
 export interface Proposal {
-  action: 'swap'
+  action: ProposalAction
   protocol: string // router 地址
   chainId: number
   params: {
     tokenIn: string // 'native' 表示原生币(AVAX/ETH),否则为 ERC20 地址(用户资金路径)
-    tokenOut: string // ERC20 地址,或 'native'(代币换原生币)
+    tokenOut: string // ERC20 地址,或 'native'(代币换原生币);借贷场景记 aToken 描述
     amountIn: string // 最小单位字符串(native=wei,USDC=6 位)
-    amountOutMin: string
+    amountOutMin?: string // 仅 swap 需要(滑点保护)
     owner?: string // 用户资金路径:出资人(主人)地址,代执行时 transferFrom 的 from
   }
   executionMode: ExecutionMode // 由 Agent 设置或用户显式指定
@@ -83,20 +85,22 @@ export async function evaluateProposal(p: Proposal): Promise<Verdict> {
   const hardFail: string[] = []
   const soft: string[] = []
 
-  // 协议白名单:router 地址精确匹配当前链配置
+  // 协议白名单:swap 只能走 DEX router;supply/withdraw 只能走 Aave Pool
   if (p.chainId !== config.chain.chainId) {
     hardFail.push(`链不匹配(提案 chainId=${p.chainId},当前 ${config.chain.chainId})`)
   }
-  if (p.protocol.toLowerCase() !== config.chain.defi.router.toLowerCase()) {
-    hardFail.push(`协议不在白名单: ${p.protocol}(当前链仅允许 ${config.chain.defi.router})`)
+  const allowedProtocol = p.action === 'swap' ? config.chain.defi.router : config.chain.aave.pool
+  if (p.protocol.toLowerCase() !== allowedProtocol.toLowerCase()) {
+    hardFail.push(`协议不在白名单: ${p.protocol}(当前 action=${p.action} 仅允许 ${allowedProtocol})`)
   }
 
-  // 代币白名单('native' 表示原生币,两个方向都允许)
+  // 代币白名单('native' 表示原生币;swap 双向都允许;supply/withdraw 只校验底层资产 tokenIn,
+  // tokenOut 在借贷场景记 aToken 地址,由 Aave 协议本身保证其真实性,不重复校验)
   const whitelist = tokenWhitelist()
   if (p.params.tokenIn !== 'native' && !whitelist.includes(p.params.tokenIn.toLowerCase())) {
     hardFail.push(`tokenIn 不在白名单: ${p.params.tokenIn}`)
   }
-  if (p.params.tokenOut !== 'native' && !whitelist.includes(p.params.tokenOut.toLowerCase())) {
+  if (p.action === 'swap' && p.params.tokenOut !== 'native' && !whitelist.includes(p.params.tokenOut.toLowerCase())) {
     hardFail.push(`tokenOut 不在白名单: ${p.params.tokenOut}`)
   }
 

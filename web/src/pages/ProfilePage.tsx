@@ -146,6 +146,12 @@ function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string
     if (p.action === 'swap' && p.params) {
       return `兑换 ${p.params.amountIn} ${p.params.tokenIn} → ${p.params.tokenOut}`
     }
+    if (p.action === 'supply' && p.params) {
+      return `存入 Aave ${p.params.amountIn} ${p.params.tokenIn} 赚收益`
+    }
+    if (p.action === 'withdraw' && p.params) {
+      return `从 Aave 取回 ${p.params.amountIn} ${p.params.tokenOut ?? p.params.tokenIn}`
+    }
     return p.action
   }
 

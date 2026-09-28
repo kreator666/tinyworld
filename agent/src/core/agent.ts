@@ -5,7 +5,7 @@ import type { Address } from 'viem'
 import { config } from '../config'
 import { loadPersona, type LoadedPersona, getWalletAssets } from '../chain/persona'
 import type { UnsignedTx } from '../chain/defi'
-import type { Proposal } from '../policy/engine'
+import type { Proposal, ProposalAction } from '../policy/engine'
 import { retrieveContext, writeEpisodic } from './memory'
 import { getToolsFor, ensureDefaultSkills } from '../skills'
 import { createTool } from '@mastra/core/tools'
@@ -34,7 +34,7 @@ export interface SignTxAction {
   note?: string
   /** 用户钱包签名模式:Agent 组装交易时对应的提案,签名完成后回传后端记 tasks 表(限额/审计) */
   proposal?: {
-    action: 'swap'
+    action: ProposalAction
     protocol: string
     chainId: number
     params: Proposal['params']
@@ -71,6 +71,9 @@ export function buildInstructions(profile: AIProfile, name: string, ctx?: { owne
     `涉及链上数据(余额、资产、装备、交易)的回答必须来自工具结果;没有工具能查就如实说查不了,禁止假装查过、禁止编造数字。`,
     `当主人要求进行 AVAX/USDC 兑换(如"用 0.001 AVAX 兑换 USDC")时,必须调用 propose_swap 工具;调用示例:propose_swap({tokenIn:"AVAX",tokenOut:"USDC",amountIn:"0.001",reason:"主人主动兑换"})。禁止不调用工具就直接回复"已组装"。`,
     `如果 propose_swap 返回需要钱包签名(verdict=sign),你要用口语告诉主人:"我已组装好交易,请点击下方【签名并发送】按钮,在钱包里完成签名。",不要只说"请签名"而不提按钮。`,
+    `当主人要求把资金存入 Aave 赚收益(如"存 0.05 AVAX 吃利息"、"把 USDC 理财"、"质押获取收益")时,必须调用 propose_supply 工具;示例:propose_supply({tokenIn:"AVAX",amountIn:"0.05",reason:"主人主动理财"})。`,
+    `当主人要求从 Aave 取回资金(如"取出存款"、"赎回理财")时,必须调用 propose_withdraw 工具;数量传 "all" 表示全部取出(含已累积利息)。`,
+    `主人问理财仓位/存款收益(如"我在 Aave 存了多少"、"现在 APY 多少")时,调用 get_lending_position 只读查询,把仓位和 APY 用口语报给主人。`,
   ]
   return lines.filter(Boolean).join('\n')
 }

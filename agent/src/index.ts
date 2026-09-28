@@ -25,6 +25,7 @@ import { getApproval, listApprovals, resolveApproval } from './core/approvals'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
 import { executeProposal, recordDefiTask, describeSwapResult } from './skills/defi-swap'
+import { executeLendingProposal } from './skills/defi-lending'
 import type { Proposal } from './policy/engine'
 
 // ============================================================
@@ -345,7 +346,11 @@ app.post('/approvals/:id/approve', async (c) => {
     if (!approval) return c.json({ error: '审批单不存在' }, 404)
     if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
     try {
-      const { txHash, amountOut } = await executeProposal(approval.tokenId, approval.proposal)
+      // 按 action 分发:swap 走兑换执行器;supply/withdraw 走借贷执行器
+      const { txHash, amountOut } =
+        approval.proposal.action === 'swap'
+          ? await executeProposal(approval.tokenId, approval.proposal)
+          : await executeLendingProposal(approval.tokenId, approval.proposal)
       await resolveApproval(id, 'executed', txHash)
       return c.json({ ok: true, status: 'executed', txHash, amountOut, explorer: `${config.chain.explorer}/tx/${txHash}` })
     } catch (err) {

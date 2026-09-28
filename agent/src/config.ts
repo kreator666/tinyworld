@@ -24,6 +24,9 @@ interface ChainConfig {
     nativeSymbol: string // AVAX / ETH
     nativePriceId: 'avax' // 估值用的行情币(M4 只支持 AVAX 计价;Sepolia ETH 无真实价格,仅备用)
   }
+  aave: {
+    pool: `0x${string}` // Aave v3 Pool(地址来自 Aave 官方 address book)
+  }
 }
 
 const CHAINS: Record<string, ChainConfig> = {
@@ -41,6 +44,10 @@ const CHAINS: Record<string, ChainConfig> = {
       nativeSymbol: 'ETH',
       nativePriceId: 'avax', // 占位:Sepolia 上 swap 只做流程验证
     },
+    aave: {
+      // Sepolia 也部署了 Aave v3 测试池(Aave 官方 address book AaveV3Sepolia.POOL)
+      pool: '0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951',
+    },
   },
   fuji: {
     name: 'Fuji',
@@ -55,6 +62,10 @@ const CHAINS: Record<string, ChainConfig> = {
       usdc: '0x5425890298aed601595a70AB815c96711a31Bc65',
       nativeSymbol: 'AVAX',
       nativePriceId: 'avax',
+    },
+    aave: {
+      // Aave 官方 address book: https://github.com/bgd-labs/aave-address-book/blob/main/src/AaveV3Fuji.sol
+      pool: '0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40',
     },
   },
 }
