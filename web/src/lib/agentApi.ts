@@ -98,6 +98,15 @@ async function apiCall<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const getAgentStatus = (tokenId: number) => apiCall<AgentStatus>(`/agents/${tokenId}/status`)
 
+export interface AgentStats {
+  tokenId: number
+  socialInteractions: number
+  activeDays7d: number
+  activityPercent: number
+}
+
+export const getAgentStats = (tokenId: number) => apiCall<AgentStats>(`/agents/${tokenId}/stats`)
+
 export const listSkills = async () => (await apiCall<{ skills: SkillInfo[] }>('/skills')).skills
 
 export const installSkill = (tokenId: number, skillId: string) =>

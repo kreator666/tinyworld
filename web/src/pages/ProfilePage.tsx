@@ -8,11 +8,12 @@ import { nftLibrary } from '../mock/data'
 import PaperDoll from '../components/PaperDoll'
 import { personaTemplates, toneOptions, topicOptions } from '../mock/data'
 import { rarityDot } from '../components/NFTCard'
-import { explainChainError, fetchAgentPublic, fetchPersona, setPersonaOnChain, ensureTargetChain, approveErc20 } from '../lib/chain'
+import { explainChainError, fetchAgentPublic, fetchPersona, setPersonaOnChain, ensureTargetChain, approveErc20, fetchOwnedPartCount } from '../lib/chain'
 import { useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay } from '../data/equipmentCatalog'
 import {
   getAgentStatus,
+  getAgentStats,
   installSkill,
   listSkills,
   uninstallSkill,
@@ -354,12 +355,15 @@ export default function ProfilePage() {
   const active = useChainConfig((s) => s.active)
   const nav = useNavigate()
   const { tokenId: paramTokenId } = useParams()
-  const { connected, address, login, did, inventory, aiProfile, saveAIProfile, resetAIProfile, following, favorites, toggleFollow, toggleFavorite, ensureChatWith, showToast } = useAppStore()
+  const { connected, address, login, did, aiProfile, saveAIProfile, resetAIProfile, following, favorites, toggleFollow, toggleFavorite, ensureChatWith, showToast } = useAppStore()
   const { tokenId, didName, equipped: chainEquipped, loading: chainLoading, refresh } = useChainStore()
   const [form, setForm] = useState<AIProfile>(aiProfile)
   const [zoomMeta, setZoomMeta] = useState(false)
   const [saving, setSaving] = useState(false)
   const [consoleOpen, setConsoleOpen] = useState(false) // 人格控制台长表单默认收起,需要时再展开
+  // 真实统计指标:活跃度/社交互动数(后端 tasks+social_messages 统计),NFT 数(链上 balanceOfBatch)
+  const [stats, setStats] = useState<{ activityPercent: number; socialInteractions: number } | null>(null)
+  const [nftCount, setNftCount] = useState<number | null>(null)
 
   // 访客模式:URL 带 tokenId 且不是自己的 Agent
   const visitingTokenId = paramTokenId ? Number(paramTokenId) : null
@@ -397,6 +401,33 @@ export default function ProfilePage() {
     if (isSelf && !did && connected && isSepolia && address) refresh(address as `0x${string}`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSelf, did, connected, isSepolia, address])
+
+  // 真实统计指标:活跃度/社交互动数(后端按 tokenId 统计);NFT 装备数(链上 balanceOfBatch,按所属钱包)
+  const statsTokenId = isSelf ? tokenId : visitingTokenId
+  const statsOwner = isSelf ? address : (other?.address ?? null)
+  useEffect(() => {
+    if (!connected || !isSepolia || statsTokenId == null || statsTokenId === 0) return
+    let cancelled = false
+    getAgentStats(statsTokenId)
+      .then((s) => !cancelled && setStats({ activityPercent: s.activityPercent, socialInteractions: s.socialInteractions }))
+      .catch(() => !cancelled && setStats(null))
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, isSepolia, statsTokenId])
+
+  useEffect(() => {
+    if (!connected || !isSepolia || !statsOwner) return
+    let cancelled = false
+    fetchOwnedPartCount(statsOwner as `0x${string}`)
+      .then((n) => !cancelled && setNftCount(n))
+      .catch(() => !cancelled && setNftCount(null))
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, isSepolia, statsOwner])
 
   // 读取链上人格配置(personaOf)回填 AI 控制台;contentHash 校验不一致则忽略
   // 仅自己的主页装载(控制台只有本人可见)
@@ -490,7 +521,6 @@ export default function ProfilePage() {
   const targetId = isSelf ? 'me' : `agent-${visitingTokenId}`
   const followed = following.includes(targetId)
   const favored = favorites.includes(targetId)
-  const equippedCount = Object.values(view.equipped).filter(Boolean).length
 
   const chat = (mode: 'human' | 'ai') => {
     // 自己的 Agent → 专属助手页(豆包式多对话);别人的 Agent → 消息页社交会话
@@ -548,12 +578,12 @@ export default function ProfilePage() {
             </a>
           </div>
           {view.bio && <p className="text-sm text-slate-400 mt-2">{view.bio}</p>}
-          {/* 数据标签 */}
+          {/* 数据标签(真实统计:活跃度=近7天活跃占比,社交互动=收发消息总数,NFT=链上余额) */}
           <div className="grid grid-cols-3 gap-3 mt-4">
             {[
-              { label: 'Agent 活跃度', value: '92%' },
-              { label: '社交互动数', value: '1,284' },
-              { label: '持有 NFT 装备', value: String(isSelf ? inventory.length : equippedCount) },
+              { label: 'Agent 活跃度', value: stats ? `${stats.activityPercent}%` : '—' },
+              { label: '社交互动数', value: stats ? String(stats.socialInteractions) : '—' },
+              { label: '持有 NFT 装备', value: nftCount != null ? String(nftCount) : '—' },
             ].map((s) => (
               <div key={s.label} className="glass !rounded-xl p-3 text-center">
                 <div className="text-xl font-bold bg-neon-grad bg-clip-text text-transparent">{s.value}</div>

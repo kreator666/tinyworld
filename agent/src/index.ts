@@ -22,6 +22,7 @@ import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToD
 import { startScheduler, stopScheduler } from './core/scheduler'
 import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
+import { getAgentStats } from './core/stats'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
 import { executeProposal, recordDefiTask, describeSwapResult } from './skills/defi-swap'
@@ -164,6 +165,18 @@ app.get('/agents/:tokenId/status', async (c) => {
       getInstalledSkills(tokenId),
     ])
     return c.json({ tokenId, name: persona.name, personaFromChain: persona.fromChain, ...counts, skills })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 个人主页统计:社交互动数 + 近 7 天活跃度(真实活动数据,非静态展示)
+app.get('/agents/:tokenId/stats', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const stats = await getAgentStats(tokenId)
+    return c.json({ tokenId, ...stats })
   } catch (err) {
     return handleErr(c, err)
   }

@@ -126,8 +126,7 @@ export async function ensureTargetChain(): Promise<void> {
 }
 
 /** 读取地址的链上身份与配件资产(使用 balanceOfBatch 优化,避免 120 次单读) */
-export async function fetchChainState(address: Address): Promise<ChainIdentityState> {
-  const client = readClient()
+export async function fetchChainState(address: Address): Promise<ChainIdentityState> {  const client = readClient()
 
   const tokenId = (await client.readContract({
     address: A().identity,
@@ -177,6 +176,20 @@ export async function fetchChainState(address: Address): Promise<ChainIdentitySt
   }))
 
   return { tokenId: Number(tokenId), didName, equipped, parts }
+}
+
+/** 统计任意地址持有的 NFT 装备总数(balanceOfBatch 一次批量读;个人主页访客指标用) */
+export async function fetchOwnedPartCount(address: Address): Promise<number> {
+  const client = readClient()
+  const allIds = ALL_CHAIN_IDS.map((id) => BigInt(id))
+  const accounts = allIds.map(() => address)
+  const balances = (await client.readContract({
+    address: A().parts,
+    abi: partsAbi,
+    functionName: 'balanceOfBatch',
+    args: [accounts, allIds],
+  })) as bigint[]
+  return balances.reduce((sum, b) => sum + Number(b), 0)
 }
 
 /** 铸造 Agent 主身份,返回 tx hash(等待上链确认后 resolve) */
