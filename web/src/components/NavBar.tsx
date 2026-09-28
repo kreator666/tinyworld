@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { MouseEvent } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
@@ -18,6 +19,8 @@ export default function NavBar() {
   const { connected, address, did, disconnect, login, showToast } = useAppStore()
   const chainStore = useChainStore()
   const { active, chains, setActive, hydrateFromApi } = useChainConfig()
+  const wizardOpen = useAppStore((s) => s.wizardOpen)
+  const setWizardOpen = useAppStore((s) => s.setWizardOpen)
   const [switching, setSwitching] = useState(false)
   const handleDisconnect = () => {
     disconnect()
@@ -30,6 +33,14 @@ export default function NavBar() {
   const { isAdmin } = chainStore
 
   const onTargetChain = login?.chainId === active.chainId
+
+  // 未连接钱包时点击导航:拦截跳转,提示连接钱包并弹出钱包选择
+  const guardNav = (e: MouseEvent) => {
+    if (connected) return
+    e.preventDefault()
+    showToast('请先连接钱包')
+    setShowWallet(true)
+  }
 
   // 启动时从 agent 服务拉 chains 表(后端数据为准,本地兜底)
   useEffect(() => {
@@ -88,6 +99,7 @@ export default function NavBar() {
               <NavLink
                 key={n.to}
                 to={n.to}
+                onClick={guardNav}
                 className={({ isActive }) =>
                   isActive ? 'text-white border-b-2 border-neon-purple pb-0.5' : 'hover:text-white transition'
                 }
@@ -118,6 +130,16 @@ export default function NavBar() {
           </nav>
 
           <div className="flex items-center gap-3">
+            {/* 新手引导开关:随时打开/关闭蒙板教学 */}
+            <button
+              onClick={() => setWizardOpen(!wizardOpen)}
+              className={`tag !text-[10px] transition ${
+                wizardOpen ? 'border-neon-purple/60 text-neon-purple' : 'border-white/15 text-slate-400 hover:text-slate-200'
+              }`}
+              title="打开/关闭新手引导"
+            >
+              🎓 新手引导
+            </button>
             {/* 切链按钮:合约地址以后端 chains 表为准,前端本地数据兜底 */}
             <select
               className="glass !rounded-xl text-xs px-2 py-1.5 text-neon-cyan cursor-pointer bg-transparent"

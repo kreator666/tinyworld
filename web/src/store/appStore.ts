@@ -58,6 +58,11 @@ interface AppState {
   showToast: (msg: string) => void
   // 持久化恢复完成标记
   hydrated: boolean
+  // 新手引导 wizard(导航栏开关控制;是否已引导过持久化,首登自动弹一次)
+  wizardOpen: boolean
+  setWizardOpen: (open: boolean) => void
+  hasOnboarded: boolean
+  markOnboarded: () => void
 }
 
 const now = () => new Date().toTimeString().slice(0, 5)
@@ -204,15 +209,21 @@ export const useAppStore = create<AppState>()(
     set({ toast: msg })
     setTimeout(() => set({ toast: null }), 2600)
   },
+
+  wizardOpen: false,
+  setWizardOpen: (open) => set({ wizardOpen: open }),
+  hasOnboarded: false,
+  markOnboarded: () => set({ hasOnboarded: true }),
 }),
 {
   name: 'app-store',
-  // 只持久化钱包登录态,避免链上数据/聊天列表等过期数据被固化
+  // 只持久化钱包登录态 + 新手引导完成标记,避免链上数据/聊天列表等过期数据被固化
   partialize: (state) => ({
     connected: state.connected,
     address: state.address,
     provider: state.provider,
     login: state.login,
+    hasOnboarded: state.hasOnboarded,
   }),
 })
 )

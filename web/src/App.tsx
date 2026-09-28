@@ -5,13 +5,13 @@ import { useAppStore } from './store/appStore'
 import { useChainStore } from './store/chainStore'
 import { getActiveProvider, setActiveProvider } from './lib/wallet'
 import NavBar from './components/NavBar'
+import OnboardingWizard from './components/OnboardingWizard'
 import LandingPage from './pages/LandingPage'
 import MintWorkshop from './pages/MintWorkshop'
 import ProfilePage from './pages/ProfilePage'
 import PlazaPage from './pages/PlazaPage'
 import ChatPage from './pages/ChatPage'
 import BackpackPage from './pages/BackpackPage'
-import GamePage from './pages/GamePage'
 import AdminPage from './pages/AdminPage'
 import MyAgentPage from './pages/MyAgentPage'
 
@@ -78,11 +78,24 @@ function WalletEvents() {
 
 export default function App() {
   const setHydrated = useAppStore((s) => s.setHydrated)
+  const connected = useAppStore((s) => s.connected)
+  const hydrated = useAppStore((s) => s.hydrated)
+  const hasOnboarded = useAppStore((s) => s.hasOnboarded)
+  const setWizardOpen = useAppStore((s) => s.setWizardOpen)
+  const markOnboarded = useAppStore((s) => s.markOnboarded)
 
   useEffect(() => {
     // 持久化恢复默认同步完成,用 useEffect 标记 hydrated 可确保 Guard 不会永远等待
     setHydrated(true)
   }, [setHydrated])
+
+  // 首次登录(连接钱包后)自动弹出新手引导,仅一次;之后用导航栏开关手动打开
+  useEffect(() => {
+    if (!hydrated || !connected || hasOnboarded) return
+    markOnboarded()
+    const t = setTimeout(() => setWizardOpen(true), 600)
+    return () => clearTimeout(t)
+  }, [hydrated, connected, hasOnboarded, markOnboarded, setWizardOpen])
 
   return (
     <HashRouter>
@@ -100,10 +113,10 @@ export default function App() {
             <Route path="/chat" element={<Guard><ChatPage /></Guard>} />
             <Route path="/backpack" element={<Guard><BackpackPage /></Guard>} />
             <Route path="/admin" element={<Guard><AdminPage /></Guard>} />
-            <Route path="/game" element={<GamePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
+        <OnboardingWizard />
         <Toast />
       </div>
     </HashRouter>

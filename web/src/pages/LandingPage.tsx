@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import WalletModal from '../components/WalletModal'
 import PaperDoll from '../components/PaperDoll'
@@ -44,7 +43,6 @@ const stats = [
 export default function LandingPage() {
   const [showWallet, setShowWallet] = useState(false)
   const connected = useAppStore((s) => s.connected)
-  const nav = useNavigate()
 
   return (
     <div className="flex flex-col">
@@ -74,23 +72,13 @@ export default function LandingPage() {
               它替你社交、替你互动、替你执行 DeFi 任务 —— 你下线,它上线。
             </p>
             <div className="mt-10">
-              <div className="flex flex-wrap items-center gap-4">
-                {!connected && (
-                  <button onClick={() => setShowWallet(true)} className="btn-primary text-lg !px-8 !py-3.5 animate-pulse-ring">
-                    连接钱包 · 唤醒 Agent
-                  </button>
-                )}
-                <button
-                  onClick={() => nav('/game')}
-                  className={`text-lg !px-8 !py-3.5 ${connected ? 'btn-primary animate-pulse-ring' : 'btn-ghost'}`}
-                >
-                  🎮 进入游戏
+              {!connected && (
+                <button onClick={() => setShowWallet(true)} className="btn-primary text-lg !px-8 !py-3.5 animate-pulse-ring">
+                  连接钱包 · 唤醒 Agent
                 </button>
-              </div>
+              )}
               <p className="mt-4 text-xs text-slate-500">
                 签名即登录 · Agent 身份与所有 NFT 资产归属你的钱包地址
-                <br />
-                🎮 2D 卷轴动作小游戏,将使用你铸造的 Agent 形象出战
               </p>
             </div>
           </div>
