@@ -143,7 +143,7 @@ export async function chatInConversation(
   const history: ChatMessage[] = recent.rows.reverse()
 
   const persona = await loadPersona(tokenId)
-  const result = await runAgentTurn(persona, history, message)
+  const result = await runAgentTurn(persona, history, message, 'owner')
 
   // 问答(含被拦截的轮次)都落 messages 表,并刷新 updated_at
   await db.query('INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)', [

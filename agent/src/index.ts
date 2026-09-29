@@ -4,7 +4,7 @@ import { cors } from 'hono/cors'
 import { isAddress, type Address, type Hex } from 'viem'
 import { config } from './config'
 import { PersonaError, loadPersona, resolveTokenId } from './chain/persona'
-import { chatWithAgent, invalidateAgent, reloadAgent } from './core/agent'
+import { chatWithAgent, invalidateAgent, reloadAgent, type ChatMode } from './core/agent'
 import { clearMemories, distill, getMemoryCounts, listMemories } from './core/memory'
 import {
   chatInConversation,
@@ -22,6 +22,8 @@ import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToD
 import { startScheduler, stopScheduler } from './core/scheduler'
 import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
+import { createNonce, verifyLogin, signJwt, AuthError } from './core/auth'
+import { authRequired, assertAgentOwnership } from './middleware/auth'
 import { getAgentStats } from './core/stats'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
@@ -54,6 +56,38 @@ app.get('/chains', async (c) => {
   }
 })
 
+// ============================================================
+// 认证:SIWE 签名登录
+// ============================================================
+
+// 获取一次性 nonce;前端用钱包地址请求,签名消息里必须包含该 nonce
+app.post('/auth/nonce', async (c) => {
+  const body = await c.req.json<{ address?: string }>().catch(() => null)
+  const address = body?.address?.trim()
+  if (!address || !isAddress(address)) return c.json({ error: 'address 不合法' }, 400)
+  try {
+    const payload = createNonce(address)
+    return c.json(payload)
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 验证签名消息,签发 JWT
+app.post('/auth/verify', async (c) => {
+  const body = await c.req.json<{ message?: string; signature?: Hex }>().catch(() => null)
+  if (!body?.message || !body?.signature) {
+    return c.json({ error: 'message 和 signature 不能为空' }, 400)
+  }
+  try {
+    const address = await verifyLogin({ message: body.message, signature: body.signature })
+    const token = signJwt({ address, chainId: config.chain.chainId })
+    return c.json({ token, address, chainId: config.chain.chainId })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
 /** 解析路径里的 tokenId,不合法返回 null(已顺手回了 400) */
 function parseTokenId(c: Context): number | null {
   const tokenId = Number(c.req.param('tokenId'))
@@ -76,11 +110,12 @@ app.get('/agents/:tokenId/persona', async (c) => {
   }
 })
 
-// 强制重新从链上装载人格(用户改配置写链后调用)
-app.post('/agents/:tokenId/reload', async (c) => {
+// 强制重新从链上装载人格(用户改配置写链后调用);仅主人可操作
+app.post('/agents/:tokenId/reload', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    await assertAgentOwnership(c, tokenId)
     const persona = await reloadAgent(tokenId)
     return c.json({ ok: true, persona })
   } catch (err) {
@@ -88,10 +123,14 @@ app.post('/agents/:tokenId/reload', async (c) => {
   }
 })
 
-// 前端拿的是钱包地址,这个端点最顺手:内部 tokenIdOf 解析
-app.post('/agents/by-owner/:address/chat', async (c) => {
+// 前端拿的是钱包地址,这个端点最顺手:内部 tokenIdOf 解析;必须本人签名登录
+app.post('/agents/by-owner/:address/chat', authRequired, async (c) => {
   const address = c.req.param('address')
   if (!isAddress(address)) return c.json({ error: '地址不合法' }, 400)
+  const caller = c.get('address')
+  if (caller.toLowerCase() !== address.toLowerCase()) {
+    return c.json({ error: '只能操作自己的 Agent' }, 403)
+  }
   const body = await c.req.json<{ message?: string }>().catch(() => null)
   const message = body?.message?.trim()
   if (!message) return c.json({ error: 'message 不能为空' }, 400)
@@ -99,15 +138,16 @@ app.post('/agents/by-owner/:address/chat', async (c) => {
   try {
     const tokenId = await resolveTokenId(address as Address)
     if (tokenId === 0) return c.json({ error: '该地址还没有铸造 Agent,请先去铸造' }, 404)
-    const result = await chatWithAgent(tokenId, message)
+    const result = await chatWithAgent(tokenId, message, 'owner')
     return c.json({ reply: result.reply, tokenId, refused: result.refused, action: result.action })
   } catch (err) {
     return handleErr(c, err)
   }
 })
 
-// 按 tokenId 直连(调试/内部用);带 fromTokenId 时是社交场景,双方消息落 social_messages
-app.post('/agents/:tokenId/chat', async (c) => {
+// 按 tokenId 直连;带 fromTokenId 且指向他人 Agent 时为社交场景,否则为 owner 模式。
+// 本端点要求 JWT:owner 模式校验 tokenId 主人身份;social 模式校验 fromTokenId 属于调用者。
+app.post('/agents/:tokenId/chat', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   const body = await c.req.json<{ message?: string; fromTokenId?: number }>().catch(() => null)
@@ -118,7 +158,22 @@ app.post('/agents/:tokenId/chat', async (c) => {
     return c.json({ error: 'fromTokenId 不合法' }, 400)
   }
   try {
-    const result = await chatWithAgent(tokenId, message)
+    const caller = c.get('address')
+    // 只有与自己的 Agent 对话时才进入 owner 模式(可操作资产/DeFi);
+    // 带有 fromTokenId 且指向他人 Agent 时强制 social 模式(仅聊天)。
+    const mode: ChatMode = fromTokenId !== undefined && fromTokenId !== tokenId ? 'social' : 'owner'
+
+    if (mode === 'owner') {
+      await assertAgentOwnership(c, tokenId)
+    } else {
+      // social 模式:校验 fromTokenId 确实属于调用者,防止伪造发送方
+      const callerTokenId = await resolveTokenId(caller)
+      if (callerTokenId === 0 || callerTokenId !== fromTokenId) {
+        return c.json({ error: 'fromTokenId 与登录地址不匹配' }, 403)
+      }
+    }
+
+    const result = await chatWithAgent(tokenId, message, mode, fromTokenId)
     // 社交线程:真人消息(fromTokenId→tokenId, kind='user')+ Agent 回复(tokenId→fromTokenId, kind='auto')
     if (fromTokenId !== undefined) {
       await recordSocialMessage(fromTokenId, tokenId, message, 'user')
@@ -134,13 +189,14 @@ app.post('/agents/:tokenId/chat', async (c) => {
 // M3:社交收件箱
 // ============================================================
 
-// 该 Agent 收到的社交消息(按时间正序,?since=<ISO> 增量拉取)
-app.get('/agents/:tokenId/inbox', async (c) => {
+// 该 Agent 收到的社交消息(按时间正序,?since=<ISO> 增量拉取);仅主人可查看
+app.get('/agents/:tokenId/inbox', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   const since = c.req.query('since')
   if (since && Number.isNaN(Date.parse(since))) return c.json({ error: 'since 不是合法时间' }, 400)
   try {
+    await assertAgentOwnership(c, tokenId)
     const messages = await getInbox(tokenId, since)
     return c.json({ messages })
   } catch (err) {
@@ -152,11 +208,12 @@ app.get('/agents/:tokenId/inbox', async (c) => {
 // M2:Agent 状态 / 记忆管理
 // ============================================================
 
-// Agent 状态:链上名称、人格来源、记忆统计、已装技能(默认技能自动补齐,首查即 3/3)
-app.get('/agents/:tokenId/status', async (c) => {
+// Agent 状态:链上名称、人格来源、记忆统计、已装技能(默认技能自动补齐,首查即 3/3);仅主人
+app.get('/agents/:tokenId/status', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    await assertAgentOwnership(c, tokenId)
     const addedSkills = await ensureDefaultSkills(tokenId)
     if (addedSkills.length > 0) invalidateAgent(tokenId)
     const [persona, counts, skills] = await Promise.all([
@@ -170,11 +227,12 @@ app.get('/agents/:tokenId/status', async (c) => {
   }
 })
 
-// 个人主页统计:社交互动数 + 近 7 天活跃度(真实活动数据,非静态展示)
-app.get('/agents/:tokenId/stats', async (c) => {
+// 个人主页统计:社交互动数 + 近 7 天活跃度(真实活动数据,非静态展示);仅主人
+app.get('/agents/:tokenId/stats', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    await assertAgentOwnership(c, tokenId)
     const stats = await getAgentStats(tokenId)
     return c.json({ tokenId, ...stats })
   } catch (err) {
@@ -182,8 +240,8 @@ app.get('/agents/:tokenId/stats', async (c) => {
   }
 })
 
-// 记忆浏览:?kind=episodic|semantic&limit=N
-app.get('/agents/:tokenId/memories', async (c) => {
+// 记忆浏览:?kind=episodic|semantic&limit=N;仅主人
+app.get('/agents/:tokenId/memories', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   const kind = c.req.query('kind')
@@ -192,6 +250,7 @@ app.get('/agents/:tokenId/memories', async (c) => {
   }
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 200)
   try {
+    await assertAgentOwnership(c, tokenId)
     const memories = await listMemories(tokenId, kind, limit)
     return c.json({ tokenId, memories })
   } catch (err) {
@@ -199,11 +258,12 @@ app.get('/agents/:tokenId/memories', async (c) => {
   }
 })
 
-// 清空该 Agent 的全部记忆(记忆主权)
-app.delete('/agents/:tokenId/memories', async (c) => {
+// 清空该 Agent 的全部记忆(记忆主权);仅主人
+app.delete('/agents/:tokenId/memories', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    await assertAgentOwnership(c, tokenId)
     const deleted = await clearMemories(tokenId)
     return c.json({ ok: true, deleted })
   } catch (err) {
@@ -211,11 +271,12 @@ app.delete('/agents/:tokenId/memories', async (c) => {
   }
 })
 
-// 手动触发反思蒸馏(情景 → 语义)
-app.post('/agents/:tokenId/memories/distill', async (c) => {
+// 手动触发反思蒸馏(情景 → 语义);仅主人
+app.post('/agents/:tokenId/memories/distill', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    await assertAgentOwnership(c, tokenId)
     const result = await distill(tokenId)
     return c.json({ ok: true, ...result })
   } catch (err) {
@@ -230,14 +291,15 @@ app.post('/agents/:tokenId/memories/distill', async (c) => {
 // 全部可安装技能(清单)
 app.get('/skills', (c) => c.json({ skills: listSkills() }))
 
-// 安装技能(含链上权限校验;未配置 AGENT_SERVICE_ADDRESS 时跳过校验并注明)
-app.post('/agents/:tokenId/skills', async (c) => {
+// 安装技能(含链上权限校验;未配置 AGENT_SERVICE_ADDRESS 时跳过校验并注明);仅主人
+app.post('/agents/:tokenId/skills', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   const body = await c.req.json<{ skillId?: string }>().catch(() => null)
   const skillId = body?.skillId?.trim()
   if (!skillId) return c.json({ error: 'skillId 不能为空' }, 400)
   try {
+    await assertAgentOwnership(c, tokenId)
     const { manifest, permissionCheck, note } = await installSkill(tokenId, skillId)
     invalidateAgent(tokenId) // 工具集变了,下次对话重建 Agent 实例
     return c.json({
@@ -251,12 +313,13 @@ app.post('/agents/:tokenId/skills', async (c) => {
   }
 })
 
-// 卸载技能
-app.delete('/agents/:tokenId/skills/:skillId', async (c) => {
+// 卸载技能;仅主人
+app.delete('/agents/:tokenId/skills/:skillId', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   const skillId = c.req.param('skillId')
   try {
+    await assertAgentOwnership(c, tokenId)
     const removed = await uninstallSkill(tokenId, skillId)
     if (!removed) return c.json({ error: `Agent ${tokenId} 未安装技能 ${skillId}` }, 404)
     invalidateAgent(tokenId)
@@ -270,11 +333,12 @@ app.delete('/agents/:tokenId/skills/:skillId', async (c) => {
 // 多对话管理(我的 Agent 助手页;社交场景的 /agents/:tokenId/chat 保留不动)
 // ============================================================
 
-// 会话列表(按最近活跃倒序)
-app.get('/agents/:tokenId/conversations', async (c) => {
+// 会话列表(按最近活跃倒序);仅主人
+app.get('/agents/:tokenId/conversations', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    await assertAgentOwnership(c, tokenId)
     const conversations = await listConversations(tokenId)
     return c.json({ conversations })
   } catch (err) {
@@ -282,11 +346,12 @@ app.get('/agents/:tokenId/conversations', async (c) => {
   }
 })
 
-// 新建会话
-app.post('/agents/:tokenId/conversations', async (c) => {
+// 新建会话;仅主人
+app.post('/agents/:tokenId/conversations', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    await assertAgentOwnership(c, tokenId)
     const conversation = await createConversation(tokenId)
     return c.json({ conversation })
   } catch (err) {
@@ -294,10 +359,13 @@ app.post('/agents/:tokenId/conversations', async (c) => {
   }
 })
 
-// 删除会话(消息级联删除)
-app.delete('/conversations/:id', async (c) => {
+// 删除会话(消息级联删除);仅主人
+app.delete('/conversations/:id', authRequired, async (c) => {
   const id = c.req.param('id')
   try {
+    const conv = await getConversationById(id)
+    if (!conv) return c.json({ error: '会话不存在' }, 404)
+    await assertAgentOwnership(c, conv.tokenId)
     const removed = await deleteConversation(id)
     if (!removed) return c.json({ error: '会话不存在' }, 404)
     return c.json({ ok: true })
@@ -306,10 +374,13 @@ app.delete('/conversations/:id', async (c) => {
   }
 })
 
-// 会话消息(按时间正序)
-app.get('/conversations/:id/messages', async (c) => {
+// 会话消息(按时间正序);仅主人
+app.get('/conversations/:id/messages', authRequired, async (c) => {
   const id = c.req.param('id')
   try {
+    const conv = await getConversationById(id)
+    if (!conv) return c.json({ error: '会话不存在' }, 404)
+    await assertAgentOwnership(c, conv.tokenId)
     const messages = await listMessages(id)
     if (messages === null) return c.json({ error: '会话不存在' }, 404)
     return c.json({ messages })
@@ -318,8 +389,8 @@ app.get('/conversations/:id/messages', async (c) => {
   }
 })
 
-// 在会话里对话(tokenId 从会话记录解析)
-app.post('/conversations/:id/chat', async (c) => {
+// 在会话里对话(tokenId 从会话记录解析);仅主人
+app.post('/conversations/:id/chat', authRequired, async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json<{ message?: string }>().catch(() => null)
   const message = body?.message?.trim()
@@ -327,6 +398,7 @@ app.post('/conversations/:id/chat', async (c) => {
   try {
     const conv = await getConversationById(id)
     if (!conv) return c.json({ error: '会话不存在' }, 404)
+    await assertAgentOwnership(c, conv.tokenId)
     const result = await chatInConversation(conv.tokenId, id, message)
     if (result === null) return c.json({ error: '会话不存在' }, 404)
     return c.json({ reply: result.reply, refused: result.refused, action: result.action })
@@ -339,11 +411,12 @@ app.post('/conversations/:id/chat', async (c) => {
 // M4:DeFi 审批
 // ============================================================
 
-// 该 Agent 的审批列表(pending 在前)
-app.get('/agents/:tokenId/approvals', async (c) => {
+// 该 Agent 的审批列表(pending 在前);仅主人
+app.get('/agents/:tokenId/approvals', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    await assertAgentOwnership(c, tokenId)
     const approvals = await listApprovals(tokenId)
     return c.json({ approvals })
   } catch (err) {
@@ -351,12 +424,13 @@ app.get('/agents/:tokenId/approvals', async (c) => {
   }
 })
 
-// 人工放行:执行提案,写 tx_hash,status=executed/failed
-app.post('/approvals/:id/approve', async (c) => {
+// 人工放行:执行提案,写 tx_hash,status=executed/failed;仅主人
+app.post('/approvals/:id/approve', authRequired, async (c) => {
   const id = c.req.param('id')
   try {
     const approval = await getApproval(id)
     if (!approval) return c.json({ error: '审批单不存在' }, 404)
+    await assertAgentOwnership(c, approval.tokenId)
     if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
     try {
       // 按 action 分发:swap 走兑换执行器;supply/withdraw 走借贷执行器
@@ -377,12 +451,13 @@ app.post('/approvals/:id/approve', async (c) => {
   }
 })
 
-// 人工拒绝
-app.post('/approvals/:id/reject', async (c) => {
+// 人工拒绝;仅主人
+app.post('/approvals/:id/reject', authRequired, async (c) => {
   const id = c.req.param('id')
   try {
     const approval = await getApproval(id)
     if (!approval) return c.json({ error: '审批单不存在' }, 404)
+    await assertAgentOwnership(c, approval.tokenId)
     if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
     await resolveApproval(id, 'rejected')
     return c.json({ ok: true, status: 'rejected' })
@@ -395,11 +470,12 @@ app.post('/approvals/:id/reject', async (c) => {
 // M4:Agent 设置(兑换执行模式等)
 // ============================================================
 
-// 查询 Agent 设置
-app.get('/agents/:tokenId/settings', async (c) => {
+// 查询 Agent 设置;仅主人
+app.get('/agents/:tokenId/settings', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
+    await assertAgentOwnership(c, tokenId)
     const swapMode = await getSwapMode(tokenId)
     return c.json({ tokenId, swapMode })
   } catch (err) {
@@ -407,8 +483,8 @@ app.get('/agents/:tokenId/settings', async (c) => {
   }
 })
 
-// 更新 Agent 设置
-app.post('/agents/:tokenId/settings', async (c) => {
+// 更新 Agent 设置;仅主人
+app.post('/agents/:tokenId/settings', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   const body = await c.req.json<{ swapMode?: SwapMode }>().catch(() => null)
@@ -416,6 +492,7 @@ app.post('/agents/:tokenId/settings', async (c) => {
     return c.json({ error: 'swapMode 必须是 hot_wallet 或 user_wallet' }, 400)
   }
   try {
+    await assertAgentOwnership(c, tokenId)
     await setSwapMode(tokenId, body.swapMode)
     return c.json({ ok: true, tokenId, swapMode: body.swapMode })
   } catch (err) {
@@ -423,8 +500,8 @@ app.post('/agents/:tokenId/settings', async (c) => {
   }
 })
 
-// 用户钱包签名模式:后端广播签名后的 raw transaction
-app.post('/agents/:tokenId/broadcast', async (c) => {
+// 用户钱包签名模式:后端广播签名后的 raw transaction;仅主人
+app.post('/agents/:tokenId/broadcast', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   const body = await c.req.json<{ signedTxs?: string[] }>().catch(() => null)
@@ -432,6 +509,7 @@ app.post('/agents/:tokenId/broadcast', async (c) => {
     return c.json({ error: 'signedTxs 不能为空数组' }, 400)
   }
   try {
+    await assertAgentOwnership(c, tokenId)
     const txHashes: Hex[] = []
     for (const signedTx of body.signedTxs) {
       const hash = await broadcastSignedTx(signedTx as Hex)
@@ -448,8 +526,8 @@ app.post('/agents/:tokenId/broadcast', async (c) => {
 })
 
 // 用户钱包签名模式:前端已用钱包直接发送交易;后端核实回执(swap 解析 Swap 事件实际输出),
-// 记 tasks 审计表,并在会话里追加一条 assistant 消息主动告知主人结果
-app.post('/agents/:tokenId/sign-confirm', async (c) => {
+// 记 tasks 审计表,并在会话里追加一条 assistant 消息主动告知主人结果;仅主人
+app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   const body = await c.req
@@ -464,6 +542,7 @@ app.post('/agents/:tokenId/sign-confirm', async (c) => {
   }
   const proposal = body.proposal as Proposal
   try {
+    await assertAgentOwnership(c, tokenId)
     const receipt = await waitForTxReceipt(body.txHash as Hex)
     if (receipt.status !== 'success') {
       // revert:记失败任务(不计入限额),主动告知失败
@@ -502,6 +581,9 @@ app.post('/agents/:tokenId/sign-confirm', async (c) => {
 
 /** 统一错误出口:人格完整性问题 422,技能问题按其 status,LLM 网关异常 502,其余 500 */
 function handleErr(c: Context, err: unknown) {
+  if (err instanceof AuthError) {
+    return c.json({ error: err.message }, err.status)
+  }
   if (err instanceof PersonaError) {
     return c.json({ error: err.message }, 422)
   }
@@ -510,7 +592,7 @@ function handleErr(c: Context, err: unknown) {
   }
   const msg = err instanceof Error ? err.message : String(err)
   // viem/网络错误和 LLM 网关错误都按上游故障处理
-  if (/fetch|network|timeout|LLM|api|401|429|5\d\d/i.test(msg)) {
+  if (/fetch|network|timeout|LLM|api|429|5\d\d/i.test(msg)) {
     console.error('[upstream]', msg)
     return c.json({ error: 'LLM 网关暂时不可用,请稍后重试' }, 502)
   }

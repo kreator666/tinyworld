@@ -1,4 +1,4 @@
-import { createWalletClient, custom, type WalletClient, type Address } from 'viem'
+import { createWalletClient, custom, getAddress, type WalletClient, type Address, type Hex } from 'viem'
 
 // 目标钱包列表
 export interface TargetWallet {
@@ -50,6 +50,13 @@ export interface WalletLoginResult {
   nonce: string
   timestamp: number
   provider: string
+}
+
+export interface WalletConnection {
+  address: Address
+  chainId: number
+  client: ReturnType<typeof createWalletClient>
+  providerName: string
 }
 
 export class WalletError extends Error {
@@ -179,21 +186,22 @@ function generateNonce(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-export async function connectAndSign(detail: EIP6963ProviderDetail, providerName: string): Promise<WalletLoginResult> {
+/** 连接钱包并创建 viem WalletClient;不签名,把签名时机交给调用方(用于 SIWE 登录) */
+export async function connectProvider(detail: EIP6963ProviderDetail, providerName: string): Promise<WalletConnection> {
   if (!detail?.provider?.request) {
     throw new WalletError('PROVIDER_NOT_FOUND', '未检测到该钱包扩展')
   }
 
   const provider = detail.provider
-  console.log('[connectAndSign] provider', providerName, provider)
+  console.log('[connectProvider] provider', providerName, provider)
 
   let accounts: unknown
   let workingProvider: EIP1193Provider = provider
   try {
     accounts = await provider.request({ method: 'eth_requestAccounts' })
-    console.log('[connectAndSign] accounts', accounts)
+    console.log('[connectProvider] accounts', accounts)
   } catch (err) {
-    console.error('[connectAndSign] eth_requestAccounts failed', err)
+    console.error('[connectProvider] eth_requestAccounts failed', err)
     const msg = err instanceof Error ? err.message : String(err)
     if (msg.includes('User rejected') || msg.includes('rejected') || msg.includes('denied')) {
       throw new WalletError('USER_REJECTED', '用户拒绝了钱包连接')
@@ -204,7 +212,7 @@ export async function connectAndSign(detail: EIP6963ProviderDetail, providerName
       try {
         accounts = await winEth.request({ method: 'eth_requestAccounts' })
         workingProvider = winEth
-        console.log('[connectAndSign] fallback accounts', accounts)
+        console.log('[connectProvider] fallback accounts', accounts)
       } catch (fallbackErr) {
         const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
         throw new WalletError('CONNECT_FAILED', `连接钱包失败: ${fbMsg}`)
@@ -232,10 +240,28 @@ export async function connectAndSign(detail: EIP6963ProviderDetail, providerName
   const chainId = typeof chainIdRaw === 'string' ? Number.parseInt(chainIdRaw, 16) : 1
 
   const client = createWalletClient({
-    account: address,
+    account: getAddress(address),
     chain: { id: chainId, name: 'Unknown', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [] } } },
     transport: custom(workingProvider),
   })
+
+  return { address, chainId, client, providerName }
+}
+
+/** 构造后端要求的 SIWE 风格纯文本登录消息 */
+export function buildAgentLoginMessage(address: string, nonce: string, chainId: number, issuedAt: string): string {
+  return [
+    'AgentVerse Login',
+    'Action: login',
+    `Address: ${address}`,
+    `Nonce: ${nonce}`,
+    `Chain ID: ${chainId}`,
+    `Issued At: ${issuedAt}`,
+  ].join('\n')
+}
+
+export async function connectAndSign(detail: EIP6963ProviderDetail, providerName: string): Promise<WalletLoginResult> {
+  const { address, chainId, client, providerName: name } = await connectProvider(detail, providerName)
 
   const nonce = generateNonce()
   const timestamp = Date.now()
@@ -244,7 +270,7 @@ export async function connectAndSign(detail: EIP6963ProviderDetail, providerName
 
   let signature: `0x${string}`
   try {
-    signature = await client.signTypedData(typedData)
+    signature = await client.signTypedData({ ...typedData, account: getAddress(address) })
     console.log('[connectAndSign] signature', signature)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -261,6 +287,6 @@ export async function connectAndSign(detail: EIP6963ProviderDetail, providerName
     chainId,
     nonce,
     timestamp,
-    provider: providerName,
+    provider: name,
   }
 }

@@ -1,7 +1,61 @@
 // Agent 运行时服务(agent/ 包)的对话接口
 // base 可用 VITE_AGENT_API 覆盖,默认本地 dev 端口 4111
 
+import { useAppStore } from '../store/appStore'
+
 const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? ''
+
+interface NonceResponse {
+  nonce: string
+  issuedAt: string
+  chainId: number
+}
+
+interface VerifyResponse {
+  token: string
+  address: string
+  chainId: number
+}
+
+/** 向后端申请一次性 nonce */
+export async function requestNonce(address: string): Promise<NonceResponse> {
+  const res = await fetch(`${AGENT_API}/auth/nonce`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address }),
+  })
+  const data = (await res.json().catch(() => null)) as (NonceResponse & { error?: string }) | null
+  if (!res.ok) throw new Error(data?.error ?? `获取 nonce 失败(${res.status})`)
+  if (!data?.nonce || !data?.issuedAt) throw new Error('nonce 返回格式异常')
+  return data
+}
+
+/** 验证 SIWE 签名并换取 JWT */
+export async function verifyAgentLogin(message: string, signature: string): Promise<VerifyResponse> {
+  const res = await fetch(`${AGENT_API}/auth/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, signature }),
+  })
+  const data = (await res.json().catch(() => null)) as (VerifyResponse & { error?: string }) | null
+  if (!res.ok) throw new Error(data?.error ?? `登录验证失败(${res.status})`)
+  if (!data?.token) throw new Error('verify 返回格式异常')
+  return data
+}
+
+function authHeaders(headers?: HeadersInit): Record<string, string> {
+  const token = useAppStore.getState().agentToken
+  const base: Record<string, string> = {}
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => {
+      base[key] = value
+    })
+  } else if (headers) {
+    Object.assign(base, headers as Record<string, string>)
+  }
+  if (token) base.Authorization = `Bearer ${token}`
+  return base
+}
 
 export interface AgentChatResult {
   reply: string
@@ -30,7 +84,7 @@ export interface SignTxAction {
 export async function chatWithMyAgent(address: string, message: string): Promise<AgentChatResult> {
   const res = await fetch(`${AGENT_API}/agents/by-owner/${address}/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ message }),
   })
   const data = (await res.json().catch(() => null)) as (Partial<AgentChatResult> & { error?: string }) | null
@@ -44,7 +98,7 @@ export async function chatWithMyAgent(address: string, message: string): Promise
 export async function chatWithAgent(tokenId: number, message: string, fromTokenId?: number): Promise<AgentChatResult> {
   const res = await fetch(`${AGENT_API}/agents/${tokenId}/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(fromTokenId ? { message, fromTokenId } : { message }),
   })
   const data = (await res.json().catch(() => null)) as (Partial<AgentChatResult> & { error?: string }) | null
@@ -90,7 +144,7 @@ export interface SkillInfo {
 }
 
 async function apiCall<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${AGENT_API}${path}`, init)
+  const res = await fetch(`${AGENT_API}${path}`, { ...init, headers: authHeaders(init?.headers) })
   const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null
   if (!res.ok) throw new Error(data?.error ?? `Agent 服务错误(${res.status})`)
   return data as T

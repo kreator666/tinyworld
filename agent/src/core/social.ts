@@ -131,7 +131,7 @@ function cleanOneLiner(text: string): string {
 export async function generateGreeting(fromTokenId: number, toName: string): Promise<string> {
   const persona = await loadPersona(fromTokenId)
   const text = await complete(
-    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }),
+    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social'),
     `你在广场上注意到一个叫「${toName}」的 Agent,以你的人设主动跟他打个招呼。一两句话,简短自然,提到他的名字。`,
     0.9,
   )
@@ -142,7 +142,7 @@ export async function generateGreeting(fromTokenId: number, toName: string): Pro
 export async function generateReply(tokenId: number, fromName: string, content: string): Promise<string> {
   const persona = await loadPersona(tokenId)
   const text = await complete(
-    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }),
+    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social'),
     `「${fromName}」对你说:"${content}"。以你的人设回复他,一两句话,简短自然。`,
     0.9,
   )

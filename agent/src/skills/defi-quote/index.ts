@@ -68,6 +68,7 @@ export const defiQuote: SkillDef = {
     description: '查 AVAX 价格、查钱包资产、查自己的链上装备(只读)',
     tools: ['get_avax_price', 'get_my_equipment', 'get_wallet_assets'],
     permissions: [],
+    scope: 'owner', // 涉及钱包/资产/行情,仅限主人对话
   },
   makeTools: (tokenId) => ({
     get_avax_price: getAvaxPrice,

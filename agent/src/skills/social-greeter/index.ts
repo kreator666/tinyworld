@@ -68,6 +68,7 @@ export const socialGreeter: SkillDef = {
     description: '向新铸造 Agent 的主人主动打招呼、破冰聊天(M2 只产出草稿)',
     tools: ['list_new_agents', 'draft_greeting'],
     permissions: ['social'],
+    scope: 'all', // 主人对话中也可让 Agent 探索广场,社交对话中更是核心能力
   },
   makeTools: (tokenId) => ({
     list_new_agents: listNewAgents,

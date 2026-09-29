@@ -143,6 +143,16 @@ export async function resolveTokenId(owner: Address): Promise<number> {
   return Number(tokenId)
 }
 
+/** tokenId → owner 地址 */
+export async function ownerOf(tokenId: number): Promise<Address> {
+  return (await client.readContract({
+    address: config.chain.identityAddress,
+    abi: identityAbi,
+    functionName: 'ownerOf',
+    args: [BigInt(tokenId)],
+  })) as Address
+}
+
 /** 解析 data:application/json;base64,<...> 为 JSON 文本,并校验 keccak256 */
 function decodePersonaUri(uri: string, contentHash: string): AIProfile {
   const prefix = 'data:application/json;base64,'

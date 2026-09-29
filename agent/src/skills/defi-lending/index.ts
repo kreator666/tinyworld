@@ -443,6 +443,7 @@ export const defiLending: SkillDef = {
       'Aave v3 借贷理财。存入 AVAX/USDC 赚供给收益,随时连本带息取回,支持只读仓位查询。支持两种执行模式:热钱包自动执行;或主人钱包签名(Agent 只组装交易,前端弹钱包确认)。执行前经策略引擎限额/冷却/熔断把关。',
     tools: ['propose_supply', 'propose_withdraw', 'get_lending_position'],
     permissions: ['defi'],
+    scope: 'owner', // 资产操作,仅限主人对话
   },
   makeTools: (tokenId) => ({
     propose_supply: makeProposeSupply(tokenId),

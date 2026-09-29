@@ -22,6 +22,8 @@ export interface SkillManifest {
   description: string
   tools: string[] // 工具 id 列表
   permissions: string[] // 'social' 等,对应链上 PERMISSION 位;空数组 = 只读技能无需授权
+  /** 工具可用范围:social=仅社交对话,owner=仅主人对话,all=两者(默认) */
+  scope?: 'social' | 'owner' | 'all'
 }
 
 export interface SkillDef {
@@ -162,14 +164,22 @@ export async function uninstallSkill(tokenId: number, skillId: string): Promise<
   return res.rows.length > 0
 }
 
-/** 该 Agent 当前可用的全部工具 = 已安装技能的工具合并(调用方负责失效重建 Agent 实例) */
-export async function getToolsFor(tokenId: number): Promise<Record<string, AnyTool>> {
+/** 该 Agent 当前可用的工具 = 已安装技能的工具合并,并按对话模式过滤
+ *  mode='owner'(默认):主人对话,可用含 DeFi/资产在内的全部工具
+ *  mode='social'      :社交对话,仅加载 scope='social'|'all' 的技能,禁止资产/DeFi 操作
+ */
+export async function getToolsFor(
+  tokenId: number,
+  mode: 'owner' | 'social' = 'owner',
+): Promise<Record<string, AnyTool>> {
   const db = await getDb()
   const res = await db.query<{ skill_id: string }>('SELECT skill_id FROM agent_skills WHERE token_id = $1', [tokenId])
   const tools: Record<string, AnyTool> = {}
   for (const { skill_id } of res.rows) {
     const def = builtins.get(skill_id)
     if (!def) continue // DB 里有但代码未注册(比如版本回滚),跳过
+    const scope = def.manifest.scope ?? 'all'
+    if (scope !== 'all' && scope !== mode) continue
     Object.assign(tools, def.makeTools(tokenId))
   }
   return tools

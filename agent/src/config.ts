@@ -101,4 +101,7 @@ export const config = {
   policyMaxTxUsd: Number(env('POLICY_MAX_TX_USD', '25')),
   policyDailyLimitUsd: Number(env('POLICY_DAILY_LIMIT_USD', '125')),
   policyCooldownSeconds: Number(env('POLICY_COOLDOWN_SECONDS', '600')),
+  // JWT 认证:SIWE 签名登录后签发会话 token(生产环境必须设置强随机字符串)
+  jwtSecret: env('JWT_SECRET', 'dev-secret-change-me-in-production'),
+  jwtExpiresIn: env('JWT_EXPIRES_IN', '24h'),
 } as const

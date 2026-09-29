@@ -3,16 +3,19 @@ import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import {
   getAvailableWallets,
-  connectAndSign,
+  connectProvider,
+  buildAgentLoginMessage,
   type DiscoveredWallet,
   type EIP6963ProviderDetail,
   WalletError,
 } from '../lib/wallet'
+import { requestNonce, verifyAgentLogin } from '../lib/agentApi'
+import { getAddress } from 'viem'
 import { ensureTargetChain } from '../lib/chain'
 import { useChainConfig } from '../store/chainConfigStore'
 import { useChainStore } from '../store/chainStore'
 
-// 钱包选择弹窗: 通过 EIP-6963 发现钱包并调起 EIP-712 签名登录
+// 钱包选择弹窗: 通过 EIP-6963 发现钱包并走 SIWE 签名登录换取 JWT
 export default function WalletModal({ onClose }: { onClose: () => void }) {
   const active = useChainConfig((s) => s.active)
   const connect = useAppStore((s) => s.connect)
@@ -49,23 +52,32 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
     setPhase('connecting')
 
     try {
-      const result = await connectAndSign(wallet.detail, wallet.name)
+      const { address, chainId, client, providerName } = await connectProvider(wallet.detail, wallet.name)
       setPhase('signing')
-      connect({
-        address: result.address,
-        signature: result.signature,
-        chainId: result.chainId,
-        nonce: result.nonce,
-        timestamp: result.timestamp,
-        provider: result.provider,
-      })
+
+      const { nonce, issuedAt } = await requestNonce(address)
+      const message = buildAgentLoginMessage(address, nonce, chainId, issuedAt)
+      const signature = await client.signMessage({ account: getAddress(address), message })
+      const { token } = await verifyAgentLogin(message, signature)
+
+      connect(
+        {
+          address,
+          signature,
+          chainId,
+          nonce,
+          timestamp: Date.now(),
+          provider: providerName,
+        },
+        token,
+      )
       onClose()
 
       // 强制切到目标链后刷新链上资产
       try {
         await ensureTargetChain()
         showToast(`${wallet.name} 已连接并切换到 ${active.name},正在读取链上资产…`)
-        await refresh(result.address as `0x${string}`)
+        await refresh(address as `0x${string}`)
       } catch (err) {
         showToast(`已连接钱包,但未能切换到 ${active.name} 或读取链上资产,请手动切网络后再试`)
       }

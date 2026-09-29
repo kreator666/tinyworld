@@ -375,6 +375,7 @@ export const defiSwap: SkillDef = {
     description: 'AVAX↔USDC 白名单兑换。支持两种执行模式:hot_wallet(Agent 热钱包自动执行);user_wallet(Agent 组装交易,主人钱包签名,Agent 广播)。',
     tools: ['propose_swap'],
     permissions: ['defi'],
+    scope: 'owner', // 资产操作,仅限主人对话
   },
   makeTools: (tokenId) => ({
     propose_swap: makeProposeSwap(tokenId),

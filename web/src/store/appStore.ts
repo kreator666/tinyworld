@@ -25,7 +25,8 @@ interface AppState {
   address: string | null
   provider: string | null
   login: WalletLogin | null
-  connect: (login: WalletLogin) => void
+  agentToken: string | null
+  connect: (login: WalletLogin, agentToken?: string | null) => void
   disconnect: () => void
   setHydrated: (hydrated: boolean) => void
   // DID 身份
@@ -75,9 +76,10 @@ export const useAppStore = create<AppState>()(
       address: null,
       provider: null,
       login: null,
-  connect: (login) =>
-    set({ connected: true, provider: login.provider, address: login.address, login }),
-  disconnect: () => set({ connected: false, provider: null, address: null, login: null }),
+      agentToken: null,
+  connect: (login, agentToken) =>
+    set({ connected: true, provider: login.provider, address: login.address, login, agentToken: agentToken ?? null }),
+  disconnect: () => set({ connected: false, provider: null, address: null, login: null, agentToken: null }),
   setHydrated: (hydrated) => set({ hydrated }),
   hydrated: false,
 
@@ -223,6 +225,7 @@ export const useAppStore = create<AppState>()(
     address: state.address,
     provider: state.provider,
     login: state.login,
+    agentToken: state.agentToken,
     hasOnboarded: state.hasOnboarded,
   }),
 })
