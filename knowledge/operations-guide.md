@@ -122,7 +122,7 @@ TinyWorld 相关 server 块监听 `agent.freetoken.xin`，主要配置：
 
 - 静态文件根目录：`/opt/tinyworld/web/dist`
 - React Router 使用 hash 路由，无需服务端 fallback
-- API 反代路径：`/agents`、`/conversations`、`/skills`、`/chains`、`/approvals`、`/health` → `http://127.0.0.1:4111`
+- API 反代路径：`/agents`、`/conversations`、`/skills`、`/chains`、`/approvals`、`/health`、`/auth` → `http://127.0.0.1:4111`
 - SSL 证书由 Certbot 管理
 
 ### 常用命令
