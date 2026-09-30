@@ -153,6 +153,18 @@ export async function initSchema(): Promise<void> {
       swap_mode TEXT NOT NULL DEFAULT 'hot_wallet' CHECK (swap_mode IN ('hot_wallet', 'user_wallet')),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- 主人画像(M5 调教):Agent 与主人聊天中学习的事实,按隐私分级
+    -- general=可对外分享;coarse=对外只可用概略形态(城市级位置、姓氏等);private=仅限主人对话
+    CREATE TABLE IF NOT EXISTS owner_facts (
+      id TEXT PRIMARY KEY,
+      token_id INTEGER NOT NULL,
+      category TEXT NOT NULL, -- 喜好/习惯/个人信息/位置/职业/其他
+      fact TEXT NOT NULL,
+      sensitivity TEXT NOT NULL CHECK (sensitivity IN ('general', 'coarse', 'private')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS owner_facts_token_idx ON owner_facts (token_id, created_at);
   `)
 }
 

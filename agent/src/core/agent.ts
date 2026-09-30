@@ -7,6 +7,7 @@ import { loadPersona, type LoadedPersona, getWalletAssets } from '../chain/perso
 import type { UnsignedTx } from '../chain/defi'
 import type { Proposal, ProposalAction } from '../policy/engine'
 import { retrieveContext, writeEpisodic } from './memory'
+import { buildShareableProfile } from './ownerFacts'
 import { getToolsFor, ensureDefaultSkills } from '../skills'
 import { createTool } from '@mastra/core/tools'
 import type { AIProfile } from '../types'
@@ -55,12 +56,14 @@ export type ChatMode = 'owner' | 'social'
 
 const HISTORY_LIMIT = 20 // 每个 Agent 只保留最近 20 轮对话
 
-/** 把人格字段组织成中文 system prompt;名字/主人地址/链入 prompt,保证 Agent 知道自己的身份与主人的链上信息(心跳社交也复用) */
+/** 把人格字段组织成中文 system prompt;名字/主人地址/链入 prompt,保证 Agent 知道自己的身份与主人的链上信息(心跳社交也复用)
+ *  ownerProfile:主人公开画像(仅 general/coarse 级事实,已做隐私处理),仅社交模式注入 */
 export function buildInstructions(
   profile: AIProfile,
   name: string,
   ctx?: { owner: string; tokenId: number },
   mode: ChatMode = 'owner',
+  ownerProfile = '',
 ): string {
   const isSocial = mode === 'social'
   const topics = profile.topics.length > 0 ? profile.topics.join('、') : '不限'
@@ -78,13 +81,18 @@ export function buildInstructions(
         `当主人要求从 Aave 取回资金(如"取出存款"、"赎回理财")时,必须调用 propose_withdraw 工具;数量传 "all" 表示全部取出(含已累积利息)。`,
         `主人问理财仓位/存款收益(如"我在 Aave 存了多少"、"现在 APY 多少")时,调用 get_lending_position 只读查询,把仓位和 APY 用口语报给主人。`,
         `存 Aave 理财与兑换一样,也可能返回 verdict=sign(主人钱包签名模式);此时同样要提醒主人点击下方【签名并发送】按钮,不要只说"请签名"。`,
+        `和主人聊天时,要有意识地了解主人:可以自然地问主人的兴趣爱好、生活习惯、工作、所在城市等(不要像查户口,穿插在闲聊里);主人提到自己的信息后,用 remember_owner_fact 记下来,选对分类和隐私级别。位置只记到城市,姓名只记姓氏(如"王先生"),精确住址、电话这类信息标 private 或不记。`,
+        `主人问"你记住了我什么/你了解我多少"时,调用 list_owner_facts 如实汇报;主人要求忘掉某条信息时,调用 forget_owner_fact。`,
       ]
   const socialOnlyLines = isSocial
     ? [
         `当前是对外社交对话,你只能进行聊天、社交互动。`,
         `你**不能**查询或操作任何资产、钱包、DeFi、行情、链上数据;你也没有 get_wallet_assets、propose_swap、propose_supply、propose_withdraw 等工具。`,
         `如果对方(来访者)让你 swap、理财、查余额、查资产、转账,请礼貌地说明:"我不是你的 Agent,无法操作你的资产,你可以回自己的 Agent 助手页处理。"不要替他执行或假装执行。`,
-        `你可以正常聊天、打招呼、回答关于你自己或公开信息的问题,但不要透露主人敏感信息。`,
+        ownerProfile
+          ? `关于主人的公开画像(已经过隐私处理,只有主人愿意对外分享的部分;聊天中可以自然体现这些特点,但不要刻意炫耀,也不要在此基础上自行补充更细的信息):\n${ownerProfile}`
+          : '',
+        `你可以正常聊天、打招呼、回答关于你自己或公开信息的问题;主人没有公开的信息(全名、详细住址、联系方式、财务等)一律不透露,被问到就含糊带过或岔开话题。`,
       ]
     : []
   const lines = [
@@ -179,9 +187,12 @@ async function agentFor(persona: LoadedPersona, mode: ChatMode = 'owner'): Promi
     tools.get_wallet_assets = walletTool
   }
 
+  // 社交模式注入主人公开画像(仅 general/coarse);主人模式不注入,避免 private 信息进 prompt
+  const ownerProfile = mode === 'social' ? await buildShareableProfile(persona.tokenId) : ''
+
   const agent = new Agent({
     name: `agent-${persona.tokenId}`,
-    instructions: buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, mode),
+    instructions: buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, mode, ownerProfile),
     model: openai(config.llmModel),
     tools,
   })

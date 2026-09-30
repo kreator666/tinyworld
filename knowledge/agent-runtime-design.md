@@ -347,3 +347,13 @@ agent/
 - 已实测的真实 Fuji 交易(TraderJoe Router):限额内自动执行 `0xd885d7be…838f`;审批放行执行 `0x28a9a8de…f9da`
 - 范围说明:仅支持 原生币→代币;代币→原生币(需 approve + swapExactTokensFor*)与 defi-lending(Aave)留待后续
 - 注意:defi-swap 执行在 Fuji 验证,热钱包(0xD79d3450B0f754837e5a1BbeaD88B34d139B0363)只充了 Fuji 测试币;在 Sepolia 上跑需要另行注资且确认 Uniswap 池子流动性
+
+**M5 主人调教(2026-09,owner-tuning 技能)**:
+- 目标:Agent 与主人聊天中学习喜好/习惯/个人信息,社交对话中自然体现,敏感信息分级保护
+- 存储:`owner_facts` 表(category + fact + sensitivity),三级隐私:general=可对外 / coarse=对外概略(城市级位置、姓氏称呼)/ private=仅主人对话
+- 硬规则:`core/ownerFacts.ts` 写入侧拒绝 general/coarse 级的精确地址(门牌号/小区名正则);社交 prompt 注入走 `buildShareableProfile`(只含 general/coarse)
+- 技能工具(scope=owner):`remember_owner_fact`(写入+invalidateAgent 重建实例)、`list_owner_facts`、`forget_owner_fact`(主人主权遗忘)
+- prompt 注入:owner 模式引导 Agent 闲聊中主动了解主人并记录;social 模式(含心跳 generateGreeting/generateReply)注入公开画像
+- 已验证:存储层增删查+隐私分级(scripts/verify-owner-facts.ts)、工具装配与 scope 隔离(社交模式零泄露)、默认技能自动安装
+
+**后续(待定)**:跨链(M5a 起,见 knowledge/avax-cross-chain-agent-integration.md)、 TraderJoe V2 报价源、社交记忆是否进情景记忆
