@@ -154,13 +154,14 @@ async function agentFor(persona: LoadedPersona, mode: ChatMode = 'owner'): Promi
     // 内置钱包资产查询:主人问"我有什么资产"时直接用,无需安装技能
     const walletTool = createTool({
       id: 'get_wallet_assets',
-      description: '查询当前 Agent 主人钱包的链上资产,包括原生币(AVAX/ETH)、USDC 和已装备的 DID 装备。',
+      description: '查询当前 Agent 主人钱包的链上资产,包括原生币(AVAX/ETH)、USDC、USDT(Fuji 为 TraderJoe 测试 USDT)和已装备的 DID 装备。',
       inputSchema: z.object({}).describe('无需参数,自动使用当前 Agent 主人的地址'),
       outputSchema: z.object({
         address: z.string(),
         nativeBalance: z.string(),
         nativeSymbol: z.string(),
         usdcBalance: z.string(),
+        usdtBalance: z.string(),
         equipment: z.array(z.any()),
       }),
       execute: async () => {
@@ -170,6 +171,7 @@ async function agentFor(persona: LoadedPersona, mode: ChatMode = 'owner'): Promi
           nativeBalance: assets.nativeBalance,
           nativeSymbol: assets.nativeSymbol,
           usdcBalance: assets.usdcBalance,
+          usdtBalance: assets.usdtBalance,
           equipment: assets.equipment,
         }
       },

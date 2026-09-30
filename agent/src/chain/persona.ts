@@ -365,20 +365,25 @@ export interface WalletAssets {
   nativeBalance: string // 已换算成可读单位,如 '0.495'
   nativeSymbol: string
   usdcBalance: string // 已换算(6 位小数)
+  usdtBalance: string // 已换算(6 位小数);该链未配置 USDT 时为 '0'
   equipment: EquipmentItem[]
 }
 
 export async function getWalletAssets(address: Address, tokenId: number): Promise<WalletAssets> {
-  const [nativeBal, usdcBal, equipment] = await Promise.all([
-    client.getBalance({ address }),
-    config.chain.defi.usdc === ZERO_ADDRESS
-      ? Promise.resolve(0n) // 该链无已核实 USDC 配置
+  const { usdc, usdt } = config.chain.defi
+  const balanceOf = (token: `0x${string}`) =>
+    token === ZERO_ADDRESS
+      ? Promise.resolve(0n) // 该链无此代币配置
       : (client.readContract({
-          address: config.chain.defi.usdc,
+          address: token,
           abi: erc20Abi,
           functionName: 'balanceOf',
           args: [address],
-        }) as Promise<bigint>),
+        }) as Promise<bigint>)
+  const [nativeBal, usdcBal, usdtBal, equipment] = await Promise.all([
+    client.getBalance({ address }),
+    balanceOf(usdc),
+    balanceOf(usdt),
     getEquipment(tokenId),
   ])
   return {
@@ -386,6 +391,7 @@ export async function getWalletAssets(address: Address, tokenId: number): Promis
     nativeBalance: formatEther(nativeBal),
     nativeSymbol: config.chain.defi.nativeSymbol,
     usdcBalance: formatUnits(usdcBal, 6),
+    usdtBalance: formatUnits(usdtBal, 6),
     equipment,
   }
 }

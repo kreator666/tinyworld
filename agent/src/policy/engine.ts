@@ -45,10 +45,10 @@ export interface Verdict {
   reasons: string[]
 }
 
-/** 代币白名单(按链):WAVAX/WETH + USDC */
+/** 代币白名单(按链):WAVAX/WETH + USDC + USDT(未配置的零地址自动过滤) */
 function tokenWhitelist(): string[] {
-  const { wNative, usdc } = config.chain.defi
-  return [wNative, usdc].filter((a) => a !== '0x0000000000000000000000000000000000000000').map((a) => a.toLowerCase())
+  const { wNative, usdc, usdt } = config.chain.defi
+  return [wNative, usdc, usdt].filter((a) => a !== '0x0000000000000000000000000000000000000000').map((a) => a.toLowerCase())
 }
 
 /** 当天已执行的 defi 交易总额(USD,tasks 表 result.usdValue 累计) */

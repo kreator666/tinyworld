@@ -38,7 +38,7 @@ function makeGetWalletAssets(tokenId: number) {
   return createTool({
     id: 'get_wallet_assets',
     description:
-      '查询某个钱包地址在当前链上的资产:原生币(AVAX/ETH)余额、USDC 余额、DID 装备。不填地址时默认查主人的钱包。',
+      '查询某个钱包地址在当前链上的资产:原生币(AVAX/ETH)余额、USDC 余额、USDT 余额(Fuji 为 TraderJoe 测试 USDT)、DID 装备。不填地址时默认查主人的钱包。',
     inputSchema: z.object({
       address: z.string().optional().describe('要查询的钱包地址,0x 开头;不填默认查主人钱包'),
     }),
@@ -47,6 +47,7 @@ function makeGetWalletAssets(tokenId: number) {
       nativeBalance: z.string(),
       nativeSymbol: z.string(),
       usdcBalance: z.string(),
+      usdtBalance: z.string(),
       equipment: z.array(z.object({ slot: z.number(), collection: z.string(), partId: z.number(), balance: z.number() })),
     }),
     execute: async ({ context }) => {

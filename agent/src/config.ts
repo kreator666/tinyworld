@@ -21,6 +21,7 @@ interface ChainConfig {
     router: `0x${string}` // V2 风格 Router(Fuji=TraderJoe,Sepolia=Uniswap)
     wNative: `0x${string}` // WAVAX / WETH
     usdc: `0x${string}`
+    usdt: `0x${string}` // Fuji 为 TraderJoe 官方测试 USDT;无可靠部署的链填零地址
     nativeSymbol: string // AVAX / ETH
     nativePriceId: 'avax' // 估值用的行情币(M4 只支持 AVAX 计价;Sepolia ETH 无真实价格,仅备用)
   }
@@ -41,6 +42,7 @@ const CHAINS: Record<string, ChainConfig> = {
       router: '0xb26b2de65d07ebb5e54c7f6282424d3be670e1f0',
       wNative: '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
       usdc: '0x0000000000000000000000000000000000000000', // Sepolia 无已核实 USDC,备用链暂不支持 swap 估值
+      usdt: '0x0000000000000000000000000000000000000000', // Sepolia 无已核实 USDT
       nativeSymbol: 'ETH',
       nativePriceId: 'avax', // 占位:Sepolia 上 swap 只做流程验证
     },
@@ -60,6 +62,7 @@ const CHAINS: Record<string, ChainConfig> = {
       router: '0xd7f655E3376cE2D7A2b08fF01Eb3B1023191A901',
       wNative: '0xd00ae08403B9bbb9124bB305C09058E32C39A48c',
       usdc: '0x5425890298aed601595a70AB815c96711a31Bc65',
+      usdt: '0xAb231A5744C8E6c45481754928cCfFFFD4aa0732', // TraderJoe 官方测试 USDT(LFJ 文档收录,配 WAVAX/USDT V1 池)
       nativeSymbol: 'AVAX',
       nativePriceId: 'avax',
     },

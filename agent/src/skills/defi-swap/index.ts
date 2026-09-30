@@ -27,35 +27,50 @@ import type { SkillDef } from '../registry'
 
 // ============================================================
 // 内置技能 defi-swap(M4+):两个方向
-// - 原生币 → 代币(AVAX→USDC):热钱包自有资金,限额内自动执行
-// - 代币 → 原生币(USDC→AVAX):用户(主人)资金,热钱包代执行付 gas;
+// - 原生币 → 代币(AVAX→USDC/USDT):热钱包自有资金,限额内自动执行
+// - 代币 → 原生币(USDC/USDT→AVAX):用户(主人)资金,热钱包代执行付 gas;
 //   用户对热钱包的 ERC20 approve 额度不足时,生成带 signatureRequest 的审批单,
 //   前端弹钱包签名后走 /approvals/:id/approve 放行
+// USDT 说明:仅 Fuji 配置(TraderJoe 官方测试 USDT 0xAb231A…a0732,配 WAVAX/USDT
+// V1 池 0xd30b5a…f8c6);主网无泰达官方 Fuji 部署,测试 USDT 只在 TraderJoe 生态内有效
 // 权限:manifest 声明 ['defi']——链上模块注册表(registerModule)本期未启用,
 // 安装时在注册表里跳过该项校验(见 registry.ts 注释);资金安全由策略引擎兜底
 // ============================================================
 
 const SLIPPAGE_BPS = 9950n // 滑点 0.5%:amountOutMin = 报价 × 9950/10000
 const BPS_BASE = 10000n
-const USDC_DECIMALS = 6
+// USDC/USDT 均为 6 位小数的稳定币
+const STABLE_DECIMALS = 6
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
 function isNativeSymbol(s: string): boolean {
   return ['AVAX', 'ETH', 'NATIVE'].includes(s.trim().toUpperCase())
 }
 
-/** 代币符号 → 地址(USDC / WAVAX / WETH / 0x 地址原样) */
+/** 代币符号 → 地址(USDC / USDT / WAVAX / WETH / 0x 地址原样);未配置的币种返回 null */
 function resolveToken(symbolOrAddress: string): Address | null {
   const s = symbolOrAddress.trim()
   if (/^0x[0-9a-fA-F]{40}$/.test(s)) return s as Address
-  const { wNative, usdc } = config.chain.defi
-  if (s.toUpperCase() === 'USDC') return usdc
+  const { wNative, usdc, usdt } = config.chain.defi
+  if (s.toUpperCase() === 'USDC') return usdc === ZERO_ADDRESS ? null : usdc
+  if (s.toUpperCase() === 'USDT') return usdt === ZERO_ADDRESS ? null : usdt
   if (['WAVAX', 'WETH', 'WNATIVE'].includes(s.toUpperCase())) return wNative
   return null
 }
 
-/** 估值:native 路径按行情价;USDC 路径按 $1 计。价格源失败返回 null(熔断信号) */
+/** 白名单代币地址 → 显示符号(未知地址截断显示) */
+export function tokenSymbolOf(address: Address): string {
+  const { usdc, usdt, wNative } = config.chain.defi
+  const a = address.toLowerCase()
+  if (a === usdc.toLowerCase()) return 'USDC'
+  if (a === usdt.toLowerCase()) return 'USDT'
+  if (a === wNative.toLowerCase()) return config.chain.defi.nativeSymbol
+  return `${address.slice(0, 8)}…`
+}
+
+/** 估值:native 路径按行情价;稳定币(USDC/USDT)路径按 $1 计。价格源失败返回 null(熔断信号) */
 async function estimateValueUsd(amountIn: bigint, nativeIn: boolean): Promise<number | null> {
-  if (!nativeIn) return Number(formatUnits(amountIn, USDC_DECIMALS)) // USDC 稳定币按 $1
+  if (!nativeIn) return Number(formatUnits(amountIn, STABLE_DECIMALS)) // 稳定币按 $1
   try {
     const { usd } = await getAvaxPriceUsd()
     return Number(formatEther(amountIn)) * usd
@@ -89,8 +104,8 @@ export function describeSwapResult(
 ): string {
   const { action, params } = proposal
   const inIsNative = params.tokenIn === 'native'
-  const inSymbol = inIsNative ? config.chain.defi.nativeSymbol : 'USDC'
-  const inDecimals = inIsNative ? 18 : USDC_DECIMALS
+  const inSymbol = inIsNative ? config.chain.defi.nativeSymbol : tokenSymbolOf(params.tokenIn as Address)
+  const inDecimals = inIsNative ? 18 : STABLE_DECIMALS
   const amountInHuman = formatUnits(BigInt(params.amountIn), inDecimals)
 
   // 借贷类:统一文案
@@ -106,8 +121,8 @@ export function describeSwapResult(
   }
 
   // swap:按方向还原符号
-  const outSymbol = inIsNative ? 'USDC' : config.chain.defi.nativeSymbol
-  const outDecimals = inIsNative ? USDC_DECIMALS : 18
+  const outSymbol = inIsNative ? tokenSymbolOf(params.tokenOut as Address) : config.chain.defi.nativeSymbol
+  const outDecimals = inIsNative ? STABLE_DECIMALS : 18
   if (r.reverted) {
     return `刚才那笔兑换没能成交:${amountInHuman} ${inSymbol} → ${outSymbol} 的交易在链上执行失败(revert)。资金还在你的钱包里,没有动。要我重新组装一笔吗?`
   }
@@ -186,7 +201,7 @@ async function buildNativeProposal(
   }
 }
 
-/** 代币(USDC)→ 原生币提案;owner 为主人地址 */
+/** 代币(USDC/USDT)→ 原生币提案;owner 为主人地址 */
 async function buildUserProposal(
   amountInHuman: string,
   tokenIn: Address,
@@ -194,7 +209,7 @@ async function buildUserProposal(
   reason: string,
   executionMode: Proposal['executionMode'],
 ): Promise<Proposal> {
-  const amountIn = parseUnits(amountInHuman, USDC_DECIMALS)
+  const amountIn = parseUnits(amountInHuman, STABLE_DECIMALS)
   if (amountIn <= 0n) throw new Error('amountIn 必须大于 0')
   const quoted = await quoteSwap(amountIn, tokenIn, true) // path: [tokenIn, wNative]
   return {
@@ -219,10 +234,10 @@ function makeProposeSwap(tokenId: number) {
   return createTool({
     id: 'propose_swap',
     description:
-      '发起一笔兑换。支持两个方向:AVAX↔USDC。执行模式分两种:hot_wallet(Agent 热钱包自动执行,默认);user_wallet(Agent 只组装交易,由主人钱包签名,Agent 广播)。限额/冷却/熔断由策略引擎把关。',
+      '发起一笔兑换。支持两个方向:AVAX↔USDC、AVAX↔USDT(后者仅 Fuji)。执行模式分两种:hot_wallet(Agent 热钱包自动执行,默认);user_wallet(Agent 只组装交易,由主人钱包签名,Agent 广播)。限额/冷却/熔断由策略引擎把关。',
     inputSchema: z.object({
-      tokenIn: z.string().describe('支付币种:AVAX 或 USDC'),
-      tokenOut: z.string().describe('目标币种:USDC 或 AVAX'),
+      tokenIn: z.string().describe('支付币种:AVAX、USDC 或 USDT'),
+      tokenOut: z.string().describe('目标币种:USDC、USDT 或 AVAX'),
       amountIn: z.string().describe('支付数量(人类单位,如 "0.002")'),
       reason: z.string().describe('这笔兑换的理由(会写进审计记录)'),
       executionMode: z
@@ -254,19 +269,19 @@ function makeProposeSwap(tokenId: number) {
       const nativeIn = isNativeSymbol(context.tokenIn)
       const nativeOut = isNativeSymbol(context.tokenOut)
       if (nativeIn === nativeOut) {
-        return { verdict: 'rejected', error: '只支持 原生币↔代币 的兑换(AVAX→USDC 或 USDC→AVAX)' }
+        return { verdict: 'rejected', error: '只支持 原生币↔代币 的兑换(AVAX→USDC/USDT 或 USDC/USDT→AVAX)' }
       }
 
       const executionMode = context.executionMode ?? (await getSwapMode(tokenId))
 
       if (nativeIn) {
-        // ---- 原生币 → 代币(AVAX → USDC) ----
+        // ---- 原生币 → 代币(AVAX → USDC/USDT) ----
         const tokenOut = resolveToken(context.tokenOut)
         if (!tokenOut) return { verdict: 'rejected', error: `无法识别的 tokenOut: ${context.tokenOut}` }
         const proposal = await buildNativeProposal(context.amountIn, tokenOut, context.reason, executionMode)
         const { verdict, reasons } = await evaluateProposal(proposal)
-        const quotedOut = formatUnits(BigInt(proposal.params.amountOutMin!), USDC_DECIMALS)
-        const note = `约可换得 ≥${quotedOut} USDC(估值 $${proposal.estimatedValueUsd?.toFixed(4) ?? '未知'})`
+        const quotedOut = formatUnits(BigInt(proposal.params.amountOutMin!), STABLE_DECIMALS)
+        const note = `约可换得 ≥${quotedOut} ${tokenSymbolOf(tokenOut)}(估值 $${proposal.estimatedValueUsd?.toFixed(4) ?? '未知'})`
         if (verdict === 'rejected') return { verdict, reasons, note }
 
         if (executionMode === 'user_wallet') {
@@ -300,7 +315,7 @@ function makeProposeSwap(tokenId: number) {
         return { verdict, txHash, amountOut, note: `${note};已执行: ${config.chain.explorer}/tx/${txHash}` }
       }
 
-      // ---- 代币 → 原生币(USDC → AVAX) ----
+      // ---- 代币 → 原生币(USDC/USDT → AVAX) ----
       const tokenIn = resolveToken(context.tokenIn)
       if (!tokenIn) return { verdict: 'rejected', error: `无法识别的 tokenIn: ${context.tokenIn}` }
       const persona = await loadPersona(tokenId)
@@ -340,21 +355,22 @@ function makeProposeSwap(tokenId: number) {
       const hotWallet = getAgentWalletAddress()
       const allowance = await getAllowance(tokenIn, owner, hotWallet as Address)
       if (allowance < BigInt(proposal.params.amountIn)) {
+        const inSymbol = tokenSymbolOf(tokenIn)
         proposal.signatureRequest = {
           type: 'erc20_approve',
           token: tokenIn,
-          tokenSymbol: 'USDC',
+          tokenSymbol: inSymbol,
           spender: hotWallet as string,
           amount: proposal.params.amountIn,
-          decimals: USDC_DECIMALS,
+          decimals: STABLE_DECIMALS,
         }
         const approval = await createApproval(tokenId, proposal, context.reason)
         return {
           verdict: 'needsApproval',
-          reasons: [...reasons, '用户对热钱包的 USDC 授权额度不足,需主人钱包完成 approve 签名'],
+          reasons: [...reasons, `用户对热钱包的 ${inSymbol} 授权额度不足,需主人钱包完成 approve 签名`],
           approvalId: approval.id,
           signatureRequest: proposal.signatureRequest,
-          note: `${note};等主人完成 USDC approve 签名后,审批通过即可执行`,
+          note: `${note};等主人完成 ${inSymbol} approve 签名后,审批通过即可执行`,
         }
       }
       if (verdict === 'needsApproval') {
@@ -371,8 +387,8 @@ export const defiSwap: SkillDef = {
   manifest: {
     id: 'defi-swap',
     name: '兑换执行',
-    version: '0.3.0',
-    description: 'AVAX↔USDC 白名单兑换。支持两种执行模式:hot_wallet(Agent 热钱包自动执行);user_wallet(Agent 组装交易,主人钱包签名,Agent 广播)。',
+    version: '0.4.0',
+    description: 'AVAX↔USDC、AVAX↔USDT 白名单兑换(USDT 仅 Fuji)。支持两种执行模式:hot_wallet(Agent 热钱包自动执行);user_wallet(Agent 组装交易,主人钱包签名,Agent 广播)。',
     tools: ['propose_swap'],
     permissions: ['defi'],
     scope: 'owner', // 资产操作,仅限主人对话
