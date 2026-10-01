@@ -31,6 +31,9 @@ import { ALL_CHAIN_IDS } from '../data/equipmentCatalog'
 
 const RARITY_LABELS = ['普通', '稀有', '史诗', '传说'] as const
 
+// 交易回执等待超时:测试网 60s 未确认即报错返回,避免前端弹窗永久挂起
+const TX_RECEIPT_TIMEOUT = 60_000
+
 export interface ChainPartAsset {
   id: number // 链上 id
   localId: string // 本地部件 id
@@ -202,7 +205,7 @@ export async function mintIdentity(owner: Address, name: string, profileURI: str
     args: [name, profileURI],
     gas: 300000n,
   })
-  await readClient().waitForTransactionReceipt({ hash })
+  await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
   return hash
 }
 
@@ -292,7 +295,7 @@ export async function setPersonaOnChain(
     args: [BigInt(tokenId), uri, contentHash],
     gas: 300000n,
   })
-  await readClient().waitForTransactionReceipt({ hash })
+  await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
   return hash
 }
 
@@ -339,7 +342,7 @@ export async function equipPart(owner: Address, tokenId: number, slot: number, p
     args: [BigInt(tokenId), slot, A().parts, BigInt(partChainId)],
     gas: 400000n,
   })
-  await client.waitForTransactionReceipt({ hash })
+  await client.waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
   return hash
 }
 
@@ -353,7 +356,7 @@ export async function unequipPart(owner: Address, tokenId: number, slot: number)
     args: [BigInt(tokenId), slot],
     gas: 300000n,
   })
-  await readClient().waitForTransactionReceipt({ hash })
+  await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
   return hash
 }
 
@@ -432,7 +435,7 @@ export async function registerPart(
     args: [BigInt(chainId), slot, rarity, BigInt(maxSupply)],
     gas: 250000n,
   })
-  await readClient().waitForTransactionReceipt({ hash })
+  await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
   return hash
 }
 
@@ -473,7 +476,7 @@ export async function mintPartsBatch(owner: Address, to: Address, ids: bigint[],
     args: [to, ids, amounts],
     gas: BigInt(300000 + ids.length * 80000),
   })
-  await readClient().waitForTransactionReceipt({ hash })
+  await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
   return hash
 }
 
@@ -487,7 +490,7 @@ export async function approveErc20(owner: Address, token: Address, spender: Addr
     args: [spender, amount],
     gas: 100000n,
   })
-  await readClient().waitForTransactionReceipt({ hash })
+  await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
   return hash
 }
 

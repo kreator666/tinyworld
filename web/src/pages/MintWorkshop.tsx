@@ -382,6 +382,8 @@ export default function MintWorkshop() {
                     tx: <a className="text-neon-cyan hover:underline" href={explorerTx(txHash)} target="_blank" rel="noreferrer">{txHash.slice(0, 18)}…</a>
                   </p>
                 )}
+                {/* 签名/确认可能因钱包弹窗被忽略或插件冲突而永久挂起,允许手动关闭 */}
+                <button className="btn-ghost mt-5 !text-xs" onClick={() => setPhase('idle')}>取消并返回</button>
               </>
             )}
           </div>
