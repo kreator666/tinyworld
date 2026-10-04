@@ -222,7 +222,7 @@ export async function checkNameAvailable(name: string): Promise<boolean> {
 export interface MintedAgent {
   tokenId: number
   name: string
-  owner: Address
+  owner: string // EVM 为 0x 地址,Solana 为 base58
 }
 
 /** 读取全部已铸造的 Agent(totalMinted 遍历,已销毁的跳过) */
@@ -241,7 +241,7 @@ export async function fetchMintedAgents(): Promise<MintedAgent[]> {
           client.readContract({ address: A().identity, abi: identityAbi, functionName: 'nameOf', args: [id] }) as Promise<string>,
           client.readContract({ address: A().identity, abi: identityAbi, functionName: 'ownerOf', args: [id] }) as Promise<Address>,
         ])
-        return { tokenId: Number(id), name, owner }
+        return { tokenId: Number(id), name, owner: owner as string }
       } catch {
         return null // 已 burn 的 token:nameOf/ownerOf 会 revert
       }

@@ -10,18 +10,29 @@ import type { ChainType } from '../types'
 // 当前激活链由 store/chainConfigStore.ts 管理(导航栏按钮切换)。
 // ============================================================
 
-export type ChainKey = 'sepolia' | 'fuji'
+export type ChainKey = 'sepolia' | 'fuji' | 'solana-testnet'
 
 export interface ChainContracts {
   key: ChainKey
   name: ChainType // 短链名,用于 UI 展示与 NFT 卡的链标
   chainId: number
   chain: Chain // viem 链定义(切链参数/原生币种都从这里取)
-  identity: `0x${string}`
-  parts: `0x${string}`
+  identity: `0x${string}` // EVM: DIDIdentity 合约地址;Solana: 复用该字段存 tinyworld 程序地址(base58,运行时按族解释)
+  parts: `0x${string}` // EVM: DIDParts 合约地址;Solana: 同程序地址(占位)
   rpc: string // 无钱包时的只读回退 RPC
   explorer: string // 区块浏览器地址(用于拼接 tx/address 链接)
+  /** 链族:缺省视为 'evm';solana 链的读写走 lib/chainSolana.ts */
+  family?: 'evm' | 'solana'
 }
+
+// Solana testnet 的 viem 链定义:仅作占位(solana 不走 viem client),
+// chain_id 101 为哨兵值,与登录态 WalletLogin.chainId 对齐
+const solanaTestnetChain = {
+  id: 101,
+  name: 'Solana Testnet',
+  nativeCurrency: { name: 'Solana', symbol: 'SOL', decimals: 9 },
+  rpcUrls: { default: { http: ['https://api.testnet.solana.com'] } },
+} satisfies Chain
 
 // 素材(角色库/装备目录)全链共用一套,与链无关;这里只放合约地址等链上信息
 export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
@@ -46,6 +57,18 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     parts: '0xdac819D6B834E26B23EE30Edc9C13eA0a4b834f2',
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
     explorer: 'https://testnet.snowtrace.io',
+  },
+  // Solana testnet(程序 tinyworld 已部署,Token-2022;IDL 副本在 src/idl/tinyworld.json)
+  'solana-testnet': {
+    key: 'solana-testnet',
+    name: 'Solana',
+    chainId: 101,
+    chain: solanaTestnetChain,
+    identity: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp' as `0x${string}`,
+    parts: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp' as `0x${string}`,
+    rpc: 'https://api.testnet.solana.com',
+    explorer: 'https://explorer.solana.com',
+    family: 'solana',
   },
 }
 

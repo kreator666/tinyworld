@@ -35,6 +35,8 @@ export const useChainConfig = create<ChainConfigState>((set, get) => ({
       }
       const merged = get().chains.map((local) => {
         // 按 chain_id 匹配后端 chains 表,地址/RPC/浏览器以后端为准
+        // (后端条目不带 family,一律按 evm 处理;solana 本地条目不被覆盖——后端暂无 solana 链)
+        if (local.family === 'solana') return local
         const remote = data.chains.find((r) => r.chain_id === local.chainId)
         if (!remote) return local
         return {
@@ -59,6 +61,12 @@ export const useChainConfig = create<ChainConfigState>((set, get) => ({
 /** 非 React 场景(chain.ts 等)读取当前激活链配置 */
 export const getActiveChain = (): ChainContracts => useChainConfig.getState().active
 
-// 浏览器链接生成(跟随当前激活链)
-export const explorerTx = (hash: string) => `${getActiveChain().explorer}/tx/${hash}`
-export const explorerAddress = (addr: string) => `${getActiveChain().explorer}/address/${addr}`
+// 浏览器链接生成(跟随当前激活链;Solana 需额外带 cluster 参数)
+export const explorerTx = (hash: string) => {
+  const c = getActiveChain()
+  return c.family === 'solana' ? `${c.explorer}/tx/${hash}?cluster=testnet` : `${c.explorer}/tx/${hash}`
+}
+export const explorerAddress = (addr: string) => {
+  const c = getActiveChain()
+  return c.family === 'solana' ? `${c.explorer}/address/${addr}?cluster=testnet` : `${c.explorer}/address/${addr}`
+}

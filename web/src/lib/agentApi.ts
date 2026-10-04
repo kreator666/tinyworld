@@ -5,6 +5,35 @@ import { useAppStore } from '../store/appStore'
 
 const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? ''
 
+/** agent 服务 base 地址(供其他模块拼接 URL,如 Solana 人格镜像) */
+export function agentApiBase(): string {
+  return AGENT_API
+}
+
+// ============================================================
+// 人格镜像(Solana 过渡方案):hash 上链 + 正文存 agent 服务
+// hash 格式统一 0x + 64 hex(viem keccak256)
+// ============================================================
+
+/** 保存人格 JSON 原文镜像;404/5xx 抛错由调用方提示 */
+export async function putPersonaMirror(contentHash: string, json: string): Promise<void> {
+  const res = await fetch(`${AGENT_API}/personas/${contentHash}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: json,
+  })
+  if (!res.ok) throw new Error(`人格镜像保存失败(${res.status})`)
+}
+
+/** 读取人格镜像 JSON 原文;404 返回 null(按"未设置人格"处理) */
+export async function getPersonaMirror(contentHash: string): Promise<string | null> {
+  const res = await fetch(`${AGENT_API}/personas/${contentHash}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`人格镜像读取失败(${res.status})`)
+  return res.text()
+}
+
+
 interface NonceResponse {
   nonce: string
   issuedAt: string

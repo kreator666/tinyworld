@@ -8,7 +8,7 @@ import { nftLibrary } from '../mock/data'
 import PaperDoll from '../components/PaperDoll'
 import { personaTemplates, toneOptions, topicOptions } from '../mock/data'
 import { rarityDot } from '../components/NFTCard'
-import { explainChainError, fetchAgentPublic, fetchPersona, setPersonaOnChain, ensureTargetChain, approveErc20, fetchOwnedPartCount } from '../lib/chain'
+import { explainChainError, fetchAgentPublic, fetchPersona, setPersonaOnChain, ensureTargetChain, approveErc20, fetchOwnedPartCount, isWalletOnActiveChain } from '../lib/chainDispatch'
 import { useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay } from '../data/equipmentCatalog'
 import {
@@ -125,7 +125,7 @@ function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string
           await ensureTargetChain()
           const { token, spender, amount } = a.signatureRequest
           showToast('请在钱包中确认 USDC approve 授权')
-          await approveErc20(address as `0x${string}`, token as `0x${string}`, spender as `0x${string}`, BigInt(amount))
+          await approveErc20(address, token, spender, BigInt(amount))
           showToast('USDC 授权已上链,正在放行执行')
         }
         const r = await approveApproval(a.id)
@@ -372,7 +372,7 @@ export default function ProfilePage() {
   const [otherLoading, setOtherLoading] = useState(false)
   const [otherError, setOtherError] = useState<string | null>(null)
 
-  const isSepolia = login?.chainId === active.chainId
+  const onTargetChain = isWalletOnActiveChain(login, active)
 
   // 访问他人主页:从链上读取该 Agent 的公开信息
   useEffect(() => {
@@ -398,15 +398,15 @@ export default function ProfilePage() {
 
   // 本地镜像没有 DID 时,回退到链上数据(Sepolia)——仅自己的主页需要
   useEffect(() => {
-    if (isSelf && !did && connected && isSepolia && address) refresh(address as `0x${string}`)
+    if (isSelf && !did && connected && onTargetChain && address) refresh(address)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSelf, did, connected, isSepolia, address])
+  }, [isSelf, did, connected, onTargetChain, address])
 
   // 真实统计指标:活跃度/社交互动数(后端按 tokenId 统计);NFT 装备数(链上 balanceOfBatch,按所属钱包)
   const statsTokenId = isSelf ? tokenId : visitingTokenId
   const statsOwner = isSelf ? address : (other?.address ?? null)
   useEffect(() => {
-    if (!connected || !isSepolia || statsTokenId == null || statsTokenId === 0) return
+    if (!connected || !onTargetChain || statsTokenId == null || statsTokenId === 0) return
     let cancelled = false
     getAgentStats(statsTokenId)
       .then((s) => !cancelled && setStats({ activityPercent: s.activityPercent, socialInteractions: s.socialInteractions }))
@@ -415,24 +415,24 @@ export default function ProfilePage() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isSepolia, statsTokenId])
+  }, [connected, onTargetChain, statsTokenId])
 
   useEffect(() => {
-    if (!connected || !isSepolia || !statsOwner) return
+    if (!connected || !onTargetChain || !statsOwner) return
     let cancelled = false
-    fetchOwnedPartCount(statsOwner as `0x${string}`)
+    fetchOwnedPartCount(statsOwner)
       .then((n) => !cancelled && setNftCount(n))
       .catch(() => !cancelled && setNftCount(null))
     return () => {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isSepolia, statsOwner])
+  }, [connected, onTargetChain, statsOwner])
 
   // 读取链上人格配置(personaOf)回填 AI 控制台;contentHash 校验不一致则忽略
   // 仅自己的主页装载(控制台只有本人可见)
   useEffect(() => {
-    if (!isSelf || !connected || !isSepolia || tokenId === 0) return
+    if (!isSelf || !connected || !onTargetChain || tokenId === 0) return
     let cancelled = false
     const DATA_PREFIX = 'data:application/json;base64,'
     fetchPersona(tokenId)
@@ -460,7 +460,7 @@ export default function ProfilePage() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSelf, connected, isSepolia, tokenId])
+  }, [isSelf, connected, onTargetChain, tokenId])
 
   const chainDid: DIDIdentity | null =
     isSelf && !did && tokenId > 0
@@ -492,7 +492,7 @@ export default function ProfilePage() {
         </div>
       )
     }
-    if (connected && isSepolia && chainLoading) {
+    if (connected && onTargetChain && chainLoading) {
       return (
         <div className="mx-auto max-w-md px-4 py-24 text-center">
           <div className="text-5xl mb-4">🪪</div>
@@ -538,12 +538,12 @@ export default function ProfilePage() {
   const save = async () => {
     saveAIProfile(form)
     // 已连接 Sepolia 且链上已有 DID 时,人格配置真正写链(setPersona:URI + keccak256 内容哈希)
-    if (connected && isSepolia && address && tokenId > 0) {
+    if (connected && onTargetChain && address && tokenId > 0) {
       setSaving(true)
       try {
         const json = JSON.stringify(form)
         const uri = `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`
-        await setPersonaOnChain(address as `0x${string}`, tokenId, uri, keccak256(toBytes(json)))
+        await setPersonaOnChain(address, tokenId, uri, keccak256(toBytes(json)))
         showToast('✅ 人格配置已保存并同步上链,绑定 Agent 身份')
       } catch (err) {
         showToast(explainChainError(err))
@@ -552,7 +552,7 @@ export default function ProfilePage() {
       }
       return
     }
-    showToast('✅ 人格配置已保存(本地);连接 Sepolia 后会自动同步上链')
+    showToast(`✅ 人格配置已保存(本地);连接 ${active.name} 后会自动同步上链`)
   }
   const reset = () => {
     resetAIProfile()

@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import type { Address, Hash } from 'viem'
 import type { Equipped } from '../types'
 import { emptyEquipped } from './appStore'
 import {
@@ -16,9 +15,10 @@ import {
   type ChainPartAsset,
   type ChainPartState,
   type RegisterProgress,
-} from '../lib/chain'
+} from '../lib/chainDispatch'
 
-// 链上状态(Sepolia):DID 主身份 + 配件资产 + 管理员发行;与本地 mock store 分离
+// 链上状态(激活链,EVM/Solana 由 chainDispatch 按链族分发):DID 主身份 + 配件资产 + 管理员发行;与本地 mock store 分离
+// 写操作返回值统一为 string(EVM 0x hash / Solana base58 signature)
 interface ChainState {
   tokenId: number // 0 = 未铸造
   didName: string
@@ -30,18 +30,18 @@ interface ChainState {
   isAdmin: boolean
   adminLoading: boolean
   partStates: ChainPartState[]
-  refresh: (address: Address) => Promise<void>
-  mint: (address: Address, name: string, bio: string) => Promise<`0x${string}`>
-  equip: (address: Address, slot: number, partChainId: number) => Promise<`0x${string}`>
-  unequip: (address: Address, slot: number) => Promise<`0x${string}`>
-  checkAdmin: (address: Address) => Promise<boolean>
+  refresh: (address: string) => Promise<void>
+  mint: (address: string, name: string, bio: string) => Promise<string>
+  equip: (address: string, slot: number, partChainId: number) => Promise<string>
+  unequip: (address: string, slot: number) => Promise<string>
+  checkAdmin: (address: string) => Promise<boolean>
   refreshPartStates: () => Promise<void>
   registerParts: (
-    address: Address,
+    address: string,
     parts: { chainId: number; slot: number; rarity: number; maxSupply: number; name: string }[],
     onProgress?: (p: RegisterProgress) => void,
-  ) => Promise<Hash[]>
-  mintParts: (address: Address, to: Address, ids: bigint[], amounts: bigint[]) => Promise<Hash>
+  ) => Promise<string[]>
+  mintParts: (address: string, to: string, ids: bigint[], amounts: bigint[]) => Promise<string>
   clear: () => void
 }
 
@@ -132,8 +132,7 @@ export const useChainStore = create<ChainState>((set, get) => ({
 
   mintParts: async (address, to, ids, amounts) => {
     try {
-      const hash = await mintPartsBatch(address, to, ids, amounts)
-      return hash
+      return await mintPartsBatch(address, to, ids, amounts)
     } catch (err) {
       throw new Error(explainChainError(err))
     }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import DIDCard, { type PlazaAgent } from '../components/DIDCard'
-import { fetchAgentPublic, fetchMintedAgents } from '../lib/chain'
+import { fetchAgentPublic, fetchMintedAgents, isWalletOnActiveChain } from '../lib/chainDispatch'
 import { useChainConfig } from '../store/chainConfigStore'
 import { getPartByLocalId } from '../data/equipmentCatalog'
 import type { Rarity } from '../types'
@@ -25,10 +25,10 @@ export default function PlazaPage() {
   const nav = useNavigate()
   const { connected, login, following, toggleFollow, showToast } = useAppStore()
 
-  const isSepolia = login?.chainId === active.chainId
+  const onTargetChain = isWalletOnActiveChain(login, active)
 
   useEffect(() => {
-    if (!connected || !isSepolia) return
+    if (!connected || !onTargetChain) return
     setLoading(true)
     fetchMintedAgents()
       .then((list) => Promise.all(list.map((a) => fetchAgentPublic(a.tokenId))))
@@ -47,7 +47,7 @@ export default function PlazaPage() {
       .catch((e) => console.warn('读取链上 Agent 列表失败:', e))
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isSepolia])
+  }, [connected, onTargetChain])
 
   const users = useMemo(() => {
     const list = [...agents]
@@ -70,7 +70,7 @@ export default function PlazaPage() {
       <h2 className="text-2xl font-bold mb-1">社交广场</h2>
       <p className="text-sm text-slate-400 mb-5">发现其他人的 Agent,和它们互动、聊天、建立连接</p>
 
-      {!connected || !isSepolia ? (
+      {!connected || !onTargetChain ? (
         <div className="glass p-10 text-center text-slate-500 max-w-md">
           {connected ? `⚠️ 请切换到 ${active.name} 网络以查看链上 Agent` : '请先连接钱包以查看链上 Agent'}
         </div>

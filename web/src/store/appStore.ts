@@ -26,7 +26,9 @@ interface AppState {
   provider: string | null
   login: WalletLogin | null
   agentToken: string | null
-  connect: (login: WalletLogin, agentToken?: string | null) => void
+  /** 连接的钱包链族:决定链上交互走 EVM provider 还是 Phantom(persist) */
+  walletKind: 'evm' | 'solana'
+  connect: (login: WalletLogin, agentToken?: string | null, walletKind?: 'evm' | 'solana') => void
   disconnect: () => void
   setHydrated: (hydrated: boolean) => void
   // DID 身份
@@ -77,8 +79,9 @@ export const useAppStore = create<AppState>()(
       provider: null,
       login: null,
       agentToken: null,
-  connect: (login, agentToken) =>
-    set({ connected: true, provider: login.provider, address: login.address, login, agentToken: agentToken ?? null }),
+      walletKind: 'evm',
+  connect: (login, agentToken, walletKind) =>
+    set({ connected: true, provider: login.provider, address: login.address, login, agentToken: agentToken ?? null, walletKind: walletKind ?? 'evm' }),
   disconnect: () => set({ connected: false, provider: null, address: null, login: null, agentToken: null }),
   setHydrated: (hydrated) => set({ hydrated }),
   hydrated: false,
@@ -226,6 +229,7 @@ export const useAppStore = create<AppState>()(
     provider: state.provider,
     login: state.login,
     agentToken: state.agentToken,
+    walletKind: state.walletKind,
     hasOnboarded: state.hasOnboarded,
   }),
 })

@@ -43,11 +43,13 @@ function Toast() {
 }
 
 function WalletEvents() {
-  const { connected, address, disconnect } = useAppStore()
+  const { connected, address, disconnect, walletKind } = useAppStore()
   const clear = useChainStore((s) => s.clear)
   const nav = useNavigate()
 
   useEffect(() => {
+    // Phantom(solana)没有 chainChanged 事件,accountsChanged 由钱包 UI 管理,这里只挂 EVM provider
+    if (walletKind !== 'evm') return
     const provider = getActiveProvider()
     if (!provider?.on) return
 
@@ -71,7 +73,7 @@ function WalletEvents() {
       provider.removeListener?.('accountsChanged', onAccountsChanged)
       provider.removeListener?.('chainChanged', onChainChanged)
     }
-  }, [connected, address, disconnect, clear, nav])
+  }, [connected, address, disconnect, clear, nav, walletKind])
 
   return null
 }

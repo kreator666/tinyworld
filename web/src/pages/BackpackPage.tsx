@@ -7,6 +7,7 @@ import { nftLibrary } from '../mock/data'
 import NFTCard, { rarityDot, rarityStyle } from '../components/NFTCard'
 import PaperDoll from '../components/PaperDoll'
 import { chainParts } from '../lib/contracts'
+import { isWalletOnActiveChain } from '../lib/chainDispatch'
 import { explorerAddress, explorerTx, useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay } from '../data/equipmentCatalog'
 
@@ -24,17 +25,20 @@ const SLOT_MAP = { head: 0, body: 1, accessory: 2, pet: 3 }
 export default function BackpackPage() {
   const active = useChainConfig((s) => s.active)
   const { connected, address, login } = useAppStore()
-  const { tokenId, didName, equipped, parts, loading, error, refresh, equip, unequip } = useChainStore()
+  const { tokenId, didName, equipped, parts, loading, error, refresh, equip, unequip, isAdmin, checkAdmin, mintParts } = useChainStore()
   const [tab, setTab] = useState<(typeof tabs)[number]['key']>('did')
   const [acting, setActing] = useState<string | null>(null)
   const [lastTx, setLastTx] = useState<string | null>(null)
   const showToast = useAppStore((s) => s.showToast)
-  const isSepolia = login?.chainId === active.chainId
+  const onTargetChain = isWalletOnActiveChain(login, active)
 
   useEffect(() => {
-    if (connected && isSepolia && address) refresh(address as `0x${string}`)
+    if (connected && onTargetChain && address) {
+      refresh(address)
+      checkAdmin(address)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isSepolia, address])
+  }, [connected, onTargetChain, address])
 
   const doEquip = async (localId: string, category: NFTCategory) => {
     const part = chainParts.find((p) => p.localId === localId)
@@ -42,7 +46,7 @@ export default function BackpackPage() {
     if (!part || !address || !tokenId) return
     setActing(localId)
     try {
-      const hash = await equip(address as `0x${string}`, slot, part.id)
+      const hash = await equip(address, slot, part.id)
       setLastTx(hash)
       showToast(`已为 Agent 穿戴「${part.name}」`)
     } catch (err) {
@@ -57,11 +61,31 @@ export default function BackpackPage() {
     if (!address || !tokenId) return
     setActing(category)
     try {
-      const hash = await unequip(address as `0x${string}`, slot)
+      const hash = await unequip(address, slot)
       setLastTx(hash)
       showToast('已卸下链上装备')
     } catch (err) {
       showToast(err instanceof Error ? err.message : '链上卸下失败')
+    } finally {
+      setActing(null)
+    }
+  }
+
+  // 购买 = 链上铸造 1 份到本人地址(测试网免费 Gas,仅管理员/铸造方可执行;
+  // 普通用户暂无可用的售卖合约,点击给出提示,与铸造工坊行为一致)
+  const doBuy = async (chainId: number, name: string) => {
+    if (!address) return
+    if (!isAdmin) {
+      showToast(`「${name}」尚未持有，购买市场合约未部署`)
+      return
+    }
+    setActing(`buy-${chainId}`)
+    try {
+      const hash = await mintParts(address, address, [BigInt(chainId)], [1n])
+      setLastTx(hash)
+      showToast(`已铸造「${name}」×1 到你的背包`)
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '链上铸造失败')
     } finally {
       setActing(null)
     }
@@ -73,7 +97,7 @@ export default function BackpackPage() {
   }
 
   const renderList = () => {
-    if (!connected || !isSepolia) {
+    if (!connected || !onTargetChain) {
       return (
         <div className="glass p-10 text-center text-slate-500 max-w-md">
           {connected ? `⚠️ 请切换到 ${active.name} 网络以查看链上资产` : '请先连接钱包以查看链上资产'}
@@ -187,8 +211,13 @@ export default function BackpackPage() {
                     {acting === p.localId ? '上链中…' : '穿戴'}
                   </button>
                 ) : (
-                  <button className="flex-1 btn-ghost !text-xs !py-1.5 opacity-60 cursor-not-allowed" disabled>
-                    未持有
+                  <button
+                    className="flex-1 btn-primary !text-xs !py-1.5"
+                    disabled={acting === `buy-${p.id}`}
+                    title={isAdmin ? '铸造 1 份到当前钱包' : '购买市场合约未部署'}
+                    onClick={() => doBuy(p.id, p.name)}
+                  >
+                    {acting === `buy-${p.id}` ? '铸造中…' : '购买'}
                   </button>
                 )}
               </div>

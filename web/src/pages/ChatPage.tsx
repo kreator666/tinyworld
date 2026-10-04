@@ -4,7 +4,7 @@ import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import ChatBubble from '../components/ChatBubble'
 import { chatWithAgent, getInbox } from '../lib/agentApi'
-import { fetchMintedAgents, type MintedAgent } from '../lib/chain'
+import { fetchMintedAgents, isWalletOnActiveChain, type MintedAgent } from '../lib/chainDispatch'
 import { useChainConfig } from '../store/chainConfigStore'
 
 // 页面 5:消息聊天界面 —— 纯社交,只列别人的链上 Agent;自己的 Agent 在 /assistant 助手页
@@ -25,12 +25,12 @@ export default function ChatPage() {
   const inboxSinceRef = useRef<string | null>(null)
   const recentRepliesRef = useRef<Map<string, string>>(new Map()) // sessionId → send() 已即时展示的回复文本
 
-  const isSepolia = login?.chainId === activeChain.chainId
+  const onTargetChain = isWalletOnActiveChain(login, activeChain)
   const active = chats.find((c) => c.id === activeChatId) ?? chats[0]
 
   // 会话列表从链上读取:只列别人的 Agent(自己的 Agent 有专属助手页,不进社交列表)
   useEffect(() => {
-    if (!connected || !isSepolia) return
+    if (!connected || !onTargetChain) return
     setLoadingAgents(true)
     fetchMintedAgents()
       .then((list) => {
@@ -40,11 +40,11 @@ export default function ChatPage() {
       .catch((e) => console.warn('读取链上 Agent 列表失败:', e))
       .finally(() => setLoadingAgents(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isSepolia, myTokenId])
+  }, [connected, onTargetChain, myTokenId])
 
   // 收件箱轮询:其他 Agent 主动发来/回复的消息,按发送方落进对应会话
   useEffect(() => {
-    if (!connected || !isSepolia || myTokenId === 0) return
+    if (!connected || !onTargetChain || myTokenId === 0) return
     const tick = async () => {
       try {
         const msgs = await getInbox(myTokenId, inboxSinceRef.current ?? undefined)
@@ -70,7 +70,7 @@ export default function ChatPage() {
     const timer = setInterval(tick, 15000)
     return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isSepolia, myTokenId])
+  }, [connected, onTargetChain, myTokenId])
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
@@ -123,7 +123,7 @@ export default function ChatPage() {
         {/* 左:会话列表 */}
         <div className="glass p-3 overflow-y-auto">
           <h3 className="text-sm font-semibold text-slate-300 px-2 py-2">会话列表</h3>
-          {!connected || !isSepolia ? (
+          {!connected || !onTargetChain ? (
             <p className="text-xs text-slate-500 px-2 py-6 text-center">
               连接钱包并切换到 {activeChain.name} 后,会话列表将从链上读取
             </p>

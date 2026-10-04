@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { Address, Hash } from 'viem'
+import { PublicKey } from '@solana/web3.js'
+import { isWalletOnActiveChain } from '../lib/chainDispatch'
 import type { NFTCategory, Rarity } from '../types'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
@@ -22,8 +23,18 @@ const TABS: { key: NFTCategory; label: string }[] = [
 
 const RARITIES: Rarity[] = ['普通', '稀有', '史诗', '传说']
 
-function isAddress(v: string): v is `0x${string}` {
-  return /^0x[a-fA-F0-9]{40}$/.test(v)
+// 地址校验:EVM 0x 或 Solana base58(按激活链族;两套格式都接受,铸造时以链上程序为准)
+function isAddress(v: string): boolean {
+  if (/^0x[a-fA-F0-9]{40}$/.test(v)) return true
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v)) {
+    try {
+      new PublicKey(v)
+      return true
+    } catch {
+      return false
+    }
+  }
+  return false
 }
 
 export default function AdminPage() {
@@ -43,19 +54,19 @@ export default function AdminPage() {
   })
   const [regProgress, setRegProgress] = useState<{ current: number; total: number; name: string } | null>(null)
   const [mintProgress, setMintProgress] = useState<{ current: number; total: number; rarity: Rarity } | null>(null)
-  const [lastTx, setLastTx] = useState<Hash | null>(null)
+  const [lastTx, setLastTx] = useState<string | null>(null)
 
-  const isSepolia = login?.chainId === active.chainId
+  const onTargetChain = isWalletOnActiveChain(login, active)
 
   useEffect(() => {
-    if (!connected || !isSepolia || !address) return
+    if (!connected || !onTargetChain || !address) return
     setChecking(true)
-    checkAdmin(address as `0x${string}`).then((ok) => {
+    checkAdmin(address).then((ok) => {
       setChecking(false)
       if (ok) refreshPartStates()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isSepolia, address])
+  }, [connected, onTargetChain, address])
 
   const stateMap = useMemo(() => {
     const map = new Map(partStates.map((p) => [p.id, p]))
@@ -84,7 +95,7 @@ export default function AdminPage() {
     setLastTx(null)
     try {
       await registerParts(
-        address as `0x${string}`,
+        address,
         parts,
         (p) => {
           const item = parts[p.current - 1]
@@ -104,7 +115,7 @@ export default function AdminPage() {
     if (!address || !isAdmin) return
     const to = recipient.trim() || address
     if (!isAddress(to)) {
-      showToast('请输入有效的 0x 地址')
+      showToast('请输入有效的钱包地址(0x 或 Solana)')
       return
     }
 
@@ -132,7 +143,7 @@ export default function AdminPage() {
         setMintProgress({ current: i + 1, total: batches.length, rarity })
         const ids = items.map((p) => BigInt(p.chainId))
         const amounts = items.map(() => BigInt(amount))
-        const hash = await mintParts(address as `0x${string}`, to as `0x${string}`, ids, amounts)
+        const hash = await mintParts(address, to, ids, amounts)
         setLastTx(hash)
       }
       showToast(`✅ 已向 ${to.slice(0, 6)}…${to.slice(-4)} 铸造 ${tab} 配件`)
@@ -156,7 +167,7 @@ export default function AdminPage() {
     )
   }
 
-  if (!isSepolia) {
+  if (!onTargetChain) {
     return (
       <div className="mx-auto max-w-7xl px-4 py-10">
         <div className="glass p-10 text-center text-amber-400 max-w-md mx-auto">
@@ -194,7 +205,7 @@ export default function AdminPage() {
         <div>
           <h2 className="text-2xl font-bold">装备发行后台</h2>
           <p className="text-sm text-slate-400 mt-1">
-            在 {active.name} 上注册并铸造 ERC-1155 配件；当前地址：
+            在 {active.name} 上注册并铸造装备配件；当前地址：
             <span className="font-mono text-neon-cyan">{address?.slice(0, 6)}…{address?.slice(-4)}</span>
           </p>
         </div>
@@ -321,7 +332,7 @@ export default function AdminPage() {
           <div className="glass p-5">
             <h3 className="font-semibold mb-3">1. 注册本类全部装备</h3>
             <p className="text-xs text-slate-400 mb-4">
-              将 30 件 {TABS.find((t) => t.key === tab)?.label}装备注册到 DIDParts 合约。每笔注册需要钱包确认一次交易。
+              将 30 件 {TABS.find((t) => t.key === tab)?.label}装备注册到链上。每笔注册需要钱包确认一次交易。
             </p>
             {regProgress ? (
               <div className="space-y-2">
@@ -352,7 +363,7 @@ export default function AdminPage() {
               <label className="text-xs text-slate-400">接收地址</label>
               <input
                 className="input mt-1"
-                placeholder="0x... 留空则发给自己"
+                placeholder="接收地址(0x 或 Solana),留空则发给自己"
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
               />
@@ -408,7 +419,7 @@ export default function AdminPage() {
             )}
 
             <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
-              系统会按 普通/稀有/史诗/传说 分 4 组，每组调用一次 mintPartBatch。已注册且未超过 maxSupply 的装备才会被铸造。
+              系统会按 普通/稀有/史诗/传说 分 4 组逐件铸造(每组内每个装备一笔交易)。已注册且未超过 maxSupply 的装备才会被铸造。
             </p>
           </div>
         </div>

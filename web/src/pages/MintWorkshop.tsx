@@ -9,7 +9,7 @@ import PaperDoll from '../components/PaperDoll'
 import NFTCard from '../components/NFTCard'
 import { partByLocalId } from '../lib/contracts'
 import { explorerTx, useChainConfig } from '../store/chainConfigStore'
-import { checkNameAvailable } from '../lib/chain'
+import { checkNameAvailable, isWalletOnActiveChain } from '../lib/chainDispatch'
 
 const tabs: { key: NFTCategory; label: string; desc: string }[] = [
   { key: 'head', label: '头部', desc: '角色头部形象(v4 角色库)' },
@@ -65,7 +65,7 @@ export default function MintWorkshop() {
   const [phase, setPhase] = useState<MintPhase>('idle')
   const [txHash, setTxHash] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [isSepolia, setIsSepolia] = useState(false)
+  const [onTargetChain, setOnTargetChain] = useState(false)
   const [previewInit, setPreviewInit] = useState(false)
   // 链上名称查重结果:null = 未校验/校验中
   const [chainNameAvailable, setChainNameAvailable] = useState<boolean | null>(null)
@@ -73,7 +73,7 @@ export default function MintWorkshop() {
   // 连接目标链后,名称查重走合约 nameAvailable(防抖 400ms;RPC 异常时不阻塞,由链上 mint 兜底)
   useEffect(() => {
     const trimmed = name.trim()
-    if (!connected || !isSepolia || trimmed.length < 2) {
+    if (!connected || !onTargetChain || trimmed.length < 2) {
       setChainNameAvailable(null)
       return
     }
@@ -90,14 +90,14 @@ export default function MintWorkshop() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [name, connected, isSepolia])
+  }, [name, connected, onTargetChain])
 
   useEffect(() => {
-    const sepolia = login?.chainId === active.chainId
-    setIsSepolia(sepolia)
-    if (connected && sepolia && address) refresh(address as `0x${string}`)
+    const on = isWalletOnActiveChain(login, active)
+    setOnTargetChain(on)
+    if (connected && on && address) refresh(address)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, login?.chainId, address])
+  }, [connected, login?.chainId, active.chainId, address])
 
   useEffect(() => {
     if (chainEquipped) setEquipped(chainEquipped)
@@ -110,7 +110,7 @@ export default function MintWorkshop() {
 
   // 初次读到链上配件时,把预览默认设为每分类第一件已持有的本地装备
   useEffect(() => {
-    if (previewInit || !isSepolia || parts.length === 0) return
+    if (previewInit || !onTargetChain || parts.length === 0) return
     const next: Equipped = { head: null, body: null, accessory: null, pet: null }
     ;(Object.keys(SLOT_MAP) as NFTCategory[]).forEach((cat) => {
       const slot = SLOT_MAP[cat]
@@ -122,7 +122,7 @@ export default function MintWorkshop() {
     if (!next.body) next.body = 'body-1'
     setEquipped(next)
     setPreviewInit(true)
-  }, [isSepolia, parts, previewInit])
+  }, [onTargetChain, parts, previewInit])
 
   const nameTaken =
     chainNameAvailable === false ||
@@ -135,7 +135,7 @@ export default function MintWorkshop() {
   // 装备 accessory/pet 目录;连接目标链后,对已在链上注册并有余额的装备覆盖 owned/count/chain 标记
   const equipmentItems = useMemo(() => {
     const base = nftLibrary.filter((i) => i.category === 'accessory' || i.category === 'pet')
-    if (!isSepolia) return base
+    if (!onTargetChain) return base
     return base.map((item) => {
       const cp = partByLocalId(item.id)
       if (!cp) return item
@@ -147,11 +147,11 @@ export default function MintWorkshop() {
         chain: active.name,
       }
     })
-  }, [isSepolia, parts])
+  }, [onTargetChain, parts])
 
   // head/body 展示项同样覆盖链上持有状态
   const characterCatalogItems = useMemo(() => {
-    if (!isSepolia) return characterItems
+    if (!onTargetChain) return characterItems
     return characterItems.map((item) => {
       const cp = partByLocalId(item.id)
       if (!cp) return item
@@ -163,7 +163,7 @@ export default function MintWorkshop() {
         chain: active.name,
       }
     })
-  }, [isSepolia, parts, characterItems])
+  }, [onTargetChain, parts, characterItems])
 
   // 当前标签页要渲染的卡片
   const categoryItems = useMemo(() => {
@@ -192,15 +192,15 @@ export default function MintWorkshop() {
   }
 
   const doMint = async () => {
-    if (!nameOk || !address || !isSepolia) return
+    if (!nameOk || !address || !onTargetChain) return
     setPhase('signing')
     setErrorMsg(null)
     try {
-      const hash = await mint(address as `0x${string}`, name.trim(), bio.trim())
+      const hash = await mint(address, name.trim(), bio.trim())
       setTxHash(hash)
       setPhase('confirming')
       // 本地镜像:让个人主页/导航继续可用
-      mintDID(name.trim(), bio.trim(), 'ETH', equipped)
+      mintDID(name.trim(), bio.trim(), active.name, equipped)
       setPhase('done')
       setTimeout(() => {
         showToast('🎉 Agent 身份已上链!配件可在资产背包中穿戴')
@@ -246,20 +246,20 @@ export default function MintWorkshop() {
           <PaperDoll equipped={equipped} size="lg" interactive />
           <div className="w-full mt-5 pt-4 border-t border-white/10 space-y-2 text-sm">
             <div className="flex justify-between text-slate-400">
-              <span>网络</span><span className="font-mono text-neon-cyan">{isSepolia ? active.name : `未连接 ${active.name}`}</span>
+              <span>网络</span><span className="font-mono text-neon-cyan">{onTargetChain ? active.name : `未连接 ${active.name}`}</span>
             </div>
             <div className="flex justify-between text-slate-400">
               <span>已选组件</span><span>{selectedItems.length} 件</span>
             </div>
             <button
               className="btn-primary w-full mt-2"
-              disabled={phase !== 'idle' || alreadyMinted || !connected || !isSepolia || !nameOk}
+              disabled={phase !== 'idle' || alreadyMinted || !connected || !onTargetChain || !nameOk}
               onClick={doMint}
             >
               {alreadyMinted ? '已铸造' : '铸造我的专属 Agent'}
             </button>
             {!connected && <p className="text-xs text-rose-400 mt-1">请先连接钱包</p>}
-            {connected && !isSepolia && <p className="text-xs text-amber-400 mt-1">请先切换到 {active.name} 网络</p>}
+            {connected && !onTargetChain && <p className="text-xs text-amber-400 mt-1">请先切换到 {active.name} 网络</p>}
           </div>
         </div>
 
@@ -279,7 +279,7 @@ export default function MintWorkshop() {
             ))}
           </div>
           <p className="text-xs text-slate-500 mb-4">
-            {isSepolia
+            {onTargetChain
               ? `${tabs.find((t) => t.key === tab)?.desc}(已连接 ${active.name}: 显示链上持有状态)`
               : `${tabs.find((t) => t.key === tab)?.desc}(演示目录,连接钱包后显示链上持有状态)`}
           </p>
@@ -291,7 +291,7 @@ export default function MintWorkshop() {
                 selected={equipped[tab] === i.id}
                 onClick={() => pick(i.id, tab)}
                 actions={
-                  !i.owned && isSepolia ? (
+                  !i.owned && onTargetChain ? (
                     <button
                       className="btn-primary !px-2 !py-1 text-[10px]"
                       onClick={(e) => {
@@ -316,8 +316,8 @@ export default function MintWorkshop() {
           <div>
             <label className="text-xs text-slate-400">Agent 名称(链上永久,不可重复)</label>
             <input className="input mt-1" placeholder="输入 2 个字符以上" value={name} onChange={(e) => setName(e.target.value)} disabled={alreadyMinted} />
-            {nameTaken && <p className="text-xs text-rose-400 mt-1">✕ 该名称已被占用{isSepolia ? '(链上查重)' : '(本地校验)'}</p>}
-            {nameOk && <p className="text-xs text-emerald-400 mt-1">✓ 名称可用{isSepolia && chainNameAvailable === true ? '(链上确认)' : ''}</p>}
+            {nameTaken && <p className="text-xs text-rose-400 mt-1">✕ 该名称已被占用{onTargetChain ? '(链上查重)' : '(本地校验)'}</p>}
+            {nameOk && <p className="text-xs text-emerald-400 mt-1">✓ 名称可用{onTargetChain && chainNameAvailable === true ? '(链上确认)' : ''}</p>}
           </div>
           <div>
             <label className="text-xs text-slate-400">Agent 简介(链上存证,同步到个人主页)</label>
@@ -355,7 +355,7 @@ export default function MintWorkshop() {
           </div>
           <button
             className="btn-primary w-full"
-            disabled={!nameOk || phase !== 'idle' || alreadyMinted || !connected || !isSepolia}
+            disabled={!nameOk || phase !== 'idle' || alreadyMinted || !connected || !onTargetChain}
             onClick={doMint}
           >
             {alreadyMinted ? '已铸造' : '确认铸造'}

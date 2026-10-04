@@ -4,8 +4,9 @@ import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import { useChainConfig } from '../store/chainConfigStore'
-import { ensureTargetChain } from '../lib/chain'
+import { ensureTargetChain, isWalletOnActiveChain } from '../lib/chainDispatch'
 import { setActiveProvider } from '../lib/wallet'
+import { clearActiveSolana, getSolanaProvider } from '../lib/walletSolana'
 import WalletModal from './WalletModal'
 
 const navItems = [
@@ -16,7 +17,7 @@ const navItems = [
 ]
 
 export default function NavBar() {
-  const { connected, address, did, disconnect, login, showToast } = useAppStore()
+  const { connected, address, did, disconnect, login, showToast, walletKind } = useAppStore()
   const chainStore = useChainStore()
   const { active, chains, setActive, hydrateFromApi } = useChainConfig()
   const wizardOpen = useAppStore((s) => s.wizardOpen)
@@ -25,6 +26,7 @@ export default function NavBar() {
   const handleDisconnect = () => {
     disconnect()
     setActiveProvider(null)
+    clearActiveSolana()
     chainStore.clear()
     nav('/')
   }
@@ -32,7 +34,7 @@ export default function NavBar() {
   const nav = useNavigate()
   const { isAdmin } = chainStore
 
-  const onTargetChain = login?.chainId === active.chainId
+  const onTargetChain = isWalletOnActiveChain(login, active)
 
   // 未连接钱包时点击导航:拦截跳转,提示连接钱包并弹出钱包选择
   const guardNav = (e: MouseEvent) => {
@@ -50,7 +52,7 @@ export default function NavBar() {
 
   useEffect(() => {
     if (connected && onTargetChain && address) {
-      chainStore.checkAdmin(address as `0x${string}`)
+      chainStore.checkAdmin(address)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, onTargetChain, address])
@@ -58,13 +60,44 @@ export default function NavBar() {
   // 切链按钮:更新激活链 + 钱包跟随切换 + 重新拉链上数据(素材与链无关,只换合约)
   const switchTo = async (key: string) => {
     if (key === active.key) return
+    const target = chains.find((c) => c.key === key)
+    if (!target) return
     setSwitching(true)
     setActive(key as typeof active.key)
     chainStore.clear()
     try {
-      if (connected) {
-        await ensureTargetChain()
-        if (address) await chainStore.refresh(address as `0x${string}`)
+      if ((target.family ?? 'evm') === 'solana') {
+        // Solana 链:走 Phantom 连接流程(EVM 会话与 Solana 不通用,需重新连接)
+        if (!getSolanaProvider()) {
+          showToast('未检测到 Phantom 钱包,请先安装')
+          window.open('https://phantom.com', '_blank')
+          setSwitching(false)
+          return
+        }
+        if (!connected || walletKind !== 'solana') {
+          disconnect()
+          setActiveProvider(null)
+          clearActiveSolana()
+          setShowWallet(true)
+          showToast('Solana 链需使用 Phantom 钱包连接')
+          setSwitching(false)
+          return
+        }
+        if (address) await chainStore.refresh(address)
+      } else {
+        if (connected && walletKind === 'solana') {
+          disconnect()
+          setActiveProvider(null)
+          clearActiveSolana()
+          setShowWallet(true)
+          showToast('EVM 链需使用浏览器钱包重新连接')
+          setSwitching(false)
+          return
+        }
+        if (connected) {
+          await ensureTargetChain()
+          if (address) await chainStore.refresh(address)
+        }
       }
       showToast(`已切换到 ${useChainConfig.getState().active.name}`)
     } catch {
@@ -77,7 +110,7 @@ export default function NavBar() {
     setSwitching(true)
     try {
       await ensureTargetChain()
-      if (address) await chainStore.refresh(address as `0x${string}`)
+      if (address) await chainStore.refresh(address)
       // eslint-disable-next-line no-empty
     } catch {}
     setSwitching(false)

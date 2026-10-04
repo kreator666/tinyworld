@@ -13,7 +13,7 @@ import {
   type ConversationMessage,
   type UnsignedTx,
 } from '../lib/agentApi'
-import { sendTransactions } from '../lib/chain'
+import { sendTransactions } from '../lib/chainDispatch'
 
 // 我的 Agent 助手(豆包式):只属于自己的 Agent 对话,支持多个会话,历史存后端
 export default function MyAgentPage() {
@@ -134,7 +134,7 @@ export default function MyAgentPage() {
     if (!pendingSignTx || !address || tokenId === 0) return
     setSigning(true)
     try {
-      const txHashes = await sendTransactions(address as `0x${string}`, pendingSignTx.unsignedTxs)
+      const txHashes = await sendTransactions(address, pendingSignTx.unsignedTxs)
       const swapTxHash = txHashes[txHashes.length - 1]
       setConfirming(true)
       showToast('交易已上链,正在等链上确认结果…')
