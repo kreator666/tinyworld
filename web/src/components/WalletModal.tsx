@@ -10,7 +10,7 @@ import {
   WalletError,
 } from '../lib/wallet'
 import {
-  base64EncodeBytes,
+  base58EncodeBytes,
   buildSolanaLoginMessage,
   connectSolanaWallet,
   getSolanaProvider,
@@ -72,7 +72,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
       const { nonce } = await requestNonce(address)
       const message = buildSolanaLoginMessage(address, nonce)
       const signatureBytes = await solanaSignMessage(new TextEncoder().encode(message))
-      const signature = base64EncodeBytes(signatureBytes)
+      const signature = base58EncodeBytes(signatureBytes)
       const { token } = await verifyAgentLogin(message, signature)
       connect(
         { address, signature, chainId: active.chainId, nonce, timestamp: Date.now(), provider: providerName },

@@ -133,13 +133,29 @@ function normalizeSignError(err: unknown): Error {
   return err instanceof Error ? err : new Error(msg)
 }
 
-/** Uint8Array → base64(登录签名编码,与 agent 服务约定) */
-export function base64EncodeBytes(bytes: Uint8Array): string {
-  let bin = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+/** Uint8Array → base58(登录签名编码,与 agent 服务约定) */
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+export function base58EncodeBytes(bytes: Uint8Array): string {
+  if (bytes.length === 0) return ''
+  let zeros = 0
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros++
+  if (zeros === bytes.length) return '1'.repeat(zeros)
+  const digits: number[] = [0]
+  for (let i = zeros; i < bytes.length; i++) {
+    let carry = bytes[i]
+    for (let j = 0; j < digits.length; j++) {
+      carry += digits[j] << 8
+      digits[j] = carry % 58
+      carry = Math.floor(carry / 58)
+    }
+    while (carry > 0) {
+      digits.push(carry % 58)
+      carry = Math.floor(carry / 58)
+    }
   }
-  return btoa(bin)
+  let out = '1'.repeat(zeros)
+  for (let i = digits.length - 1; i >= 0; i--) out += BASE58_ALPHABET[digits[i]]
+  return out
 }
 
 /**
