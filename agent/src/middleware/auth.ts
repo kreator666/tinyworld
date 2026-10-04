@@ -1,16 +1,15 @@
 import { createMiddleware } from 'hono/factory'
 import type { Context } from 'hono'
-import type { Address } from 'viem'
 import { verifyJwt, isAgentOwner, AuthError } from '../core/auth'
 
 // ============================================================
 // Hono 认证中间件:从 Authorization: Bearer <jwt> 提取地址并写入上下文
 // ============================================================
 
-// 扩展 Hono 上下文变量类型
+// 扩展 Hono 上下文变量类型(EVM 0x 地址或 Solana base58 地址,统一 string)
 declare module 'hono' {
   interface ContextVariableMap {
-    address: Address
+    address: string
   }
 }
 

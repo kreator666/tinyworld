@@ -70,8 +70,8 @@ export async function getInbox(tokenId: number, since?: string): Promise<SocialM
   )
   return res.rows.map((r) => ({
     id: r.id,
-    fromTokenId: r.from_token_id,
-    toTokenId: r.to_token_id,
+    fromTokenId: Number(r.from_token_id), // NUMERIC 返回字符串,收敛回 number
+    toTokenId: Number(r.to_token_id),
     content: r.content,
     kind: r.kind,
     createdAt: r.created_at,
@@ -118,7 +118,7 @@ export async function latestPairMessage(a: number, b: number): Promise<PairMessa
     [a, b],
   )
   const r = res.rows[0]
-  return r ? { fromTokenId: r.from_token_id, toTokenId: r.to_token_id, content: r.content, kind: r.kind } : null
+  return r ? { fromTokenId: Number(r.from_token_id), toTokenId: Number(r.to_token_id), content: r.content, kind: r.kind } : null
 }
 
 // ---- LLM 生成 ----

@@ -47,7 +47,7 @@ export interface Verdict {
 
 /** 代币白名单(按链):WAVAX/WETH + USDC + USDT(未配置的零地址自动过滤) */
 function tokenWhitelist(): string[] {
-  const { wNative, usdc, usdt } = config.chain.defi
+  const { wNative, usdc, usdt } = config.chain.defi!
   return [wNative, usdc, usdt].filter((a) => a !== '0x0000000000000000000000000000000000000000').map((a) => a.toLowerCase())
 }
 
@@ -89,7 +89,7 @@ export async function evaluateProposal(p: Proposal): Promise<Verdict> {
   if (p.chainId !== config.chain.chainId) {
     hardFail.push(`链不匹配(提案 chainId=${p.chainId},当前 ${config.chain.chainId})`)
   }
-  const allowedProtocol = p.action === 'swap' ? config.chain.defi.router : config.chain.aave.pool
+  const allowedProtocol = p.action === 'swap' ? config.chain.defi!.router : config.chain.aave!.pool
   if (p.protocol.toLowerCase() !== allowedProtocol.toLowerCase()) {
     hardFail.push(`协议不在白名单: ${p.protocol}(当前 action=${p.action} 仅允许 ${allowedProtocol})`)
   }

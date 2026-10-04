@@ -15,6 +15,8 @@ import { EMBEDDING_DIM } from '../core/embedding'
 // AGENT_DATA_DIR 可覆盖数据目录(多实例并行验证时用,默认 agent/data)
 const DATA_DIR = (process.env.AGENT_DATA_DIR || path.resolve(fileURLToPath(new URL('.', import.meta.url)), '../../data')).replaceAll('\\', '/')
 
+export { DATA_DIR }
+
 let dbPromise: Promise<PGlite> | null = null
 
 async function openDb(): Promise<PGlite> {
@@ -59,7 +61,7 @@ export async function initSchema(): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS memories (
       id TEXT PRIMARY KEY,
-      token_id INTEGER NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
       kind TEXT NOT NULL CHECK (kind IN ('episodic', 'semantic')),
       content TEXT NOT NULL,
       embedding vector(${EMBEDDING_DIM}),
@@ -75,7 +77,7 @@ export async function initSchema(): Promise<void> {
     );
 
     CREATE TABLE IF NOT EXISTS agent_skills (
-      token_id INTEGER NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
       skill_id TEXT NOT NULL REFERENCES skills (id),
       config JSONB NOT NULL DEFAULT '{}',
       installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -84,7 +86,7 @@ export async function initSchema(): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
-      token_id INTEGER NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
       type TEXT NOT NULL,
       status TEXT NOT NULL,
       payload JSONB NOT NULL DEFAULT '{}',
@@ -103,11 +105,13 @@ export async function initSchema(): Promise<void> {
       explorer TEXT NOT NULL,
       enabled BOOLEAN NOT NULL DEFAULT true
     );
+    -- 链家族(evm/solana);老库升级补列,缺省按 evm 处理
+    ALTER TABLE chains ADD COLUMN IF NOT EXISTS family TEXT NOT NULL DEFAULT 'evm';
 
     -- 多对话管理(我的 Agent 助手页):对话历史按会话隔离,事实记忆跨会话共享
     CREATE TABLE IF NOT EXISTS conversations (
       id TEXT PRIMARY KEY,
-      token_id INTEGER NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
       title TEXT NOT NULL DEFAULT '新对话',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -126,8 +130,8 @@ export async function initSchema(): Promise<void> {
     -- 社交消息(M3):Agent 间/真人对 Agent 的广场私信,心跳调度器读写
     CREATE TABLE IF NOT EXISTS social_messages (
       id TEXT PRIMARY KEY,
-      from_token_id INTEGER NOT NULL,
-      to_token_id INTEGER NOT NULL,
+      from_token_id NUMERIC(20,0) NOT NULL,
+      to_token_id NUMERIC(20,0) NOT NULL,
       content TEXT NOT NULL,
       kind TEXT NOT NULL DEFAULT 'auto' CHECK (kind IN ('auto', 'user')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -137,7 +141,7 @@ export async function initSchema(): Promise<void> {
     -- DeFi 审批(M4):超限额/白名单外/熔断时的交易提案,等人工放行
     CREATE TABLE IF NOT EXISTS approvals (
       id TEXT PRIMARY KEY,
-      token_id INTEGER NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
       proposal JSONB NOT NULL,
       agent_reason TEXT,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'executed', 'failed')),
@@ -149,7 +153,7 @@ export async function initSchema(): Promise<void> {
 
     -- Agent 级设置(M4):兑换执行模式等可由主人调整的开关
     CREATE TABLE IF NOT EXISTS agent_settings (
-      token_id INTEGER PRIMARY KEY,
+      token_id NUMERIC(20,0) PRIMARY KEY,
       swap_mode TEXT NOT NULL DEFAULT 'hot_wallet' CHECK (swap_mode IN ('hot_wallet', 'user_wallet')),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
@@ -158,13 +162,25 @@ export async function initSchema(): Promise<void> {
     -- general=可对外分享;coarse=对外只可用概略形态(城市级位置、姓氏等);private=仅限主人对话
     CREATE TABLE IF NOT EXISTS owner_facts (
       id TEXT PRIMARY KEY,
-      token_id INTEGER NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
       category TEXT NOT NULL, -- 喜好/习惯/个人信息/位置/职业/其他
       fact TEXT NOT NULL,
       sensitivity TEXT NOT NULL CHECK (sensitivity IN ('general', 'coarse', 'private')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS owner_facts_token_idx ON owner_facts (token_id, created_at);
+
+    -- token_id 用 NUMERIC(20,0):Solana tokenId = mint 前 8 字节 u64(最大 ~1.8e19),
+    -- 超出 int4/int8;JS 侧以 number(双精度)往返,写入时按十进制精确存储
+    ALTER TABLE memories ALTER COLUMN token_id TYPE NUMERIC(20,0);
+    ALTER TABLE agent_skills ALTER COLUMN token_id TYPE NUMERIC(20,0);
+    ALTER TABLE tasks ALTER COLUMN token_id TYPE NUMERIC(20,0);
+    ALTER TABLE conversations ALTER COLUMN token_id TYPE NUMERIC(20,0);
+    ALTER TABLE social_messages ALTER COLUMN from_token_id TYPE NUMERIC(20,0);
+    ALTER TABLE social_messages ALTER COLUMN to_token_id TYPE NUMERIC(20,0);
+    ALTER TABLE approvals ALTER COLUMN token_id TYPE NUMERIC(20,0);
+    ALTER TABLE agent_settings ALTER COLUMN token_id TYPE NUMERIC(20,0);
+    ALTER TABLE owner_facts ALTER COLUMN token_id TYPE NUMERIC(20,0);
   `)
 }
 
@@ -177,20 +193,21 @@ export interface ChainRow {
   rpc: string
   explorer: string
   enabled: boolean
+  family: string // 'evm' | 'solana',前端 hydrateFromApi 用
 }
 
 /** 启动时把 config 里的链配置 upsert 进 chains 表(种子数据) */
-export async function seedChains(rows: Omit<ChainRow, 'enabled'>[]): Promise<void> {
+export async function seedChains(rows: (Omit<ChainRow, 'enabled'> & { family: string })[]): Promise<void> {
   const db = await getDb()
   for (const r of rows) {
     await db.query(
-      `INSERT INTO chains (chain_key, chain_id, name, identity_address, parts_address, rpc, explorer)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO chains (chain_key, chain_id, name, identity_address, parts_address, rpc, explorer, family)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (chain_key) DO UPDATE SET
          chain_id = EXCLUDED.chain_id, name = EXCLUDED.name,
          identity_address = EXCLUDED.identity_address, parts_address = EXCLUDED.parts_address,
-         rpc = EXCLUDED.rpc, explorer = EXCLUDED.explorer`,
-      [r.chain_key, r.chain_id, r.name, r.identity_address, r.parts_address, r.rpc, r.explorer],
+         rpc = EXCLUDED.rpc, explorer = EXCLUDED.explorer, family = EXCLUDED.family`,
+      [r.chain_key, r.chain_id, r.name, r.identity_address, r.parts_address, r.rpc, r.explorer, r.family],
     )
   }
 }

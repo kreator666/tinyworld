@@ -24,6 +24,8 @@ export interface SkillManifest {
   permissions: string[] // 'social' 等,对应链上 PERMISSION 位;空数组 = 只读技能无需授权
   /** 工具可用范围:social=仅社交对话,owner=仅主人对话,all=两者(默认) */
   scope?: 'social' | 'owner' | 'all'
+  /** 仅 EVM 家族链可用(Solana 下从清单/默认安装/工具集里隐藏,如 defi-swap/defi-lending) */
+  evmOnly?: boolean
 }
 
 export interface SkillDef {
@@ -47,9 +49,14 @@ export function registerSkill(def: SkillDef): void {
   builtins.set(def.manifest.id, def)
 }
 
-/** 全部可安装技能(清单) */
+/** 技能在当前链家族是否可用(evmOnly 技能在 Solana 下不可用) */
+export function isSkillAvailable(manifest: SkillManifest): boolean {
+  return !manifest.evmOnly || config.chain.family === 'evm'
+}
+
+/** 全部可安装技能(清单);Solana 链下隐藏 evmOnly 技能 */
 export function listSkills(): SkillManifest[] {
-  return [...builtins.values()].map((d) => d.manifest)
+  return [...builtins.values()].map((d) => d.manifest).filter(isSkillAvailable)
 }
 
 /** 随 Agent 运行时默认启用的一组内置技能(新 Agent 首次装载时自动安装,无需主人手动装) */
@@ -67,6 +74,8 @@ export async function ensureDefaultSkills(tokenId: number): Promise<string[]> {
   const added: string[] = []
   for (const skillId of DEFAULT_SKILL_IDS) {
     if (installed.has(skillId) || !builtins.has(skillId)) continue
+    const def = builtins.get(skillId)!
+    if (!isSkillAvailable(def.manifest)) continue // Solana 下跳过 evmOnly 默认技能
     await db.query('INSERT INTO agent_skills (token_id, skill_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
       tokenId,
       skillId,
@@ -119,6 +128,9 @@ export interface InstallResult {
 export async function installSkill(tokenId: number, skillId: string): Promise<InstallResult> {
   const def = builtins.get(skillId)
   if (!def) throw new SkillError(`未知技能: ${skillId}`)
+  if (!isSkillAvailable(def.manifest)) {
+    throw new SkillError(`技能 ${skillId} 仅在 EVM 链可用,当前链 ${config.chain.name} 不支持`, 400)
+  }
 
   let permissionCheck: InstallResult['permissionCheck'] = 'none'
   let note: string | undefined
@@ -178,6 +190,7 @@ export async function getToolsFor(
   for (const { skill_id } of res.rows) {
     const def = builtins.get(skill_id)
     if (!def) continue // DB 里有但代码未注册(比如版本回滚),跳过
+    if (!isSkillAvailable(def.manifest)) continue // Solana 下 evmOnly 技能不加载工具
     const scope = def.manifest.scope ?? 'all'
     if (scope !== 'all' && scope !== mode) continue
     Object.assign(tools, def.makeTools(tokenId))

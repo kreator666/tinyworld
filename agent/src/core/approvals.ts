@@ -33,7 +33,7 @@ export interface Approval {
 function toApproval(r: ApprovalRow): Approval {
   return {
     id: r.id,
-    tokenId: r.token_id,
+    tokenId: Number(r.token_id), // NUMERIC 列 PGlite 返回字符串,收敛回 number
     proposal: typeof r.proposal === 'string' ? JSON.parse(r.proposal) : r.proposal,
     agentReason: r.agent_reason,
     status: r.status,

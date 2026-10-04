@@ -46,7 +46,7 @@ const USDC_DECIMALS = 6
 function resolveToken(symbolOrAddress: string): { address: Address; isNative: boolean } | null {
   const s = symbolOrAddress.trim()
   if (/^0x[0-9a-fA-F]{40}$/.test(s)) return { address: s as Address, isNative: false }
-  const { wNative, usdc } = config.chain.defi
+  const { wNative, usdc } = config.chain.defi!
   if (['AVAX', 'ETH', 'NATIVE'].includes(s.toUpperCase())) return { address: wNative, isNative: true }
   if (s.toUpperCase() === 'USDC') return { address: usdc, isNative: false }
   if (['WAVAX', 'WETH', 'WNATIVE'].includes(s.toUpperCase())) return { address: wNative, isNative: false }
@@ -54,8 +54,8 @@ function resolveToken(symbolOrAddress: string): { address: Address; isNative: bo
 }
 
 function symbolOf(token: { isNative: boolean; address: Address }): string {
-  if (token.isNative) return config.chain.defi.nativeSymbol
-  return token.address.toLowerCase() === config.chain.defi.usdc.toLowerCase() ? 'USDC' : 'WAVAX'
+  if (token.isNative) return config.chain.defi!.nativeSymbol
+  return token.address.toLowerCase() === config.chain.defi!.usdc.toLowerCase() ? 'USDC' : 'WAVAX'
 }
 
 /** 估值:USDC 按 $1;AVAX/WAVAX 按行情价。价格源失败返回 null(熔断信号) */
@@ -110,15 +110,15 @@ async function buildSupplyProposal(
   const decimals = token.isNative ? 18 : USDC_DECIMALS
   const amount = token.isNative ? parseEther(amountInHuman) : parseUnits(amountInHuman, decimals)
   if (amount <= 0n) throw new Error('amountIn 必须大于 0')
-  const isUsdc = !token.isNative && token.address.toLowerCase() === config.chain.defi.usdc.toLowerCase()
+  const isUsdc = !token.isNative && token.address.toLowerCase() === config.chain.defi!.usdc.toLowerCase()
   return {
     action: 'supply',
-    protocol: config.chain.aave.pool,
+    protocol: config.chain.aave!.pool,
     chainId: config.chain.chainId,
     executionMode,
     params: {
       tokenIn: token.isNative ? 'native' : token.address,
-      tokenOut: config.chain.defi.nativeSymbol === 'AVAX' ? 'aToken(WAVAX)' : 'aToken',
+      tokenOut: config.chain.defi!.nativeSymbol === 'AVAX' ? 'aToken(WAVAX)' : 'aToken',
       amountIn: amount.toString(),
     },
     estimatedValueUsd: await estimateValueUsd(amount, token.isNative, isUsdc),
@@ -136,10 +136,10 @@ async function buildWithdrawProposal(
   const decimals = token.isNative ? 18 : USDC_DECIMALS
   const amount = token.isNative ? parseEther(amountInHuman) : parseUnits(amountInHuman, decimals)
   if (amount <= 0n) throw new Error('amountIn 必须大于 0')
-  const isUsdc = !token.isNative && token.address.toLowerCase() === config.chain.defi.usdc.toLowerCase()
+  const isUsdc = !token.isNative && token.address.toLowerCase() === config.chain.defi!.usdc.toLowerCase()
   return {
     action: 'withdraw',
-    protocol: config.chain.aave.pool,
+    protocol: config.chain.aave!.pool,
     chainId: config.chain.chainId,
     executionMode,
     params: {
@@ -158,7 +158,7 @@ export async function executeLendingProposal(
   proposal: Proposal,
 ): Promise<{ txHash: string; amountOut: string }> {
   const isNative = proposal.params.tokenIn === 'native'
-  const asset = (isNative ? config.chain.defi.wNative : proposal.params.tokenIn) as Address
+  const asset = (isNative ? config.chain.defi!.wNative : proposal.params.tokenIn) as Address
   const amount = BigInt(proposal.params.amountIn)
   const result = isNative
     ? proposal.action === 'supply'
@@ -238,9 +238,9 @@ function makeProposeSupply(tokenId: number) {
         if (isNative) {
           unsignedTxs.push(buildUnsignedNativeSupply(amount, user))
         } else {
-          const allowance = await getTokenAllowance(token.address, user, config.chain.aave.pool)
+          const allowance = await getTokenAllowance(token.address, user, config.chain.aave!.pool)
           if (allowance < amount) {
-            unsignedTxs.push(buildUnsignedErc20Approve(token.address, config.chain.aave.pool, amount))
+            unsignedTxs.push(buildUnsignedErc20Approve(token.address, config.chain.aave!.pool, amount))
           }
           unsignedTxs.push(buildUnsignedSupply(token.address, amount, user))
         }
@@ -412,8 +412,8 @@ function makeGetPosition(tokenId: number) {
           mode === 'user_wallet' ? ((await loadPersona(tokenId)).owner as Address) : getLendingWalletAddress()
         if (!wallet) return { positions: [], total: 0, error: '未配置执行密钥(AGENT_PRIVATE_KEY)' }
         const targets = [
-          { symbol: config.chain.defi.nativeSymbol, address: config.chain.defi.wNative, decimals: 18 },
-          { symbol: 'USDC', address: config.chain.defi.usdc, decimals: USDC_DECIMALS },
+          { symbol: config.chain.defi!.nativeSymbol, address: config.chain.defi!.wNative, decimals: 18 },
+          { symbol: 'USDC', address: config.chain.defi!.usdc, decimals: USDC_DECIMALS },
         ].filter((t) => t.address !== '0x0000000000000000000000000000000000000000')
         const positions = []
         for (const t of targets) {
@@ -444,6 +444,7 @@ export const defiLending: SkillDef = {
     tools: ['propose_supply', 'propose_withdraw', 'get_lending_position'],
     permissions: ['defi'],
     scope: 'owner', // 资产操作,仅限主人对话
+    evmOnly: true, // 依赖 Aave v3(EVM),Solana 下不可安装
   },
   makeTools: (tokenId) => ({
     propose_supply: makeProposeSupply(tokenId),

@@ -1,16 +1,49 @@
 import { randomUUID } from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { isAddress, type Address, type Hex, verifyMessage, recoverMessageAddress } from 'viem'
+import { verifyAsync as ed25519Verify } from '@noble/ed25519'
+import { PublicKey } from '@solana/web3.js'
 import { config } from '../config'
 import { ownerOf } from '../chain/persona'
+import { base58Decode } from './base58'
 
 // ============================================================
-// 轻量 SIWE + JWT 认证(M4+):
-// 前端用钱包签名一条包含 nonce 的消息,后端验证后签发 JWT。
+// 轻量签名登录 + JWT 认证(M4+):
+// EVM:钱包签名一条包含 nonce 的 SIWE 风格消息(viem 验签);
+// Solana:钱包按逐字节约定格式签名(ed25519 验签,见下方 SOLANA_MESSAGE_TMPL)。
 // owner 模式的操作(资产/DeFi/设置/审批)必须携带 JWT 且地址对应 tokenId 的主人。
 // ============================================================
 
 const NONCE_TTL_MS = 5 * 60 * 1000 // nonce 5 分钟有效
+
+// Solana 登录消息逐字节格式(与 web 侧约定,勿改):
+//   AgentVerse 登录验证
+//   地址: <base58>
+//   随机数: <nonce>
+//   时间: <ISO8601>
+//   链: solana-testnet
+const SOLANA_CHAIN_KEY = 'solana-testnet'
+
+/** base58 地址校验(32~44 位 base58 且能解析为 32 字节公钥) */
+export function isBase58Address(address: string): boolean {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return false
+  try {
+    new PublicKey(address)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 链无关的地址校验:EVM 0x 地址或 Solana base58 地址 */
+export function isValidAddress(address: string): boolean {
+  return isAddress(address) || isBase58Address(address)
+}
+
+/** 地址归一化:EVM 地址大小写不敏感(转小写),base58 地址区分大小写(原样) */
+function normalizeAddress(address: string): string {
+  return address.startsWith('0x') ? address.toLowerCase() : address
+}
 
 interface NonceRecord {
   address: string
@@ -35,20 +68,23 @@ export interface NoncePayload {
 
 export interface VerifyPayload {
   message: string
-  signature: Hex
+  signature: string // EVM 为 0x hex,Solana 为 base58
 }
 
+export type JwtChain = 'evm' | 'solana'
+
 export interface JwtPayload {
-  address: Address
+  address: string
   chainId: number
+  chain: JwtChain // 旧 token 无该字段,按 'evm' 处理
 }
 
 /** 生成登录 nonce */
 export function createNonce(address: string): NoncePayload {
-  if (!isAddress(address)) throw new AuthError('地址不合法', 400)
+  if (!isValidAddress(address)) throw new AuthError('地址不合法', 400)
   const nonce = randomUUID()
   const issuedAt = new Date().toISOString()
-  nonces.set(nonce, { address: address.toLowerCase(), createdAt: Date.now() })
+  nonces.set(nonce, { address: normalizeAddress(address), createdAt: Date.now() })
   return { nonce, issuedAt, chainId: config.chain.chainId }
 }
 
@@ -56,13 +92,13 @@ export function createNonce(address: string): NoncePayload {
 function consumeNonce(nonce: string, address: string): boolean {
   const rec = nonces.get(nonce)
   if (!rec) return false
-  if (rec.address !== address.toLowerCase()) return false
+  if (rec.address !== normalizeAddress(address)) return false
   if (Date.now() - rec.createdAt > NONCE_TTL_MS) return false
   nonces.delete(nonce)
   return true
 }
 
-/** 解析自定义 SIWE 风格消息,提取字段 */
+/** 解析登录消息(中文/英文冒号键值对,逐行) */
 function parseLoginMessage(message: string): Record<string, string> {
   const fields: Record<string, string> = {}
   for (const line of message.split('\n')) {
@@ -75,11 +111,18 @@ function parseLoginMessage(message: string): Record<string, string> {
   return fields
 }
 
-/** 验证签名消息并恢复地址;验证通过返回地址 */
-export async function verifyLogin(payload: VerifyPayload): Promise<Address> {
-  const { message, signature } = payload
-  if (!message || !signature) throw new AuthError('message 和 signature 不能为空', 400)
+export interface LoginResult {
+  address: string
+  chain: JwtChain
+}
 
+/** Solana 登录:消息含「地址:」行即视为 Solana 格式(web 侧逐字节约定) */
+function isSolanaLoginMessage(fields: Record<string, string>): boolean {
+  return fields['地址'] !== undefined
+}
+
+/** EVM 登录验证(viem 验签 + 恢复地址双重校验,行为与 M4 一致) */
+async function verifyEvmLogin(message: string, signature: string): Promise<LoginResult> {
   const fields = parseLoginMessage(message)
   const address = fields['Address']
   const nonce = fields['Nonce']
@@ -94,17 +137,62 @@ export async function verifyLogin(payload: VerifyPayload): Promise<Address> {
     throw new AuthError('nonce 无效、已使用或已过期', 401)
   }
 
+  const sig = signature as Hex
   // 用 viem 验证签名(message 中的地址作为预期地址)
-  const valid = await verifyMessage({ message, signature, address: address as Address })
+  const valid = await verifyMessage({ message, signature: sig, address: address as Address })
   if (!valid) throw new AuthError('签名验证失败', 401)
 
   // 再恢复地址,确保与消息声明的地址一致
-  const recovered = await recoverMessageAddress({ message, signature })
+  const recovered = await recoverMessageAddress({ message, signature: sig })
   if (recovered.toLowerCase() !== address.toLowerCase()) {
     throw new AuthError('签名地址与消息中的地址不一致', 401)
   }
 
-  return address as Address
+  return { address, chain: 'evm' }
+}
+
+/** Solana 登录验证(ed25519;nonce 一次性消费,签名不对返回 401) */
+async function verifySolanaLogin(message: string, signature: string): Promise<LoginResult> {
+  const fields = parseLoginMessage(message)
+  const address = fields['地址']
+  const nonce = fields['随机数']
+  const chainField = fields['链']
+
+  if (!address || !isBase58Address(address)) throw new AuthError('消息中地址不合法(base58)', 400)
+  if (!nonce) throw new AuthError('消息中缺少随机数', 400)
+  if (chainField !== SOLANA_CHAIN_KEY) throw new AuthError(`消息链标识必须是 ${SOLANA_CHAIN_KEY}`, 400)
+
+  // nonce 一次性使用,防重放
+  if (!consumeNonce(nonce, address)) {
+    throw new AuthError('nonce 无效、已使用或已过期', 401)
+  }
+
+  let sigBytes: Uint8Array
+  let pubkeyBytes: Uint8Array
+  try {
+    sigBytes = base58Decode(signature)
+    pubkeyBytes = new PublicKey(address).toBytes()
+  } catch {
+    throw new AuthError('签名格式不合法(base58)', 400)
+  }
+  if (sigBytes.length !== 64) throw new AuthError('签名长度必须是 64 字节', 400)
+
+  // 对消息 UTF-8 原始字节验签(noble/ed25519,async 实现内置 sha512)
+  const valid = await ed25519Verify(sigBytes, new TextEncoder().encode(message), pubkeyBytes)
+  if (!valid) throw new AuthError('签名验证失败', 401)
+
+  return { address, chain: 'solana' }
+}
+
+/** 验证签名消息;按消息格式(地址行)分派 EVM / Solana 验证,通过返回地址与链家族 */
+export async function verifyLogin(payload: VerifyPayload): Promise<LoginResult> {
+  const { message, signature } = payload
+  if (!message || !signature) throw new AuthError('message 和 signature 不能为空', 400)
+
+  if (isSolanaLoginMessage(parseLoginMessage(message))) {
+    return verifySolanaLogin(message, signature)
+  }
+  return verifyEvmLogin(message, signature)
 }
 
 /** 签发 JWT */
@@ -119,19 +207,21 @@ export function verifyJwt(token: string): JwtPayload {
     if (typeof decoded === 'string') throw new Error('invalid payload')
     const address = decoded.address
     const chainId = decoded.chainId
-    if (!address || !isAddress(address)) throw new Error('invalid address')
+    const chain: JwtChain = decoded.chain === 'solana' ? 'solana' : 'evm' // 旧 token 无 chain 字段,按 evm 处理
+    if (!address || typeof address !== 'string' || !isValidAddress(address)) throw new Error('invalid address')
     if (typeof chainId !== 'number') throw new Error('invalid chainId')
-    return { address, chainId }
+    return { address, chainId, chain }
   } catch (err) {
     throw new AuthError('token 无效或已过期', 401)
   }
 }
 
 /** 检查 address 是否为 tokenId 的主人 */
-export async function isAgentOwner(tokenId: number, address: Address): Promise<boolean> {
+export async function isAgentOwner(tokenId: number, address: string): Promise<boolean> {
   try {
     const owner = await ownerOf(tokenId)
-    return owner.toLowerCase() === address.toLowerCase()
+    // EVM 地址大小写不敏感(base58 区分大小写,必须精确比较)
+    return normalizeAddress(owner) === normalizeAddress(address)
   } catch {
     return false
   }

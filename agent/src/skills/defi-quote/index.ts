@@ -1,8 +1,7 @@
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
-import { getEquipment, getWalletAssets, loadPersona } from '../../chain/persona'
+import { getEquipment, getWalletAssets, loadPersona, isValidAddress } from '../../chain/persona'
 import { getAvaxPriceUsd } from '../../core/price'
-import { isAddress, type Address } from 'viem'
 import type { SkillDef } from '../registry'
 
 // ============================================================
@@ -40,7 +39,7 @@ function makeGetWalletAssets(tokenId: number) {
     description:
       '查询某个钱包地址在当前链上的资产:原生币(AVAX/ETH)余额、USDC 余额、USDT 余额(Fuji 为 TraderJoe 测试 USDT)、DID 装备。不填地址时默认查主人的钱包。',
     inputSchema: z.object({
-      address: z.string().optional().describe('要查询的钱包地址,0x 开头;不填默认查主人钱包'),
+      address: z.string().optional().describe('要查询的钱包地址(EVM 为 0x 开头,Solana 为 base58);不填默认查主人钱包'),
     }),
     outputSchema: z.object({
       address: z.string(),
@@ -55,8 +54,8 @@ function makeGetWalletAssets(tokenId: number) {
       if (!addr) {
         addr = (await loadPersona(tokenId)).owner // 默认主人钱包
       }
-      if (!isAddress(addr)) return Promise.reject(new Error(`地址不合法: ${addr}`))
-      return getWalletAssets(addr as Address, tokenId)
+      if (!isValidAddress(addr)) return Promise.reject(new Error(`地址不合法: ${addr}`))
+      return getWalletAssets(addr, tokenId)
     },
   })
 }

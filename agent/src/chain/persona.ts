@@ -1,7 +1,39 @@
-import { createPublicClient, formatEther, formatUnits, http, keccak256, toBytes, type Address } from 'viem'
+import { createPublicClient, formatEther, formatUnits, http, keccak256, toBytes, isAddress, type Address } from 'viem'
 import { sepolia, avalancheFuji } from 'viem/chains'
 import { config } from '../config'
 import type { AIProfile } from '../types'
+import * as solana from './personaSolana'
+import {
+  PERMISSION_SOCIAL,
+  PersonaError,
+  defaultAIProfile,
+  personaCache,
+  type AgentSummary,
+  type EquipmentItem,
+  type LoadedPersona,
+  type WalletAssets,
+} from './personaShared'
+
+// 与 personaSolana 共用的类型/常量/缓存在 personaShared.ts 定义并从本模块原样 re-export,
+// 保证两处导出完全相同的接口与 instanceof 语义
+export {
+  PERMISSION_SOCIAL,
+  PersonaError,
+  defaultAIProfile,
+  personaCache,
+  type AgentSummary,
+  type EquipmentItem,
+  type LoadedPersona,
+  type WalletAssets,
+}
+
+// 链家族分发:TARGET_CHAIN 为 solana-testnet 时,本模块所有导出委托给 personaSolana
+const IS_SOLANA = config.chain.family === 'solana'
+
+/** 地址格式校验:EVM 用 viem isAddress,Solana 用 base58 校验 */
+export function isValidAddress(address: string): boolean {
+  return IS_SOLANA ? solana.isValidSolanaAddress(address) : isAddress(address as Address)
+}
 
 // ============================================================
 // 链上人格装载:personaOf(tokenId) → data URI 解析 → keccak256 校验
@@ -96,9 +128,7 @@ const partsAbi = [
   },
 ] as const
 
-// 权限位(与合约 DIDIdentity 的 PERMISSION_* 常量一致)
-export const PERMISSION_SOCIAL = 2n
-
+// 权限位(与合约 DIDIdentity 的 PERMISSION_* 常量一致)——定义在 personaShared,此处 re-export
 // 按目标链创建只读客户端(目前仅用到身份合约的 view 方法,链定义只影响编码细节)
 const VIEM_CHAINS = { [sepolia.id]: sepolia, [avalancheFuji.id]: avalancheFuji } as const
 const client = createPublicClient({
@@ -106,47 +136,23 @@ const client = createPublicClient({
   transport: http(config.chain.rpc),
 })
 
-// 链上无人格时的兜底人格(与前端 web/src/store/appStore.ts 的 defaultAIProfile 一致)
-export const defaultAIProfile: AIProfile = {
-  template: '理性',
-  personality: '话少毒舌,喜欢分享 Web3 知识,讨厌空话',
-  tone: '短句干练',
-  replySpeed: 'human',
-  topics: ['NFT', 'AI'],
-  blacklist: '',
-  socialMode: 'greet',
-  autoGreet: true,
-  autoReply: true,
-  memory: true,
-  emergency: false,
-}
-
-export interface LoadedPersona {
-  tokenId: number
-  name: string // 链上 Agent 名称(nameOf),用于身份区分
-  owner: string // 主人钱包地址(ownerOf),回答「我的资产」类问题时直接用
-  profile: AIProfile
-  fromChain: boolean // false = 链上无人格,用的默认兜底
-  contentHash: string
-}
-
-export class PersonaError extends Error {}
-
 /** 地址 → tokenId;未铸造返回 0(合约约定) */
-export async function resolveTokenId(owner: Address): Promise<number> {
+export async function resolveTokenId(owner: string): Promise<number> {
+  if (IS_SOLANA) return solana.resolveTokenId(owner)
   const tokenId = (await client.readContract({
-    address: config.chain.identityAddress,
+    address: config.chain.identityAddress as Address,
     abi: identityAbi,
     functionName: 'tokenIdOf',
-    args: [owner],
+    args: [owner as Address],
   })) as bigint
   return Number(tokenId)
 }
 
 /** tokenId → owner 地址 */
-export async function ownerOf(tokenId: number): Promise<Address> {
+export async function ownerOf(tokenId: number): Promise<string> {
+  if (IS_SOLANA) return solana.ownerOf(tokenId)
   return (await client.readContract({
-    address: config.chain.identityAddress,
+    address: config.chain.identityAddress as Address,
     abi: identityAbi,
     functionName: 'ownerOf',
     args: [BigInt(tokenId)],
@@ -177,22 +183,23 @@ function decodePersonaUri(uri: string, contentHash: string): AIProfile {
 
 /** 从链上读取并校验人格(uri 为空则返回默认人格兜底);同时读链上名称用于身份区分 */
 export async function fetchPersonaFromChain(tokenId: number): Promise<LoadedPersona> {
+  if (IS_SOLANA) return solana.fetchPersonaFromChain(tokenId)
   const [res, name, owner] = await Promise.all([
     client.readContract({
-      address: config.chain.identityAddress,
+      address: config.chain.identityAddress as Address,
       abi: identityAbi,
       functionName: 'personaOf',
       args: [BigInt(tokenId)],
       // viem 对命名 tuple 返回对象 { uri, contentHash },做兼容处理
     }) as Promise<{ uri: string; contentHash: `0x${string}` } | [string, `0x${string}`]>,
     client.readContract({
-      address: config.chain.identityAddress,
+      address: config.chain.identityAddress as Address,
       abi: identityAbi,
       functionName: 'nameOf',
       args: [BigInt(tokenId)],
     }) as Promise<string>,
     client.readContract({
-      address: config.chain.identityAddress,
+      address: config.chain.identityAddress as Address,
       abi: identityAbi,
       functionName: 'ownerOf',
       args: [BigInt(tokenId)],
@@ -208,10 +215,8 @@ export async function fetchPersonaFromChain(tokenId: number): Promise<LoadedPers
   return { tokenId, name, owner, profile, fromChain: true, contentHash }
 }
 
-// 人格缓存:每个 tokenId 只装载一次,reload 接口强制刷新
-const personaCache = new Map<number, LoadedPersona>()
-
 export async function loadPersona(tokenId: number, force = false): Promise<LoadedPersona> {
+  if (IS_SOLANA) return solana.loadPersona(tokenId, force)
   if (!force) {
     const cached = personaCache.get(tokenId)
     if (cached) return cached
@@ -226,26 +231,22 @@ export function getCachedPersona(tokenId: number): LoadedPersona | undefined {
 }
 
 /** 链上 agentPermissions[tokenId][agentAddr] 位掩码(安装需要权限的技能前校验) */
-export async function getAgentPermissions(tokenId: number, agentAddr: Address): Promise<bigint> {
+export async function getAgentPermissions(tokenId: number, agentAddr: string): Promise<bigint> {
+  if (IS_SOLANA) return solana.getAgentPermissions(tokenId, agentAddr)
   return (await client.readContract({
-    address: config.chain.identityAddress,
+    address: config.chain.identityAddress as Address,
     abi: identityAbi,
     functionName: 'agentPermissions',
-    args: [BigInt(tokenId), agentAddr],
+    args: [BigInt(tokenId), agentAddr as Address],
   })) as bigint
-}
-
-export interface AgentSummary {
-  tokenId: number
-  name: string
-  owner: string
 }
 
 /** 列出全部已铸造的 Agent(心跳调度器每轮枚举用) */
 export async function listMintedAgents(): Promise<AgentSummary[]> {
+  if (IS_SOLANA) return solana.listMintedAgents()
   const total = Number(
     (await client.readContract({
-      address: config.chain.identityAddress,
+      address: config.chain.identityAddress as Address,
       abi: identityAbi,
       functionName: 'totalMinted',
     })) as bigint,
@@ -256,28 +257,29 @@ export async function listMintedAgents(): Promise<AgentSummary[]> {
     tokenIds.map(async (tokenId) => {
       const [name, owner] = await Promise.all([
         client.readContract({
-          address: config.chain.identityAddress,
+          address: config.chain.identityAddress as Address,
           abi: identityAbi,
           functionName: 'nameOf',
           args: [BigInt(tokenId)],
         }) as Promise<string>,
         client.readContract({
-          address: config.chain.identityAddress,
+          address: config.chain.identityAddress as Address,
           abi: identityAbi,
           functionName: 'ownerOf',
           args: [BigInt(tokenId)],
         }) as Promise<Address>,
       ])
-      return { tokenId, name, owner }
+      return { tokenId, name, owner, bio: '' }
     }),
   )
 }
 
 /** 列出最新铸造的 N 个 Agent(social-greeter 的 list_new_agents 用) */
 export async function listRecentAgents(limit = 5): Promise<AgentSummary[]> {
+  if (IS_SOLANA) return solana.listRecentAgents(limit)
   const total = Number(
     (await client.readContract({
-      address: config.chain.identityAddress,
+      address: config.chain.identityAddress as Address,
       abi: identityAbi,
       functionName: 'totalMinted',
     })) as bigint,
@@ -289,41 +291,35 @@ export async function listRecentAgents(limit = 5): Promise<AgentSummary[]> {
     tokenIds.map(async (tokenId) => {
       const [name, owner] = await Promise.all([
         client.readContract({
-          address: config.chain.identityAddress,
+          address: config.chain.identityAddress as Address,
           abi: identityAbi,
           functionName: 'nameOf',
           args: [BigInt(tokenId)],
         }) as Promise<string>,
         client.readContract({
-          address: config.chain.identityAddress,
+          address: config.chain.identityAddress as Address,
           abi: identityAbi,
           functionName: 'ownerOf',
           args: [BigInt(tokenId)],
         }) as Promise<Address>,
       ])
-      return { tokenId, name, owner }
+      return { tokenId, name, owner, bio: '' }
     }),
   )
 }
 
-export interface EquipmentItem {
-  slot: number // getEquipped 返回的固定 4 槽位下标
-  collection: string
-  partId: number
-  balance: number // 主人在 DIDParts 里持有该部件的数量
-}
-
 /** 读链上装备(getEquipped)并按 DIDParts balanceOf 概述持有(defi-quote 的 get_my_equipment 用) */
 export async function getEquipment(tokenId: number): Promise<EquipmentItem[]> {
+  if (IS_SOLANA) return solana.getEquipment(tokenId)
   const [items, owner] = await Promise.all([
     client.readContract({
-      address: config.chain.identityAddress,
+      address: config.chain.identityAddress as Address,
       abi: identityAbi,
       functionName: 'getEquipped',
       args: [BigInt(tokenId)],
     }) as Promise<readonly { collection: Address; id: bigint }[]>,
     client.readContract({
-      address: config.chain.identityAddress,
+      address: config.chain.identityAddress as Address,
       abi: identityAbi,
       functionName: 'ownerOf',
       args: [BigInt(tokenId)],
@@ -334,7 +330,7 @@ export async function getEquipment(tokenId: number): Promise<EquipmentItem[]> {
     const { collection, id } = items[slot]
     if (id === 0n) continue // 空槽位
     const balance = (await client.readContract({
-      address: config.chain.partsAddress,
+      address: config.chain.partsAddress as Address,
       abi: partsAbi,
       functionName: 'balanceOf',
       args: [owner, id],
@@ -360,17 +356,10 @@ const erc20Abi = [
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
-export interface WalletAssets {
-  address: string
-  nativeBalance: string // 已换算成可读单位,如 '0.495'
-  nativeSymbol: string
-  usdcBalance: string // 已换算(6 位小数)
-  usdtBalance: string // 已换算(6 位小数);该链未配置 USDT 时为 '0'
-  equipment: EquipmentItem[]
-}
-
-export async function getWalletAssets(address: Address, tokenId: number): Promise<WalletAssets> {
-  const { usdc, usdt } = config.chain.defi
+export async function getWalletAssets(address: string, tokenId: number): Promise<WalletAssets> {
+  if (IS_SOLANA) return solana.getWalletAssets(address, tokenId)
+  const { usdc, usdt, nativeSymbol } = config.chain.defi! // 仅 EVM 家族链会走到这里(defi 必填)
+  const addr = address as Address
   const balanceOf = (token: `0x${string}`) =>
     token === ZERO_ADDRESS
       ? Promise.resolve(0n) // 该链无此代币配置
@@ -378,10 +367,10 @@ export async function getWalletAssets(address: Address, tokenId: number): Promis
           address: token,
           abi: erc20Abi,
           functionName: 'balanceOf',
-          args: [address],
+          args: [addr],
         }) as Promise<bigint>)
   const [nativeBal, usdcBal, usdtBal, equipment] = await Promise.all([
-    client.getBalance({ address }),
+    client.getBalance({ address: addr }),
     balanceOf(usdc),
     balanceOf(usdt),
     getEquipment(tokenId),
@@ -389,7 +378,7 @@ export async function getWalletAssets(address: Address, tokenId: number): Promis
   return {
     address,
     nativeBalance: formatEther(nativeBal),
-    nativeSymbol: config.chain.defi.nativeSymbol,
+    nativeSymbol,
     usdcBalance: formatUnits(usdcBal, 6),
     usdtBalance: formatUnits(usdtBal, 6),
     equipment,

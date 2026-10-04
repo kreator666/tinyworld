@@ -168,9 +168,9 @@ export async function getAllowance(token: Address, owner: Address, spender: Addr
 
 /** Router 报价:默认原生币→代币(path [wNative, token]);reverse=true 时代币→原生币 */
 export async function quoteSwap(amountIn: bigint, token: Address, reverse = false): Promise<bigint> {
-  const path = reverse ? [token, config.chain.defi.wNative] : [config.chain.defi.wNative, token]
+  const path = reverse ? [token, config.chain.defi!.wNative] : [config.chain.defi!.wNative, token]
   const amounts = (await publicClient.readContract({
-    address: config.chain.defi.router,
+    address: config.chain.defi!.router,
     abi: routerAbi,
     functionName: 'getAmountsOut',
     args: [amountIn, path],
@@ -197,10 +197,10 @@ export async function executeSwap(amountInWei: bigint, amountOutMin: bigint, tok
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600)
 
   const txHash = await wallet.writeContract({
-    address: config.chain.defi.router,
+    address: config.chain.defi!.router,
     abi: routerAbi,
     functionName: fnName,
-    args: [amountOutMin, [config.chain.defi.wNative, tokenOut], account.address, deadline],
+    args: [amountOutMin, [config.chain.defi!.wNative, tokenOut], account.address, deadline],
     value: amountInWei,
   })
   const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 120_000 })
@@ -234,7 +234,7 @@ export async function executeUserSwap(
   const account = agentAccount()
   if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
   const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
-  const { router, wNative } = config.chain.defi
+  const { router, wNative } = config.chain.defi!
 
   // 1. 把用户的代币转入热钱包(依赖用户对热钱包的 approve 额度)
   const t1 = await wallet.writeContract({
@@ -313,14 +313,14 @@ export function buildUnsignedNativeToTokenSwap(
   const data = encodeFunctionData({
     abi: routerAbi,
     functionName: nativeSwapOutFn(),
-    args: [amountOutMin, [config.chain.defi.wNative, tokenOut], user, swapDeadline()],
+    args: [amountOutMin, [config.chain.defi!.wNative, tokenOut], user, swapDeadline()],
   })
   return {
-    to: config.chain.defi.router,
+    to: config.chain.defi!.router,
     data,
     value: amountInWei.toString(),
     chainId: config.chain.chainId,
-    description: `${config.chain.defi.nativeSymbol} → ${tokenOut}`,
+    description: `${config.chain.defi!.nativeSymbol} → ${tokenOut}`,
   }
 }
 
@@ -334,14 +334,14 @@ export function buildUnsignedTokenToNativeSwap(
   const data = encodeFunctionData({
     abi: routerAbi,
     functionName: tokenSwapOutFn(),
-    args: [amountIn, amountOutMin, [tokenIn, config.chain.defi.wNative], user, swapDeadline()],
+    args: [amountIn, amountOutMin, [tokenIn, config.chain.defi!.wNative], user, swapDeadline()],
   })
   return {
-    to: config.chain.defi.router,
+    to: config.chain.defi!.router,
     data,
     value: '0',
     chainId: config.chain.chainId,
-    description: `${tokenIn} → ${config.chain.defi.nativeSymbol}`,
+    description: `${tokenIn} → ${config.chain.defi!.nativeSymbol}`,
   }
 }
 

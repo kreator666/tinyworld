@@ -37,7 +37,7 @@ export interface ConversationMessage {
 }
 
 function toConversation(r: ConversationRow): Conversation {
-  return { id: r.id, tokenId: r.token_id, title: r.title, createdAt: r.created_at, updatedAt: r.updated_at }
+  return { id: r.id, tokenId: Number(r.token_id), title: r.title, createdAt: r.created_at, updatedAt: r.updated_at } // NUMERIC 返回字符串,收敛回 number
 }
 
 /** 会话列表,按最近活跃倒序 */
@@ -130,7 +130,7 @@ export async function chatInConversation(
   message: string,
 ): Promise<ChatResult | null> {
   const conv = await getConversation(conversationId)
-  if (!conv || conv.token_id !== tokenId) return null
+  if (!conv || Number(conv.token_id) !== tokenId) return null // NUMERIC 返回字符串,收敛回 number
 
   const db = await getDb()
   const recent = await db.query<{ role: 'user' | 'assistant'; content: string }>(

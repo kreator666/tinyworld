@@ -63,7 +63,8 @@ export async function listOwnerFacts(
   const rank: Record<FactSensitivity, number> = { general: 0, coarse: 1, private: 2 }
   const db = await getDb()
   const res = await db.query<OwnerFact>('SELECT * FROM owner_facts WHERE token_id = $1 ORDER BY created_at', [tokenId])
-  return res.rows.filter((r) => rank[r.sensitivity] <= rank[maxSensitivity])
+  // NUMERIC 返回字符串,收敛回 number(下游只读 id/category/fact/sensitivity,这里保证类型与声明一致)
+  return res.rows.filter((r) => rank[r.sensitivity] <= rank[maxSensitivity]).map((r) => ({ ...r, token_id: Number(r.token_id) }))
 }
 
 /** 按 id 前缀或文本模糊匹配删除(主人说"忘掉xxx");返回删除条数 */

@@ -162,7 +162,7 @@ export interface ReserveInfo {
 /** 读取资产的 aToken 地址与当前供给 APY */
 export async function getReserveInfo(asset: Address): Promise<ReserveInfo> {
   const data = (await publicClient.readContract({
-    address: config.chain.aave.pool,
+    address: config.chain.aave!.pool,
     abi: poolAbi,
     functionName: 'getReserveData',
     args: [asset],
@@ -207,7 +207,7 @@ export async function supplyErc20(asset: Address, amount: bigint): Promise<Lendi
   const account = agentAccount()
   if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
   const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
-  const pool = config.chain.aave.pool
+  const pool = config.chain.aave!.pool
 
   const info = await getReserveInfo(asset)
   const before = await getATokenBalance(info.aToken, account.address)
@@ -244,14 +244,14 @@ export async function supplyNative(amount: bigint): Promise<LendingResult> {
   if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
   const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
 
-  const info = await getReserveInfo(config.chain.defi.wNative)
+  const info = await getReserveInfo(config.chain.defi!.wNative)
   const before = await getATokenBalance(info.aToken, account.address)
 
   const tx = await wallet.writeContract({
     address: NATIVE_GATEWAY,
     abi: gatewayAbi,
     functionName: 'depositETH',
-    args: [config.chain.aave.pool, account.address, 0],
+    args: [config.chain.aave!.pool, account.address, 0],
     value: amount,
   })
   const receipt = await publicClient.waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
@@ -277,7 +277,7 @@ export async function withdrawErc20(asset: Address, amount: bigint): Promise<Len
   })) as bigint
 
   const tx = await wallet.writeContract({
-    address: config.chain.aave.pool,
+    address: config.chain.aave!.pool,
     abi: poolAbi,
     functionName: 'withdraw',
     args: [asset, amount, account.address],
@@ -303,7 +303,7 @@ export async function withdrawNative(amount: bigint): Promise<LendingResult> {
   const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
 
   // 网关 withdrawETH 会 transferFrom 用户的 aToken,必须先授权 aToken 给网关
-  const info = await getReserveInfo(config.chain.defi.wNative)
+  const info = await getReserveInfo(config.chain.defi!.wNative)
   if ((await getTokenAllowance(info.aToken, account.address, NATIVE_GATEWAY)) < amount) {
     const t0 = await wallet.writeContract({
       address: info.aToken,
@@ -320,7 +320,7 @@ export async function withdrawNative(amount: bigint): Promise<LendingResult> {
     address: NATIVE_GATEWAY,
     abi: gatewayAbi,
     functionName: 'withdrawETH',
-    args: [config.chain.aave.pool, amount, account.address],
+    args: [config.chain.aave!.pool, amount, account.address],
   })
   const receipt = await publicClient.waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
   if (receipt.status !== 'success') throw new Error(`withdrawETH 执行失败(revert): ${tx}`)
@@ -353,7 +353,7 @@ export function buildUnsignedSupply(asset: Address, amount: bigint, onBehalfOf: 
     args: [asset, amount, onBehalfOf, 0],
   })
   return {
-    to: config.chain.aave.pool,
+    to: config.chain.aave!.pool,
     data,
     value: '0',
     chainId: config.chain.chainId,
@@ -366,14 +366,14 @@ export function buildUnsignedNativeSupply(amount: bigint, onBehalfOf: Address): 
   const data = encodeFunctionData({
     abi: gatewayAbi,
     functionName: 'depositETH',
-    args: [config.chain.aave.pool, onBehalfOf, 0],
+    args: [config.chain.aave!.pool, onBehalfOf, 0],
   })
   return {
     to: NATIVE_GATEWAY,
     data,
     value: amount.toString(),
     chainId: config.chain.chainId,
-    description: `存入 Aave ${config.chain.defi.nativeSymbol}`,
+    description: `存入 Aave ${config.chain.defi!.nativeSymbol}`,
   }
 }
 
@@ -385,7 +385,7 @@ export function buildUnsignedWithdraw(asset: Address, amount: bigint, to: Addres
     args: [asset, amount, to],
   })
   return {
-    to: config.chain.aave.pool,
+    to: config.chain.aave!.pool,
     data,
     value: '0',
     chainId: config.chain.chainId,
@@ -398,13 +398,13 @@ export function buildUnsignedNativeWithdraw(amount: bigint, to: Address): Unsign
   const data = encodeFunctionData({
     abi: gatewayAbi,
     functionName: 'withdrawETH',
-    args: [config.chain.aave.pool, amount, to],
+    args: [config.chain.aave!.pool, amount, to],
   })
   return {
     to: NATIVE_GATEWAY,
     data,
     value: '0',
     chainId: config.chain.chainId,
-    description: `从 Aave 取回 ${config.chain.defi.nativeSymbol}`,
+    description: `从 Aave 取回 ${config.chain.defi!.nativeSymbol}`,
   }
 }

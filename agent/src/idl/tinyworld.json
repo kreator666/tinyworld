@@ -1,0 +1,1897 @@
+{
+  "address": "5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp",
+  "metadata": {
+    "name": "tinyworld",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "TinyWorld Solana: soulbound DID identity + equipment (Token-2022)"
+  },
+  "instructions": [
+    {
+      "name": "close_identity",
+      "discriminator": [
+        158,
+        183,
+        97,
+        254,
+        215,
+        179,
+        139,
+        12
+      ],
+      "accounts": [
+        {
+          "name": "identity",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "identity.owner",
+                "account": "Identity"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "identity_mint",
+          "writable": true
+        },
+        {
+          "name": "owner_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "equip",
+      "discriminator": [
+        158,
+        123,
+        165,
+        74,
+        37,
+        254,
+        39,
+        154
+      ],
+      "accounts": [
+        {
+          "name": "identity",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "identity.owner",
+                "account": "Identity"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "part_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "part_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "part_mint",
+          "writable": true
+        },
+        {
+          "name": "owner_ata",
+          "writable": true
+        },
+        {
+          "name": "escrow_ata",
+          "writable": true
+        },
+        {
+          "name": "old_part_mint",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "old_escrow_ata",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "old_owner_ata",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "part_id",
+          "type": "u64"
+        },
+        {
+          "name": "slot",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "initialize_config",
+      "discriminator": [
+        208,
+        127,
+        21,
+        1,
+        194,
+        190,
+        196,
+        70
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "mint_identity",
+      "discriminator": [
+        52,
+        13,
+        109,
+        146,
+        207,
+        249,
+        188,
+        220
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "identity",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "name_record",
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner_ata",
+          "writable": true
+        },
+        {
+          "name": "mint_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "mint_part",
+      "discriminator": [
+        178,
+        128,
+        19,
+        118,
+        86,
+        150,
+        150,
+        117
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "minter",
+          "writable": true
+        },
+        {
+          "name": "part_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "part_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "part_mint",
+          "writable": true
+        },
+        {
+          "name": "to"
+        },
+        {
+          "name": "to_ata",
+          "writable": true
+        },
+        {
+          "name": "mint_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "part_id",
+          "type": "u64"
+        },
+        {
+          "name": "to",
+          "type": "pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "register_part",
+      "discriminator": [
+        1,
+        212,
+        67,
+        234,
+        114,
+        138,
+        107,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "part_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "part_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "part_mint",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "part_id",
+          "type": "u64"
+        },
+        {
+          "name": "slot",
+          "type": "u8"
+        },
+        {
+          "name": "rarity",
+          "type": "u8"
+        },
+        {
+          "name": "max_supply",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "remove_minter",
+      "discriminator": [
+        241,
+        69,
+        84,
+        16,
+        164,
+        232,
+        131,
+        79
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "minter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "minter.wallet",
+                "account": "Minter"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "revoke_agent",
+      "discriminator": [
+        227,
+        60,
+        209,
+        125,
+        240,
+        117,
+        163,
+        73
+      ],
+      "accounts": [
+        {
+          "name": "identity",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "identity.owner",
+                "account": "Identity"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "agent_permission",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  101,
+                  114,
+                  109,
+                  105,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "identity"
+              },
+              {
+                "kind": "account",
+                "path": "agent"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent"
+        }
+      ],
+      "args": [
+        {
+          "name": "agent",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "set_agent",
+      "discriminator": [
+        154,
+        74,
+        121,
+        91,
+        137,
+        19,
+        101,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "identity",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "identity.owner",
+                "account": "Identity"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "agent"
+        },
+        {
+          "name": "agent_permission",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  101,
+                  114,
+                  109,
+                  105,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "identity"
+              },
+              {
+                "kind": "account",
+                "path": "agent"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "agent",
+          "type": "pubkey"
+        },
+        {
+          "name": "permissions",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "set_minter",
+      "discriminator": [
+        13,
+        170,
+        92,
+        172,
+        137,
+        194,
+        39,
+        2
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "wallet"
+        },
+        {
+          "name": "minter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "enabled",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_part_mintable",
+      "discriminator": [
+        219,
+        243,
+        57,
+        62,
+        160,
+        9,
+        78,
+        176
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "part_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "part_id"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "part_id",
+          "type": "u64"
+        },
+        {
+          "name": "mintable",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "unequip",
+      "discriminator": [
+        141,
+        117,
+        15,
+        217,
+        254,
+        14,
+        155,
+        255
+      ],
+      "accounts": [
+        {
+          "name": "identity",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "identity.owner",
+                "account": "Identity"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "part_mint",
+          "docs": [
+            "插槽持有的装备 mint（ix 内校验与 equipped[slot] 一致）"
+          ],
+          "writable": true
+        },
+        {
+          "name": "escrow_ata",
+          "writable": true
+        },
+        {
+          "name": "owner_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "slot",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "update_persona",
+      "discriminator": [
+        144,
+        120,
+        188,
+        255,
+        120,
+        138,
+        127,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "identity",
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "agent_permission",
+          "docs": [
+            "可选：agent 授权账户（agent 调用时传入）"
+          ],
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  101,
+                  114,
+                  109,
+                  105,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "identity"
+              },
+              {
+                "kind": "account",
+                "path": "signer"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "persona_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "arweave_id",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AgentPermission",
+      "discriminator": [
+        1,
+        2,
+        244,
+        23,
+        75,
+        60,
+        23,
+        216
+      ]
+    },
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "Identity",
+      "discriminator": [
+        58,
+        132,
+        5,
+        12,
+        176,
+        164,
+        85,
+        112
+      ]
+    },
+    {
+      "name": "Minter",
+      "discriminator": [
+        28,
+        69,
+        107,
+        166,
+        41,
+        139,
+        205,
+        247
+      ]
+    },
+    {
+      "name": "PartConfig",
+      "discriminator": [
+        55,
+        8,
+        71,
+        138,
+        54,
+        158,
+        74,
+        25
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AgentRevoked",
+      "discriminator": [
+        12,
+        251,
+        249,
+        166,
+        122,
+        83,
+        162,
+        116
+      ]
+    },
+    {
+      "name": "AgentSet",
+      "discriminator": [
+        205,
+        125,
+        51,
+        16,
+        30,
+        110,
+        117,
+        11
+      ]
+    },
+    {
+      "name": "Equipped",
+      "discriminator": [
+        37,
+        224,
+        148,
+        231,
+        204,
+        36,
+        114,
+        71
+      ]
+    },
+    {
+      "name": "IdentityClosed",
+      "discriminator": [
+        158,
+        208,
+        39,
+        137,
+        100,
+        208,
+        216,
+        163
+      ]
+    },
+    {
+      "name": "Minted",
+      "discriminator": [
+        174,
+        131,
+        21,
+        57,
+        88,
+        117,
+        114,
+        121
+      ]
+    },
+    {
+      "name": "MinterUpdated",
+      "discriminator": [
+        8,
+        124,
+        66,
+        45,
+        176,
+        53,
+        49,
+        153
+      ]
+    },
+    {
+      "name": "PartMintableUpdated",
+      "discriminator": [
+        202,
+        232,
+        7,
+        125,
+        105,
+        37,
+        43,
+        175
+      ]
+    },
+    {
+      "name": "PartMinted",
+      "discriminator": [
+        192,
+        209,
+        23,
+        212,
+        110,
+        106,
+        40,
+        18
+      ]
+    },
+    {
+      "name": "PartRegistered",
+      "discriminator": [
+        54,
+        54,
+        211,
+        135,
+        144,
+        132,
+        220,
+        43
+      ]
+    },
+    {
+      "name": "PersonaUpdated",
+      "discriminator": [
+        221,
+        106,
+        228,
+        57,
+        170,
+        217,
+        49,
+        8
+      ]
+    },
+    {
+      "name": "Unequipped",
+      "discriminator": [
+        201,
+        118,
+        107,
+        20,
+        26,
+        16,
+        180,
+        254
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NameTaken",
+      "msg": "Name already taken"
+    },
+    {
+      "code": 6001,
+      "name": "AlreadyHasDID",
+      "msg": "Account already has a DID"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidName",
+      "msg": "Invalid name length (1-64 bytes)"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidSlot",
+      "msg": "Invalid slot (0-3)"
+    },
+    {
+      "code": 6004,
+      "name": "SlotOccupied",
+      "msg": "Provided old-part accounts do not match the equipped part"
+    },
+    {
+      "code": 6005,
+      "name": "SlotMismatch",
+      "msg": "Slot mismatch between part and requested slot"
+    },
+    {
+      "code": 6006,
+      "name": "NothingEquipped",
+      "msg": "Nothing equipped in this slot"
+    },
+    {
+      "code": 6007,
+      "name": "SlotsNotEmpty",
+      "msg": "Slots must be empty before closing identity"
+    },
+    {
+      "code": 6008,
+      "name": "NotTokenOwner",
+      "msg": "Caller is not the token owner"
+    },
+    {
+      "code": 6009,
+      "name": "PartNotRegistered",
+      "msg": "Part not registered"
+    },
+    {
+      "code": 6010,
+      "name": "PartAlreadyRegistered",
+      "msg": "Part already registered"
+    },
+    {
+      "code": 6011,
+      "name": "NotMintable",
+      "msg": "Part is not mintable"
+    },
+    {
+      "code": 6012,
+      "name": "ExceedsMaxSupply",
+      "msg": "Exceeds max supply"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidMaxSupply",
+      "msg": "Max supply must be > 0"
+    },
+    {
+      "code": 6014,
+      "name": "UnauthorizedMinter",
+      "msg": "Caller is not an authorized minter"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidAgent",
+      "msg": "Invalid agent (zero address or zero permissions)"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidAgentPermission",
+      "msg": "Invalid agent permission bits (only bit 0/1 allowed)"
+    },
+    {
+      "code": 6017,
+      "name": "NotAuthorized",
+      "msg": "Caller not authorized for this identity"
+    },
+    {
+      "code": 6018,
+      "name": "Unauthorized",
+      "msg": "Caller is not the program authority"
+    },
+    {
+      "code": 6019,
+      "name": "InvalidArweaveId",
+      "msg": "Invalid arweave id (empty or 43 chars of [A-Za-z0-9_-])"
+    },
+    {
+      "code": 6020,
+      "name": "InvalidAta",
+      "msg": "Provided ATA address does not match derived ATA"
+    },
+    {
+      "code": 6021,
+      "name": "InitSerializeFailed",
+      "msg": "init: account serialize failed"
+    }
+  ],
+  "types": [
+    {
+      "name": "AgentPermission",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "permissions",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentRevoked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentSet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "permissions",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "mint_auth_bump",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Equipped",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "slot",
+            "type": "u8"
+          },
+          {
+            "name": "part",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Identity",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "name_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "persona_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "persona_arweave_id",
+            "type": "string"
+          },
+          {
+            "name": "equipped",
+            "type": {
+              "array": [
+                {
+                  "option": "pubkey"
+                },
+                4
+              ]
+            }
+          },
+          {
+            "name": "agent_count",
+            "type": "u32"
+          },
+          {
+            "name": "recipe_id",
+            "type": "u64"
+          },
+          {
+            "name": "mint_fee_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "minted_at",
+            "type": "i64"
+          },
+          {
+            "name": "ready_at",
+            "type": "i64"
+          },
+          {
+            "name": "attributes",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "IdentityClosed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Minted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Minter",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "enabled",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MinterUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "enabled",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PartConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "part_id",
+            "type": "u64"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "slot",
+            "type": "u8"
+          },
+          {
+            "name": "rarity",
+            "type": "u8"
+          },
+          {
+            "name": "max_supply",
+            "type": "u64"
+          },
+          {
+            "name": "mintable",
+            "type": "bool"
+          },
+          {
+            "name": "registered_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PartMintableUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "part_id",
+            "type": "u64"
+          },
+          {
+            "name": "mintable",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PartMinted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "part_id",
+            "type": "u64"
+          },
+          {
+            "name": "to",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PartRegistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "part_id",
+            "type": "u64"
+          },
+          {
+            "name": "slot",
+            "type": "u8"
+          },
+          {
+            "name": "rarity",
+            "type": "u8"
+          },
+          {
+            "name": "max_supply",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PersonaUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "persona_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Unequipped",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "slot",
+            "type": "u8"
+          },
+          {
+            "name": "part",
+            "type": "pubkey"
+          }
+        ]
+      }
+    }
+  ]
+}

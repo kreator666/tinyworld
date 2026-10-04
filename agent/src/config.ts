@@ -8,16 +8,18 @@ function env(key: string, fallback = ''): string {
 
 // ============================================================
 // 链配置:与前端 web/src/lib/contracts.ts 的 CONTRACTS_BY_CHAIN 对应
-// TARGET_CHAIN 环境变量选择:sepolia(默认) | fuji
+// TARGET_CHAIN 环境变量选择:sepolia(默认) | fuji | solana-testnet
+// family 区分链家族:evm(EVM 链,defi/aave 可用)/ solana(仅身份/人格/装备读)
 // ============================================================
 interface ChainConfig {
+  family: 'evm' | 'solana'
   name: string
-  chainId: number
+  chainId: number // Solana 家族为哨兵值(101=testnet,与 solana-cli 的 cluster 约定一致)
   rpc: string
   explorer: string
-  identityAddress: `0x${string}`
-  partsAddress: `0x${string}`
-  defi: {
+  identityAddress: string // EVM 为 0x 合约地址;Solana 为程序地址(base58)
+  partsAddress: string
+  defi?: {
     router: `0x${string}` // V2 风格 Router(Fuji=TraderJoe,Sepolia=Uniswap)
     wNative: `0x${string}` // WAVAX / WETH
     usdc: `0x${string}`
@@ -25,13 +27,14 @@ interface ChainConfig {
     nativeSymbol: string // AVAX / ETH
     nativePriceId: 'avax' // 估值用的行情币(M4 只支持 AVAX 计价;Sepolia ETH 无真实价格,仅备用)
   }
-  aave: {
+  aave?: {
     pool: `0x${string}` // Aave v3 Pool(地址来自 Aave 官方 address book)
   }
 }
 
 const CHAINS: Record<string, ChainConfig> = {
   sepolia: {
+    family: 'evm',
     name: 'Sepolia',
     chainId: 11155111,
     rpc: 'https://ethereum-sepolia-rpc.publicnode.com',
@@ -52,6 +55,7 @@ const CHAINS: Record<string, ChainConfig> = {
     },
   },
   fuji: {
+    family: 'evm',
     name: 'Fuji',
     chainId: 43113,
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
@@ -71,6 +75,17 @@ const CHAINS: Record<string, ChainConfig> = {
       pool: '0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40',
     },
   },
+  // Solana testnet:Anchor 程序 tinyworld(Soulbound DID + 装备,Token-2022)
+  // 无 defi/aave 配置——DeFi 技能仅在 EVM 家族可用
+  'solana-testnet': {
+    family: 'solana',
+    name: 'Solana Testnet',
+    chainId: 101,
+    rpc: 'https://api.testnet.solana.com',
+    explorer: 'https://explorer.solana.com?cluster=testnet',
+    identityAddress: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp',
+    partsAddress: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp',
+  },
 }
 
 const targetKey = env('TARGET_CHAIN', 'sepolia').toLowerCase()
@@ -79,7 +94,7 @@ if (!target) throw new Error(`未知的 TARGET_CHAIN: ${targetKey}(可选: ${Obj
 
 // 允许用环境变量覆盖单条链的 RPC/地址(比如换私有 RPC 节点)
 target.rpc = env('CHAIN_RPC', target.rpc)
-target.identityAddress = env('DID_IDENTITY_ADDRESS', target.identityAddress) as `0x${string}`
+target.identityAddress = env('DID_IDENTITY_ADDRESS', target.identityAddress)
 
 /** 全部链配置(chains 表种子数据用) */
 export const ALL_CHAINS = CHAINS

@@ -51,7 +51,7 @@ function isNativeSymbol(s: string): boolean {
 function resolveToken(symbolOrAddress: string): Address | null {
   const s = symbolOrAddress.trim()
   if (/^0x[0-9a-fA-F]{40}$/.test(s)) return s as Address
-  const { wNative, usdc, usdt } = config.chain.defi
+  const { wNative, usdc, usdt } = config.chain.defi!
   if (s.toUpperCase() === 'USDC') return usdc === ZERO_ADDRESS ? null : usdc
   if (s.toUpperCase() === 'USDT') return usdt === ZERO_ADDRESS ? null : usdt
   if (['WAVAX', 'WETH', 'WNATIVE'].includes(s.toUpperCase())) return wNative
@@ -60,11 +60,11 @@ function resolveToken(symbolOrAddress: string): Address | null {
 
 /** 白名单代币地址 → 显示符号(未知地址截断显示) */
 export function tokenSymbolOf(address: Address): string {
-  const { usdc, usdt, wNative } = config.chain.defi
+  const { usdc, usdt, wNative } = config.chain.defi!
   const a = address.toLowerCase()
   if (a === usdc.toLowerCase()) return 'USDC'
   if (a === usdt.toLowerCase()) return 'USDT'
-  if (a === wNative.toLowerCase()) return config.chain.defi.nativeSymbol
+  if (a === wNative.toLowerCase()) return config.chain.defi!.nativeSymbol
   return `${address.slice(0, 8)}…`
 }
 
@@ -104,7 +104,7 @@ export function describeSwapResult(
 ): string {
   const { action, params } = proposal
   const inIsNative = params.tokenIn === 'native'
-  const inSymbol = inIsNative ? config.chain.defi.nativeSymbol : tokenSymbolOf(params.tokenIn as Address)
+  const inSymbol = inIsNative ? config.chain.defi!.nativeSymbol : tokenSymbolOf(params.tokenIn as Address)
   const inDecimals = inIsNative ? 18 : STABLE_DECIMALS
   const amountInHuman = formatUnits(BigInt(params.amountIn), inDecimals)
 
@@ -121,7 +121,7 @@ export function describeSwapResult(
   }
 
   // swap:按方向还原符号
-  const outSymbol = inIsNative ? tokenSymbolOf(params.tokenOut as Address) : config.chain.defi.nativeSymbol
+  const outSymbol = inIsNative ? tokenSymbolOf(params.tokenOut as Address) : config.chain.defi!.nativeSymbol
   const outDecimals = inIsNative ? STABLE_DECIMALS : 18
   if (r.reverted) {
     return `刚才那笔兑换没能成交:${amountInHuman} ${inSymbol} → ${outSymbol} 的交易在链上执行失败(revert)。资金还在你的钱包里,没有动。要我重新组装一笔吗?`
@@ -187,7 +187,7 @@ async function buildNativeProposal(
   const quoted = await quoteSwap(amountIn, tokenOut) // path: [wNative, tokenOut]
   return {
     action: 'swap',
-    protocol: config.chain.defi.router,
+    protocol: config.chain.defi!.router,
     chainId: config.chain.chainId,
     executionMode,
     params: {
@@ -214,7 +214,7 @@ async function buildUserProposal(
   const quoted = await quoteSwap(amountIn, tokenIn, true) // path: [tokenIn, wNative]
   return {
     action: 'swap',
-    protocol: config.chain.defi.router,
+    protocol: config.chain.defi!.router,
     chainId: config.chain.chainId,
     executionMode,
     params: {
@@ -328,7 +328,7 @@ function makeProposeSwap(tokenId: number) {
 
       if (executionMode === 'user_wallet') {
         const unsignedTxs: UnsignedTx[] = []
-        const router = config.chain.defi.router
+        const router = config.chain.defi!.router
         // 用户钱包模式下,用户直接授权 router,不需要先 approve 热钱包
         const allowanceToRouter = await getAllowance(tokenIn, owner, router)
         if (allowanceToRouter < BigInt(proposal.params.amountIn)) {
@@ -392,6 +392,7 @@ export const defiSwap: SkillDef = {
     tools: ['propose_swap'],
     permissions: ['defi'],
     scope: 'owner', // 资产操作,仅限主人对话
+    evmOnly: true, // 依赖 EVM Router/ERC-20,Solana 下不可安装
   },
   makeTools: (tokenId) => ({
     propose_swap: makeProposeSwap(tokenId),

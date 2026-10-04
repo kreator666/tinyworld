@@ -1,9 +1,9 @@
 import { serve } from '@hono/node-server'
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
-import { isAddress, type Address, type Hex } from 'viem'
+import { keccak256, toBytes, type Hex } from 'viem'
 import { config } from './config'
-import { PersonaError, loadPersona, resolveTokenId } from './chain/persona'
+import { PersonaError, loadPersona, resolveTokenId, isValidAddress } from './chain/persona'
 import { chatWithAgent, invalidateAgent, reloadAgent, type ChatMode } from './core/agent'
 import { clearMemories, distill, getMemoryCounts, listMemories } from './core/memory'
 import {
@@ -23,6 +23,7 @@ import { startScheduler, stopScheduler } from './core/scheduler'
 import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
 import { createNonce, verifyLogin, signJwt, AuthError } from './core/auth'
+import { readPersonaMirror, writePersonaMirror } from './core/personaMirror'
 import { authRequired, assertAgentOwnership } from './middleware/auth'
 import { getAgentStats } from './core/stats'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
@@ -60,11 +61,11 @@ app.get('/chains', async (c) => {
 // 认证:SIWE 签名登录
 // ============================================================
 
-// 获取一次性 nonce;前端用钱包地址请求,签名消息里必须包含该 nonce
+// 获取一次性 nonce;前端用钱包地址请求,签名消息里必须包含该 nonce(EVM 0x / Solana base58 均可)
 app.post('/auth/nonce', async (c) => {
   const body = await c.req.json<{ address?: string }>().catch(() => null)
   const address = body?.address?.trim()
-  if (!address || !isAddress(address)) return c.json({ error: 'address 不合法' }, 400)
+  if (!address || !isValidAddress(address)) return c.json({ error: 'address 不合法' }, 400)
   try {
     const payload = createNonce(address)
     return c.json(payload)
@@ -73,19 +74,54 @@ app.post('/auth/nonce', async (c) => {
   }
 })
 
-// 验证签名消息,签发 JWT
+// 验证签名消息,签发 JWT(按消息格式自动分派 EVM/Solana 验签;payload 带 chain 字段)
 app.post('/auth/verify', async (c) => {
-  const body = await c.req.json<{ message?: string; signature?: Hex }>().catch(() => null)
+  const body = await c.req.json<{ message?: string; signature?: string }>().catch(() => null)
   if (!body?.message || !body?.signature) {
     return c.json({ error: 'message 和 signature 不能为空' }, 400)
   }
   try {
-    const address = await verifyLogin({ message: body.message, signature: body.signature })
-    const token = signJwt({ address, chainId: config.chain.chainId })
-    return c.json({ token, address, chainId: config.chain.chainId })
+    const { address, chain } = await verifyLogin({ message: body.message, signature: body.signature })
+    const token = signJwt({ address, chainId: config.chain.chainId, chain })
+    return c.json({ token, address, chainId: config.chain.chainId, chain })
   } catch (err) {
     return handleErr(c, err)
   }
+})
+
+// ============================================================
+// 人格正文镜像(过渡期):链上只存 persona_hash,正文经此端点按 hash 去重落盘
+// (agent/data/personas/<hash>.json);loadPersona 读链后回这里取回并 keccak256 校验。
+// 目标形态是正文存 Arweave,此镜像端点仅过渡兜底。hash = 0x + 64hex。
+// ============================================================
+
+const PERSONA_HASH_RE = /^0x[0-9a-fA-F]{64}$/
+
+// 写入人格正文:keccak256(body) 必须等于路径里的 hash,否则 400
+app.put('/personas/:hash', async (c) => {
+  const hash = c.req.param('hash')
+  if (!PERSONA_HASH_RE.test(hash)) return c.json({ error: 'hash 必须是 0x+64hex' }, 400)
+  const body = await c.req.text()
+  if (!body) return c.json({ error: 'body 不能为空' }, 400)
+  const actual = keccak256(toBytes(body)) // 哈希按 body 原始字节计算
+  if (actual.toLowerCase() !== hash.toLowerCase()) {
+    return c.json({ error: `哈希不匹配(声明 ${hash},实际 ${actual})` }, 400)
+  }
+  try {
+    await writePersonaMirror(hash, body)
+    return c.json({ ok: true, hash })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 读取人格正文原文;不存在 404
+app.get('/personas/:hash', async (c) => {
+  const hash = c.req.param('hash')
+  if (!PERSONA_HASH_RE.test(hash)) return c.json({ error: 'hash 必须是 0x+64hex' }, 400)
+  const text = await readPersonaMirror(hash)
+  if (text === null) return c.json({ error: '人格不存在' }, 404)
+  return c.text(text)
 })
 
 /** 解析路径里的 tokenId,不合法返回 null(已顺手回了 400) */
@@ -126,9 +162,12 @@ app.post('/agents/:tokenId/reload', authRequired, async (c) => {
 // 前端拿的是钱包地址,这个端点最顺手:内部 tokenIdOf 解析;必须本人签名登录
 app.post('/agents/by-owner/:address/chat', authRequired, async (c) => {
   const address = c.req.param('address')
-  if (!isAddress(address)) return c.json({ error: '地址不合法' }, 400)
+  if (!isValidAddress(address)) return c.json({ error: '地址不合法' }, 400)
   const caller = c.get('address')
-  if (caller.toLowerCase() !== address.toLowerCase()) {
+  // EVM 地址大小写不敏感;base58 区分大小写必须精确匹配
+  const sameAddress = (a: string, b: string) =>
+    a.startsWith('0x') || b.startsWith('0x') ? a.toLowerCase() === b.toLowerCase() : a === b
+  if (!sameAddress(caller, address)) {
     return c.json({ error: '只能操作自己的 Agent' }, 403)
   }
   const body = await c.req.json<{ message?: string }>().catch(() => null)
@@ -136,7 +175,7 @@ app.post('/agents/by-owner/:address/chat', authRequired, async (c) => {
   if (!message) return c.json({ error: 'message 不能为空' }, 400)
 
   try {
-    const tokenId = await resolveTokenId(address as Address)
+    const tokenId = await resolveTokenId(address)
     if (tokenId === 0) return c.json({ error: '该地址还没有铸造 Agent,请先去铸造' }, 404)
     const result = await chatWithAgent(tokenId, message, 'owner')
     return c.json({ reply: result.reply, tokenId, refused: result.refused, action: result.action })
@@ -612,6 +651,7 @@ async function main() {
       parts_address: c.partsAddress,
       rpc: c.rpc,
       explorer: c.explorer,
+      family: c.family,
     })),
   )
   await syncSkillsToDb()
