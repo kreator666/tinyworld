@@ -72,6 +72,10 @@ cd /opt/tinyworld/agent && npm run dev
 
 注意：若 4111 端口已被 PM2 占用，会先报 `EADDRINUSE`，需先 `pm2 stop agentverse-agent` 或改用其他端口。
 
+### 部署到远端（agent 代码更新）
+
+服务器 `/opt/tinyworld` 即 git 克隆，`git pull` 后必须**完整** `npm install`（不要用 `--omit=dev`——`npm run start` 依赖 devDependencies 里的 tsx，跳过会导致 PM2 静默崩溃循环），再 `pm2 restart agentverse-agent`。
+
 ## 4. 前端部署流程
 
 前端为静态站点，由 Nginx 直接服务 `/opt/tinyworld/web/dist`。
@@ -122,7 +126,7 @@ TinyWorld 相关 server 块监听 `agent.freetoken.xin`，主要配置：
 
 - 静态文件根目录：`/opt/tinyworld/web/dist`
 - React Router 使用 hash 路由，无需服务端 fallback
-- API 反代路径：`/agents`、`/conversations`、`/skills`、`/chains`、`/approvals`、`/health`、`/auth` → `http://127.0.0.1:4111`
+- API 反代路径：`/agents`、`/conversations`、`/skills`、`/chains`、`/approvals`、`/health`、`/auth`、`/personas` → `http://127.0.0.1:4111`（`/personas` 为 2026-10 阶段 3 新增的人格镜像端点）
 - SSL 证书由 Certbot 管理
 
 ### 常用命令
