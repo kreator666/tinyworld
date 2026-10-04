@@ -20,3 +20,4 @@ test-ledger-console.log
 # IDE
 .idea/
 .vscode/
+script-test-output.log
