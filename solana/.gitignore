@@ -1,0 +1,22 @@
+# Anchor
+.anchor
+**/*.rs.bk
+test-ledger/
+
+# Build
+target/
+node_modules/
+dist/
+app/
+
+# 本地测试/部署日志
+validator-stdout.log
+deploy.log
+test-output.log
+final-test-output.log
+anchor-test-output*.log
+test-ledger-console.log
+
+# IDE
+.idea/
+.vscode/

@@ -1,0 +1,2 @@
+[env]
+OPENSSL_DIR = { value = "C:\\Users\\tiger\\scoop\\apps\\openssl-fd\\x64", force = true }
