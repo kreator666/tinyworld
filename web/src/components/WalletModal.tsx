@@ -178,7 +178,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} className="text-slate-400 hover:text-white">✕</button>
         </div>
         <h3 className="text-lg font-semibold mt-2">连接钱包，唤醒你的 Agent</h3>
-        <p className="text-xs text-slate-400 mb-4">签名即登录，Agent 身份与资产全部归属你的钱包地址</p>
+        <p className="text-xs text-slate-400 mb-4">签名即登录，Agent 身份与资产全部归属你的钱包地址 · 当前网络:{active.name}</p>
 
         <div className="space-y-2">
           {isSolana ? (

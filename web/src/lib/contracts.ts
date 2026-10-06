@@ -61,7 +61,7 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
   // Solana testnet(程序 tinyworld 已部署,Token-2022;IDL 副本在 src/idl/tinyworld.json)
   'solana-testnet': {
     key: 'solana-testnet',
-    name: 'Solana',
+    name: 'Solana 测试网',
     chainId: 101,
     chain: solanaTestnetChain,
     identity: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp' as `0x${string}`,
