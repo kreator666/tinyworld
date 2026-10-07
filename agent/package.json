@@ -20,13 +20,13 @@
     "hono": "^4.6.14",
     "js-sha3": "^0.9.3",
     "jsonwebtoken": "^9.0.3",
+    "tsx": "^4.19.2",
     "viem": "^2.55.5",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.10.2",
-    "tsx": "^4.19.2",
     "typescript": "~5.6.3"
   }
 }
