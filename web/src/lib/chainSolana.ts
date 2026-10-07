@@ -110,9 +110,6 @@ const mintAuthPda = (): PublicKey => pda([Buffer.from('mint-auth')])
 const minterPda = (wallet: PublicKey | string): PublicKey =>
   pda([Buffer.from('minter'), typeof wallet === 'string' ? new PublicKey(wallet) : wallet])
 
-const agentPermissionPda = (identity: PublicKey, agent: PublicKey): PublicKey =>
-  pda([Buffer.from('agent-permission'), identity.toBytes(), agent.toBytes()])
-
 const ata = (mint: PublicKey, owner: PublicKey, offCurve = false): PublicKey =>
   getAssociatedTokenAddressSync(mint, owner, offCurve, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
 
@@ -595,7 +592,10 @@ export async function setPersonaOnChain(
       [
         writableKey(idPda),
         signerKey(ownerPk),
-        readonlyKey(agentPermissionPda(idPda, ownerPk)), // owner 调用时该 PDA 不存在 → 程序视为无授权但 owner 直通
+        // agent_permission 是 Option<Account>:anchor 约定传程序 ID 表示 None。
+        // 传未初始化的 PDA 会触发 AccountNotInitialized(3012) 模拟失败(实测)。
+        // owner 自签走直通分支,无需 agent 授权账户。
+        readonlyKey(programId()),
       ],
       Buffer.from(toBytes(contentHash)),
       borshString(''),
