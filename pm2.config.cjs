@@ -11,8 +11,9 @@ module.exports = {
       cwd: './agent',
       script: './node_modules/tsx/dist/cli.mjs',
       interpreter: 'node',
-      args: 'watch src/index.ts',
-      watch: false, // tsx watch 自行处理代码热重载
+      // 不用 tsx watch:它会派生子进程,PM2 在 Windows 下跟踪不可靠(假 online);
+      args: 'src/index.ts',
+      watch: false,
       max_restarts: 10,
       restart_delay: 3000,
     },
