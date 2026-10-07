@@ -1,0 +1,14 @@
+{
+  "name": "tinyworld",
+  "private": true,
+  "description": "本地开发环境常驻进程管理(与生产服务器 PM2 用法一致)",
+  "scripts": {
+    "up": "pm2 start pm2.config.cjs",
+    "down": "pm2 delete pm2.config.cjs",
+    "logs": "pm2 logs",
+    "status": "pm2 status"
+  },
+  "devDependencies": {
+    "pm2": "^5.4.3"
+  }
+}

@@ -262,3 +262,19 @@ ssh claw 'curl -s http://127.0.0.1:4111/health'
      （memories/conversations/approvals 等）需按 owner 重新关联或迁移。
    - 名字被占用（name-record 未随重置释放）会跳过并列入待处理清单。
 3. 验证：`npx tsx scripts/smoke-solana-reads.ts`（需 TARGET_CHAIN=solana-testnet）。
+
+### 本地开发环境常驻（Windows 本机）
+
+本地 agent(:4111) + web(:5173) 由仓库根目录 PM2 守护（关窗口/会话结束不掉线、崩溃自重启）：
+
+```bash
+cd D:/agent/tinyworld
+npm install        # 首次:装 pm2(本地 devDependency)
+npm run up         # 启动两个服务
+npm run status     # 查看状态
+npm run logs       # 查看日志
+npm run down       # 停止并移除
+```
+
+注意：PM2 在 Windows 不能 spawn `npm`（.cmd 会被当 JS 解析崩溃），pm2.config.cjs
+里统一用 node 直跑 tsx / vite CLI。临时手动跑仍可用 start.bat / start.sh。
