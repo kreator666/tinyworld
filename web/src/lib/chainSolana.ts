@@ -20,9 +20,9 @@ import { getActiveChain } from '../store/chainConfigStore'
 import { getPersonaMirror, putPersonaMirror } from './agentApi'
 import {
   getActiveSolanaAddress,
-  requireSolanaProvider,
   solanaSignAndSend,
   solanaSignTransaction,
+  SolanaWalletError,
 } from './walletSolana'
 import type { ChainIdentityState, ChainPartState, MintedAgent } from './chain'
 import type { Equipped } from '../types'
@@ -144,22 +144,94 @@ const signerKey = (pubkey: PublicKey, isWritable = false) => ({ pubkey, isSigner
 const writableKey = (pubkey: PublicKey, isSigner = false) => ({ pubkey, isSigner, isWritable: true })
 const readonlyKey = (pubkey: PublicKey) => ({ pubkey, isSigner: false, isWritable: false })
 
-/** 发送交易:优先 Phantom signAndSendTransaction;带额外签名者(新建 mint)时 partialSign + signTransaction + raw send */
+/** 发送交易:Phantom 签名 + 前端自建 RPC 发送(带故障转移)
+ *
+ * 注意:不用 Phantom 的 signAndSendTransaction——它走 Phantom 中继节点,
+ * 部分网络环境对其中继返回 403(实测表现为签名成功但"上链失败"),且无法换 RPC。
+ * 这里统一 signTransaction 后由页面直连 chains 表配置的 RPC 发送,
+ * 官方节点不可达时自动切 publicnode 备用(与 agent 侧 FailoverConnection 同思路)。
+ */
 async function sendTx(tx: Transaction, extraSigners: Keypair[] = []): Promise<string> {
-  const provider = requireSolanaProvider()
   const wallet = new PublicKey(getActiveSolanaAddress() ?? '')
   tx.feePayer = wallet
-  const latest = await conn().getLatestBlockhash('confirmed')
+  const latest = await latestBlockhash()
   tx.recentBlockhash = latest.blockhash
-  let signature: string
-  if (extraSigners.length > 0) {
-    tx.partialSign(...extraSigners)
-    const signed = (await solanaSignTransaction(tx)) as Transaction
-    signature = await conn().sendRawTransaction(signed.serialize())
-  } else {
-    signature = await solanaSignAndSend(tx)
+  let signed: Transaction
+  if (extraSigners.length > 0) tx.partialSign(...extraSigners)
+  try {
+    signed = (await solanaSignTransaction(tx)) as Transaction
+  } catch (err) {
+    // 钱包不支持 signTransaction 时才退回中继发送
+    if (err instanceof SolanaWalletError && err.code === 'UNSUPPORTED') {
+      return sendViaWalletRelay(tx, latest)
+    }
+    throw err
   }
-  await conn().confirmTransaction({ signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, 'confirmed')
+  const signature = await sendRawWithFailover(signed.serialize())
+  await confirmWithFailover(signature, latest)
+  return signature
+}
+
+/** RPC 端点列表:主端点 + 同链备用(官方 solana.com 域名间歇不可达) */
+function rpcEndpoints(): string[] {
+  const primary = getActiveChain().rpc
+  const list = [primary]
+  if (primary.includes('api.testnet.solana.com')) {
+    list.push('https://solana-testnet-rpc.publicnode.com')
+  }
+  return [...new Set(list)]
+}
+
+async function latestBlockhash(): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
+  let lastErr: unknown = null
+  for (const url of rpcEndpoints()) {
+    try {
+      return await new Connection(url, 'confirmed').getLatestBlockhash('confirmed')
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr
+}
+
+async function sendRawWithFailover(raw: Uint8Array): Promise<string> {
+  let lastErr: unknown = null
+  for (const url of rpcEndpoints()) {
+    try {
+      return await new Connection(url, 'confirmed').sendRawTransaction(raw)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr
+}
+
+async function confirmWithFailover(
+  signature: string,
+  latest: { blockhash: string; lastValidBlockHeight: number },
+): Promise<void> {
+  let lastErr: unknown = null
+  for (const url of rpcEndpoints()) {
+    try {
+      await new Connection(url, 'confirmed').confirmTransaction(
+        { signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+        'confirmed',
+      )
+      return
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr
+}
+
+/** 兜底:钱包不支持 signTransaction 时退回 Phantom 中继发送 */
+async function sendViaWalletRelay(
+  tx: Transaction,
+  latest: { blockhash: string; lastValidBlockHeight: number },
+): Promise<string> {
+  const signature = await solanaSignAndSend(tx)
+  await confirmWithFailover(signature, latest)
   return signature
 }
 
