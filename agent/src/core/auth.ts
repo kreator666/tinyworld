@@ -5,6 +5,7 @@ import { verifyAsync as ed25519Verify } from '@noble/ed25519'
 import { PublicKey } from '@solana/web3.js'
 import { config } from '../config'
 import { ownerOf } from '../chain/persona'
+import { getChainContext } from '../chain/registry'
 import { base58Decode } from './base58'
 
 // ============================================================
@@ -47,6 +48,7 @@ function normalizeAddress(address: string): string {
 
 interface NonceRecord {
   address: string
+  chainKey: string // nonce 按链隔离:同一地址在不同链是不同身份
   createdAt: number
 }
 
@@ -77,21 +79,23 @@ export interface JwtPayload {
   address: string
   chainId: number
   chain: JwtChain // 旧 token 无该字段,按 'evm' 处理
+  chainKey?: string // 登录时解析的链;旧 token 无该字段,不做请求链一致性校验
 }
 
 /** 生成登录 nonce */
-export function createNonce(address: string): NoncePayload {
+export function createNonce(chainKey: string, address: string): NoncePayload {
   if (!isValidAddress(address)) throw new AuthError('地址不合法', 400)
   const nonce = randomUUID()
   const issuedAt = new Date().toISOString()
-  nonces.set(nonce, { address: normalizeAddress(address), createdAt: Date.now() })
-  return { nonce, issuedAt, chainId: config.chain.chainId }
+  nonces.set(nonce, { address: normalizeAddress(address), chainKey, createdAt: Date.now() })
+  return { nonce, issuedAt, chainId: getChainContext(chainKey).cfg.chainId }
 }
 
-/** 消费 nonce:不存在或过期返回 false */
-function consumeNonce(nonce: string, address: string): boolean {
+/** 消费 nonce:不存在、链不匹配或过期返回 false */
+function consumeNonce(chainKey: string, nonce: string, address: string): boolean {
   const rec = nonces.get(nonce)
   if (!rec) return false
+  if (rec.chainKey !== chainKey) return false
   if (rec.address !== normalizeAddress(address)) return false
   if (Date.now() - rec.createdAt > NONCE_TTL_MS) return false
   nonces.delete(nonce)
@@ -122,7 +126,7 @@ function isSolanaLoginMessage(fields: Record<string, string>): boolean {
 }
 
 /** EVM 登录验证(viem 验签 + 恢复地址双重校验,行为与 M4 一致) */
-async function verifyEvmLogin(message: string, signature: string): Promise<LoginResult> {
+async function verifyEvmLogin(chainKey: string, message: string, signature: string): Promise<LoginResult> {
   const fields = parseLoginMessage(message)
   const address = fields['Address']
   const nonce = fields['Nonce']
@@ -133,7 +137,7 @@ async function verifyEvmLogin(message: string, signature: string): Promise<Login
   if (action !== 'login') throw new AuthError('消息 Action 必须是 login', 400)
 
   // nonce 一次性使用,防重放
-  if (!consumeNonce(nonce, address)) {
+  if (!consumeNonce(chainKey, nonce, address)) {
     throw new AuthError('nonce 无效、已使用或已过期', 401)
   }
 
@@ -152,7 +156,7 @@ async function verifyEvmLogin(message: string, signature: string): Promise<Login
 }
 
 /** Solana 登录验证(ed25519;nonce 一次性消费,签名不对返回 401) */
-async function verifySolanaLogin(message: string, signature: string): Promise<LoginResult> {
+async function verifySolanaLogin(chainKey: string, message: string, signature: string): Promise<LoginResult> {
   const fields = parseLoginMessage(message)
   const address = fields['地址']
   const nonce = fields['随机数']
@@ -163,7 +167,7 @@ async function verifySolanaLogin(message: string, signature: string): Promise<Lo
   if (chainField !== SOLANA_CHAIN_KEY) throw new AuthError(`消息链标识必须是 ${SOLANA_CHAIN_KEY}`, 400)
 
   // nonce 一次性使用,防重放
-  if (!consumeNonce(nonce, address)) {
+  if (!consumeNonce(chainKey, nonce, address)) {
     throw new AuthError('nonce 无效、已使用或已过期', 401)
   }
 
@@ -185,14 +189,14 @@ async function verifySolanaLogin(message: string, signature: string): Promise<Lo
 }
 
 /** 验证签名消息;按消息格式(地址行)分派 EVM / Solana 验证,通过返回地址与链家族 */
-export async function verifyLogin(payload: VerifyPayload): Promise<LoginResult> {
+export async function verifyLogin(chainKey: string, payload: VerifyPayload): Promise<LoginResult> {
   const { message, signature } = payload
   if (!message || !signature) throw new AuthError('message 和 signature 不能为空', 400)
 
   if (isSolanaLoginMessage(parseLoginMessage(message))) {
-    return verifySolanaLogin(message, signature)
+    return verifySolanaLogin(chainKey, message, signature)
   }
-  return verifyEvmLogin(message, signature)
+  return verifyEvmLogin(chainKey, message, signature)
 }
 
 /** 签发 JWT */
@@ -208,18 +212,19 @@ export function verifyJwt(token: string): JwtPayload {
     const address = decoded.address
     const chainId = decoded.chainId
     const chain: JwtChain = decoded.chain === 'solana' ? 'solana' : 'evm' // 旧 token 无 chain 字段,按 evm 处理
+    const chainKey = typeof decoded.chainKey === 'string' ? decoded.chainKey : undefined // 旧 token 无该字段
     if (!address || typeof address !== 'string' || !isValidAddress(address)) throw new Error('invalid address')
     if (typeof chainId !== 'number') throw new Error('invalid chainId')
-    return { address, chainId, chain }
+    return { address, chainId, chain, chainKey }
   } catch (err) {
     throw new AuthError('token 无效或已过期', 401)
   }
 }
 
 /** 检查 address 是否为 tokenId 的主人 */
-export async function isAgentOwner(tokenId: number, address: string): Promise<boolean> {
+export async function isAgentOwner(chainKey: string, tokenId: number, address: string): Promise<boolean> {
   try {
-    const owner = await ownerOf(tokenId)
+    const owner = await ownerOf(chainKey, tokenId)
     // EVM 地址大小写不敏感(base58 区分大小写,必须精确比较)
     return normalizeAddress(owner) === normalizeAddress(address)
   } catch {

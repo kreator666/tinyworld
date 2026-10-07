@@ -10,16 +10,39 @@ import {
 import { privateKeyToAccount } from 'viem/accounts'
 import { sepolia, avalancheFuji } from 'viem/chains'
 import { config } from '../config'
+import { getChainContext } from './registry'
 
 // ============================================================
 // DeFi 链交互(M4):Agent 热钱包签名,V2 风格 Router 兑换
 // 只操作热钱包自己的资金(少量测试币),用户本金不经过这里(设计文档 §7.1)
 // ============================================================
 
+// 按链缓存只读客户端(链定义只影响编码细节;合约地址随请求链变化)
 const VIEM_CHAINS = { [sepolia.id]: sepolia, [avalancheFuji.id]: avalancheFuji } as const
-const viemChain = VIEM_CHAINS[config.chain.chainId as keyof typeof VIEM_CHAINS] ?? sepolia
+const clients = new Map<string, ReturnType<typeof createPublicClient>>()
 
-const publicClient = createPublicClient({ chain: viemChain, transport: http(config.chain.rpc) })
+function clientFor(chainKey: string): ReturnType<typeof createPublicClient> {
+  let client = clients.get(chainKey)
+  if (!client) {
+    const { cfg } = getChainContext(chainKey)
+    client = createPublicClient({
+      chain: VIEM_CHAINS[cfg.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
+      transport: http(cfg.rpc),
+    })
+    clients.set(chainKey, client)
+  }
+  return client
+}
+
+/** 按请求链创建热钱包客户端(签名/发交易用,私钥固定,chain/rpc 随 chainKey) */
+function walletClientFor(chainKey: string, account: ReturnType<typeof privateKeyToAccount>) {
+  const { cfg } = getChainContext(chainKey)
+  return createWalletClient({
+    account,
+    chain: VIEM_CHAINS[cfg.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
+    transport: http(cfg.rpc),
+  })
+}
 
 // V2 Router 只用到两个方法:报价 + 原生币换代币(方法名按链变体:AVAX/ETH)
 const routerAbi = [
@@ -142,13 +165,13 @@ export function hasAgentKey(): boolean {
 }
 
 /** 热钱包原生币余额(wei) */
-export async function getNativeBalance(address: Address): Promise<bigint> {
-  return publicClient.getBalance({ address })
+export async function getNativeBalance(chainKey: string, address: Address): Promise<bigint> {
+  return clientFor(chainKey).getBalance({ address })
 }
 
 /** ERC20 余额(最小单位) */
-export async function getTokenBalance(token: Address, owner: Address): Promise<bigint> {
-  return (await publicClient.readContract({
+export async function getTokenBalance(chainKey: string, token: Address, owner: Address): Promise<bigint> {
+  return (await clientFor(chainKey).readContract({
     address: token,
     abi: erc20Abi,
     functionName: 'balanceOf',
@@ -157,8 +180,13 @@ export async function getTokenBalance(token: Address, owner: Address): Promise<b
 }
 
 /** ERC20 授权额度(用户资金路径:查 owner 对热钱包/router 的 allowance) */
-export async function getAllowance(token: Address, owner: Address, spender: Address): Promise<bigint> {
-  return (await publicClient.readContract({
+export async function getAllowance(
+  chainKey: string,
+  token: Address,
+  owner: Address,
+  spender: Address,
+): Promise<bigint> {
+  return (await clientFor(chainKey).readContract({
     address: token,
     abi: erc20Abi,
     functionName: 'allowance',
@@ -167,10 +195,11 @@ export async function getAllowance(token: Address, owner: Address, spender: Addr
 }
 
 /** Router 报价:默认原生币→代币(path [wNative, token]);reverse=true 时代币→原生币 */
-export async function quoteSwap(amountIn: bigint, token: Address, reverse = false): Promise<bigint> {
-  const path = reverse ? [token, config.chain.defi!.wNative] : [config.chain.defi!.wNative, token]
-  const amounts = (await publicClient.readContract({
-    address: config.chain.defi!.router,
+export async function quoteSwap(chainKey: string, amountIn: bigint, token: Address, reverse = false): Promise<bigint> {
+  const { defi } = getChainContext(chainKey).cfg
+  const path = reverse ? [token, defi!.wNative] : [defi!.wNative, token]
+  const amounts = (await clientFor(chainKey).readContract({
+    address: defi!.router,
     abi: routerAbi,
     functionName: 'getAmountsOut',
     args: [amountIn, path],
@@ -187,27 +216,33 @@ export interface SwapResult {
  * 执行原生币 → 代币兑换:发交易 → 等回执 → 核实代币余额真实增长
  * 回执 status 失败或余额没增长都视为失败(抛错)
  */
-export async function executeSwap(amountInWei: bigint, amountOutMin: bigint, tokenOut: Address): Promise<SwapResult> {
+export async function executeSwap(
+  chainKey: string,
+  amountInWei: bigint,
+  amountOutMin: bigint,
+  tokenOut: Address,
+): Promise<SwapResult> {
+  const { cfg } = getChainContext(chainKey)
   const account = agentAccount()
   if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
+  const wallet = walletClientFor(chainKey, account)
 
-  const before = await getTokenBalance(tokenOut, account.address)
-  const fnName = config.chain.chainId === avalancheFuji.id ? 'swapExactAVAXForTokens' : 'swapExactETHForTokens'
+  const before = await getTokenBalance(chainKey, tokenOut, account.address)
+  const fnName = cfg.chainId === avalancheFuji.id ? 'swapExactAVAXForTokens' : 'swapExactETHForTokens'
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600)
 
   const txHash = await wallet.writeContract({
-    address: config.chain.defi!.router,
+    address: cfg.defi!.router,
     abi: routerAbi,
     functionName: fnName,
-    args: [amountOutMin, [config.chain.defi!.wNative, tokenOut], account.address, deadline],
+    args: [amountOutMin, [cfg.defi!.wNative, tokenOut], account.address, deadline],
     value: amountInWei,
   })
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 120_000 })
+  const receipt = await clientFor(chainKey).waitForTransactionReceipt({ hash: txHash, timeout: 120_000 })
   if (receipt.status !== 'success') {
     throw new Error(`交易上链但执行失败(revert): ${txHash}`)
   }
-  const after = await getTokenBalance(tokenOut, account.address)
+  const after = await getTokenBalance(chainKey, tokenOut, account.address)
   const amountOut = after - before
   if (amountOut <= 0n) {
     throw new Error(`交易成功但代币余额未增长(假成功): ${txHash}`)
@@ -226,15 +261,17 @@ export interface UserSwapResult {
  * 任一步失败整体报错(已成功的步骤不回滚,链上状态以 tx 为准)
  */
 export async function executeUserSwap(
+  chainKey: string,
   owner: Address,
   tokenIn: Address,
   amountIn: bigint,
   amountOutMin: bigint,
 ): Promise<UserSwapResult> {
+  const { cfg } = getChainContext(chainKey)
   const account = agentAccount()
   if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
-  const { router, wNative } = config.chain.defi!
+  const wallet = walletClientFor(chainKey, account)
+  const { router, wNative } = cfg.defi!
 
   // 1. 把用户的代币转入热钱包(依赖用户对热钱包的 approve 额度)
   const t1 = await wallet.writeContract({
@@ -243,7 +280,7 @@ export async function executeUserSwap(
     functionName: 'transferFrom',
     args: [owner, account.address, amountIn],
   })
-  const r1 = await publicClient.waitForTransactionReceipt({ hash: t1, timeout: 120_000 })
+  const r1 = await clientFor(chainKey).waitForTransactionReceipt({ hash: t1, timeout: 120_000 })
   if (r1.status !== 'success') throw new Error(`transferFrom 失败(用户额度不足或余额不足): ${t1}`)
 
   // 2. 热钱包授权 router 使用这笔代币
@@ -253,24 +290,24 @@ export async function executeUserSwap(
     functionName: 'approve',
     args: [router, amountIn],
   })
-  const r2 = await publicClient.waitForTransactionReceipt({ hash: t2, timeout: 120_000 })
+  const r2 = await clientFor(chainKey).waitForTransactionReceipt({ hash: t2, timeout: 120_000 })
   if (r2.status !== 'success') throw new Error(`approve(router) 失败: ${t2}(代币已在热钱包,需人工收尾)`)
 
   // 3. 兑换为原生币,回到热钱包(方法名按链变体:AVAX/ETH)
-  const before = await publicClient.getBalance({ address: account.address })
+  const before = await clientFor(chainKey).getBalance({ address: account.address })
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600)
-  const swapOutFn = config.chain.chainId === avalancheFuji.id ? 'swapExactTokensForAVAX' : 'swapExactTokensForETH'
+  const swapOutFn = cfg.chainId === avalancheFuji.id ? 'swapExactTokensForAVAX' : 'swapExactTokensForETH'
   const t3 = await wallet.writeContract({
     address: router,
     abi: routerAbi,
     functionName: swapOutFn,
     args: [amountIn, amountOutMin, [tokenIn, wNative], account.address, deadline],
   })
-  const r3 = await publicClient.waitForTransactionReceipt({ hash: t3, timeout: 120_000 })
+  const r3 = await clientFor(chainKey).waitForTransactionReceipt({ hash: t3, timeout: 120_000 })
   if (r3.status !== 'success') throw new Error(`swap 执行失败(revert): ${t3}`)
 
   // 名义到账 = 余额差 + 这一步的 gas(gas 也扣在同一个原生币余额里,要加回来才是兑换所得)
-  const after = await publicClient.getBalance({ address: account.address })
+  const after = await clientFor(chainKey).getBalance({ address: account.address })
   const gasCost = r3.gasUsed * r3.effectiveGasPrice
   const amountOut = after - before + gasCost
   if (amountOut <= 0n) {
@@ -295,58 +332,65 @@ function swapDeadline(): bigint {
   return BigInt(Math.floor(Date.now() / 1000) + 600)
 }
 
-function nativeSwapOutFn(): 'swapExactAVAXForTokens' | 'swapExactETHForTokens' {
-  return config.chain.chainId === avalancheFuji.id ? 'swapExactAVAXForTokens' : 'swapExactETHForTokens'
+function nativeSwapOutFn(chainKey: string): 'swapExactAVAXForTokens' | 'swapExactETHForTokens' {
+  return getChainContext(chainKey).cfg.chainId === avalancheFuji.id ? 'swapExactAVAXForTokens' : 'swapExactETHForTokens'
 }
 
-function tokenSwapOutFn(): 'swapExactTokensForAVAX' | 'swapExactTokensForETH' {
-  return config.chain.chainId === avalancheFuji.id ? 'swapExactTokensForAVAX' : 'swapExactTokensForETH'
+function tokenSwapOutFn(chainKey: string): 'swapExactTokensForAVAX' | 'swapExactTokensForETH' {
+  return getChainContext(chainKey).cfg.chainId === avalancheFuji.id
+    ? 'swapExactTokensForAVAX'
+    : 'swapExactTokensForETH'
 }
 
 /** 用户钱包模式:组装 原生币 → 代币 的 unsigned tx */
 export function buildUnsignedNativeToTokenSwap(
+  chainKey: string,
   user: Address,
   amountInWei: bigint,
   amountOutMin: bigint,
   tokenOut: Address,
 ): UnsignedTx {
+  const { cfg } = getChainContext(chainKey)
   const data = encodeFunctionData({
     abi: routerAbi,
-    functionName: nativeSwapOutFn(),
-    args: [amountOutMin, [config.chain.defi!.wNative, tokenOut], user, swapDeadline()],
+    functionName: nativeSwapOutFn(chainKey),
+    args: [amountOutMin, [cfg.defi!.wNative, tokenOut], user, swapDeadline()],
   })
   return {
-    to: config.chain.defi!.router,
+    to: cfg.defi!.router,
     data,
     value: amountInWei.toString(),
-    chainId: config.chain.chainId,
-    description: `${config.chain.defi!.nativeSymbol} → ${tokenOut}`,
+    chainId: cfg.chainId,
+    description: `${cfg.defi!.nativeSymbol} → ${tokenOut}`,
   }
 }
 
 /** 用户钱包模式:组装 代币 → 原生币 的 unsigned tx */
 export function buildUnsignedTokenToNativeSwap(
+  chainKey: string,
   user: Address,
   tokenIn: Address,
   amountIn: bigint,
   amountOutMin: bigint,
 ): UnsignedTx {
+  const { cfg } = getChainContext(chainKey)
   const data = encodeFunctionData({
     abi: routerAbi,
-    functionName: tokenSwapOutFn(),
-    args: [amountIn, amountOutMin, [tokenIn, config.chain.defi!.wNative], user, swapDeadline()],
+    functionName: tokenSwapOutFn(chainKey),
+    args: [amountIn, amountOutMin, [tokenIn, cfg.defi!.wNative], user, swapDeadline()],
   })
   return {
-    to: config.chain.defi!.router,
+    to: cfg.defi!.router,
     data,
     value: '0',
-    chainId: config.chain.chainId,
-    description: `${tokenIn} → ${config.chain.defi!.nativeSymbol}`,
+    chainId: cfg.chainId,
+    description: `${tokenIn} → ${cfg.defi!.nativeSymbol}`,
   }
 }
 
 /** 用户钱包模式:组装 ERC20 approve 的 unsigned tx */
-export function buildUnsignedErc20Approve(token: Address, spender: Address, amount: bigint): UnsignedTx {
+export function buildUnsignedErc20Approve(chainKey: string, token: Address, spender: Address, amount: bigint): UnsignedTx {
+  const { cfg } = getChainContext(chainKey)
   const data = encodeFunctionData({
     abi: erc20Abi,
     functionName: 'approve',
@@ -356,14 +400,14 @@ export function buildUnsignedErc20Approve(token: Address, spender: Address, amou
     to: token,
     data,
     value: '0',
-    chainId: config.chain.chainId,
+    chainId: cfg.chainId,
     description: `approve ${spender.slice(0, 6)}…${spender.slice(-4)}`,
   }
 }
 
 /** 后端广播签名后的 raw transaction;返回 txHash */
-export async function broadcastSignedTx(serializedSignedTx: Hex): Promise<Hex> {
-  return publicClient.sendRawTransaction({ serializedTransaction: serializedSignedTx })
+export async function broadcastSignedTx(chainKey: string, serializedSignedTx: Hex): Promise<Hex> {
+  return clientFor(chainKey).sendRawTransaction({ serializedTransaction: serializedSignedTx })
 }
 
 // ============================================================
@@ -371,8 +415,8 @@ export async function broadcastSignedTx(serializedSignedTx: Hex): Promise<Hex> {
 // ============================================================
 
 /** 等待交易回执;超时抛错 */
-export async function waitForTxReceipt(txHash: Hex, timeoutMs = 90_000) {
-  return publicClient.waitForTransactionReceipt({ hash: txHash, timeout: timeoutMs })
+export async function waitForTxReceipt(chainKey: string, txHash: Hex, timeoutMs = 90_000) {
+  return clientFor(chainKey).waitForTransactionReceipt({ hash: txHash, timeout: timeoutMs })
 }
 
 // Uniswap V2 Pair Swap 事件:Swap(address sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address to)

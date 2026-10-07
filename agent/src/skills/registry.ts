@@ -4,6 +4,7 @@ import type { createTool } from '@mastra/core/tools'
 import { getDb } from '../db'
 import { config } from '../config'
 import { PERMISSION_SOCIAL, getAgentPermissions } from '../chain/persona'
+import { getChainContext } from '../chain/registry'
 
 // ============================================================
 // 技能注册表(设计文档 §5):技能 = 清单 + 一组 Mastra 工具
@@ -30,8 +31,8 @@ export interface SkillManifest {
 
 export interface SkillDef {
   manifest: SkillManifest
-  /** 为指定 tokenId 构造该技能的 Mastra 工具集(工具内闭包绑定 tokenId) */
-  makeTools: (tokenId: number) => Record<string, AnyTool>
+  /** 为指定链上的 tokenId 构造该技能的 Mastra 工具集(工具内闭包绑定 chainKey + tokenId) */
+  makeTools: (chainKey: string, tokenId: number) => Record<string, AnyTool>
 }
 
 export class SkillError extends Error {
@@ -49,14 +50,14 @@ export function registerSkill(def: SkillDef): void {
   builtins.set(def.manifest.id, def)
 }
 
-/** 技能在当前链家族是否可用(evmOnly 技能在 Solana 下不可用) */
-export function isSkillAvailable(manifest: SkillManifest): boolean {
-  return !manifest.evmOnly || config.chain.family === 'evm'
+/** 技能在指定链家族是否可用(evmOnly 技能在 Solana 下不可用) */
+export function isSkillAvailable(chainKey: string, manifest: SkillManifest): boolean {
+  return !manifest.evmOnly || getChainContext(chainKey).family === 'evm'
 }
 
 /** 全部可安装技能(清单);Solana 链下隐藏 evmOnly 技能 */
-export function listSkills(): SkillManifest[] {
-  return [...builtins.values()].map((d) => d.manifest).filter(isSkillAvailable)
+export function listSkills(chainKey: string): SkillManifest[] {
+  return [...builtins.values()].map((d) => d.manifest).filter((m) => isSkillAvailable(chainKey, m))
 }
 
 /** 随 Agent 运行时默认启用的一组内置技能(新 Agent 首次装载时自动安装,无需主人手动装) */
@@ -67,16 +68,17 @@ export const DEFAULT_SKILL_IDS = ['social-greeter', 'defi-quote', 'defi-swap', '
  * 每次都以 DB 为准,所以主人手动卸载后不会反复装回(重启服务也尊重卸载)。
  * 返回本次新安装的技能 id 列表(空数组 = 原本已齐全)。
  */
-export async function ensureDefaultSkills(tokenId: number): Promise<string[]> {
+export async function ensureDefaultSkills(chainKey: string, tokenId: number): Promise<string[]> {
   const db = await getDb()
-  const res = await db.query<{ skill_id: string }>('SELECT skill_id FROM agent_skills WHERE token_id = $1', [tokenId])
+  const res = await db.query<{ skill_id: string }>('SELECT skill_id FROM agent_skills WHERE chain_key = $1 AND token_id = $2', [chainKey, tokenId])
   const installed = new Set(res.rows.map((r) => r.skill_id))
   const added: string[] = []
   for (const skillId of DEFAULT_SKILL_IDS) {
     if (installed.has(skillId) || !builtins.has(skillId)) continue
     const def = builtins.get(skillId)!
-    if (!isSkillAvailable(def.manifest)) continue // Solana 下跳过 evmOnly 默认技能
-    await db.query('INSERT INTO agent_skills (token_id, skill_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+    if (!isSkillAvailable(chainKey, def.manifest)) continue // Solana 下跳过 evmOnly 默认技能
+    await db.query('INSERT INTO agent_skills (chain_key, token_id, skill_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [
+      chainKey,
       tokenId,
       skillId,
     ])
@@ -105,14 +107,14 @@ export interface InstalledSkill {
 }
 
 /** 该 Agent 已安装的技能(联表查清单) */
-export async function getInstalledSkills(tokenId: number): Promise<InstalledSkill[]> {
+export async function getInstalledSkills(chainKey: string, tokenId: number): Promise<InstalledSkill[]> {
   const db = await getDb()
   const res = await db.query<InstalledSkill>(
     `SELECT s.id, s.name, s.version FROM agent_skills a
      JOIN skills s ON s.id = a.skill_id
-     WHERE a.token_id = $1
+     WHERE a.chain_key = $1 AND a.token_id = $2
      ORDER BY a.installed_at`,
-    [tokenId],
+    [chainKey, tokenId],
   )
   return res.rows
 }
@@ -125,11 +127,11 @@ export interface InstallResult {
 }
 
 /** 安装技能:需要 social 权限的先查链上 agentPermissions 的 PERMISSION_SOCIAL 位 */
-export async function installSkill(tokenId: number, skillId: string): Promise<InstallResult> {
+export async function installSkill(chainKey: string, tokenId: number, skillId: string): Promise<InstallResult> {
   const def = builtins.get(skillId)
   if (!def) throw new SkillError(`未知技能: ${skillId}`)
-  if (!isSkillAvailable(def.manifest)) {
-    throw new SkillError(`技能 ${skillId} 仅在 EVM 链可用,当前链 ${config.chain.name} 不支持`, 400)
+  if (!isSkillAvailable(chainKey, def.manifest)) {
+    throw new SkillError(`技能 ${skillId} 仅在 EVM 链可用,当前链 ${getChainContext(chainKey).cfg.name} 不支持`, 400)
   }
 
   let permissionCheck: InstallResult['permissionCheck'] = 'none'
@@ -141,7 +143,7 @@ export async function installSkill(tokenId: number, skillId: string): Promise<In
       note = '未配置 AGENT_SERVICE_ADDRESS,已跳过链上权限校验'
     } else {
       if (!isAddress(agentAddr)) throw new SkillError('AGENT_SERVICE_ADDRESS 不是合法地址')
-      const perms = await getAgentPermissions(tokenId, agentAddr as Address)
+      const perms = await getAgentPermissions(chainKey, tokenId, agentAddr as Address)
       if ((perms & PERMISSION_SOCIAL) === 0n) {
         throw new SkillError(
           `链上未授予 social 权限(PERMISSION_SOCIAL=2),请先调用 setAgent(${tokenId}, ${agentAddr}, 2) 授权`,
@@ -160,16 +162,17 @@ export async function installSkill(tokenId: number, skillId: string): Promise<In
 
   const db = await getDb()
   await db.query(
-    'INSERT INTO agent_skills (token_id, skill_id) VALUES ($1, $2) ON CONFLICT (token_id, skill_id) DO NOTHING',
-    [tokenId, skillId],
+    'INSERT INTO agent_skills (chain_key, token_id, skill_id) VALUES ($1, $2, $3) ON CONFLICT (chain_key, token_id, skill_id) DO NOTHING',
+    [chainKey, tokenId, skillId],
   )
   return { manifest: def.manifest, permissionCheck, note }
 }
 
 /** 卸载技能;返回是否确实存在该安装记录 */
-export async function uninstallSkill(tokenId: number, skillId: string): Promise<boolean> {
+export async function uninstallSkill(chainKey: string, tokenId: number, skillId: string): Promise<boolean> {
   const db = await getDb()
-  const res = await db.query('DELETE FROM agent_skills WHERE token_id = $1 AND skill_id = $2 RETURNING skill_id', [
+  const res = await db.query('DELETE FROM agent_skills WHERE chain_key = $1 AND token_id = $2 AND skill_id = $3 RETURNING skill_id', [
+    chainKey,
     tokenId,
     skillId,
   ])
@@ -181,19 +184,20 @@ export async function uninstallSkill(tokenId: number, skillId: string): Promise<
  *  mode='social'      :社交对话,仅加载 scope='social'|'all' 的技能,禁止资产/DeFi 操作
  */
 export async function getToolsFor(
+  chainKey: string,
   tokenId: number,
   mode: 'owner' | 'social' = 'owner',
 ): Promise<Record<string, AnyTool>> {
   const db = await getDb()
-  const res = await db.query<{ skill_id: string }>('SELECT skill_id FROM agent_skills WHERE token_id = $1', [tokenId])
+  const res = await db.query<{ skill_id: string }>('SELECT skill_id FROM agent_skills WHERE chain_key = $1 AND token_id = $2', [chainKey, tokenId])
   const tools: Record<string, AnyTool> = {}
   for (const { skill_id } of res.rows) {
     const def = builtins.get(skill_id)
     if (!def) continue // DB 里有但代码未注册(比如版本回滚),跳过
-    if (!isSkillAvailable(def.manifest)) continue // Solana 下 evmOnly 技能不加载工具
+    if (!isSkillAvailable(chainKey, def.manifest)) continue // Solana 下 evmOnly 技能不加载工具
     const scope = def.manifest.scope ?? 'all'
     if (scope !== 'all' && scope !== mode) continue
-    Object.assign(tools, def.makeTools(tokenId))
+    Object.assign(tools, def.makeTools(chainKey, tokenId))
   }
   return tools
 }

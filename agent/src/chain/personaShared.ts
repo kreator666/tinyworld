@@ -85,5 +85,11 @@ export function parseVerifiedPersona(json: string, contentHash: string): AIProfi
   return { ...defaultAIProfile, ...raw }
 }
 
-// 人格缓存:每个 tokenId 只装载一次,reload 接口强制刷新(EVM/Solana 共用语义)
-export const personaCache = new Map<number, LoadedPersona>()
+// 人格缓存:每个 (链, tokenId) 只装载一次,reload 接口强制刷新(EVM/Solana 共用语义)。
+// 多链重构:tokenId 跨链可碰撞,u64 空间与 EVM 自增段重叠,key 必须带链维度。
+export const personaCache = new Map<string, LoadedPersona>()
+
+/** 人格缓存键:`${chainKey}:${tokenId}` */
+export function personaCacheKey(chainKey: string, tokenId: number): string {
+  return `${chainKey}:${tokenId}`
+}

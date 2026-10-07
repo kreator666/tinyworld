@@ -31,12 +31,10 @@ export const useChainConfig = create<ChainConfigState>((set, get) => ({
       const res = await fetch(`${AGENT_API}/chains`)
       if (!res.ok) return
       const data = (await res.json()) as {
-        chains: { chain_key: string; chain_id: number; name: string; identity_address: string; parts_address: string; rpc: string; explorer: string }[]
+        chains: { chain_key: string; chain_id: number; name: string; identity_address: string; parts_address: string; rpc: string; explorer: string; family?: string }[]
       }
       const merged = get().chains.map((local) => {
-        // 按 chain_id 匹配后端 chains 表,地址/RPC/浏览器以后端为准
-        // (后端条目不带 family,一律按 evm 处理;solana 本地条目不被覆盖——后端暂无 solana 链)
-        if (local.family === 'solana') return local
+        // 按 chain_id 匹配后端 chains 表,地址/RPC/浏览器/family 以后端为准(多链:后端是链目录的唯一权威)
         const remote = data.chains.find((r) => r.chain_id === local.chainId)
         if (!remote) return local
         return {
@@ -46,6 +44,7 @@ export const useChainConfig = create<ChainConfigState>((set, get) => ({
           parts: remote.parts_address as `0x${string}`,
           rpc: remote.rpc,
           explorer: remote.explorer,
+          family: (remote.family as 'evm' | 'solana' | undefined) ?? local.family,
         }
       })
       set((s) => ({

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { getDb } from '../db'
 import { loadPersona } from '../chain/persona'
+import { getChainContext } from '../chain/registry'
 import { buildInstructions } from './agent'
 import { buildShareableProfile } from './ownerFacts'
 import { complete } from './llm'
@@ -37,14 +38,16 @@ export function canReply(profile: AIProfile): boolean {
 // ---- 落库与查询 ----
 
 export async function recordSocialMessage(
+  chainKey: string,
   fromTokenId: number,
   toTokenId: number,
   content: string,
   kind: SocialKind,
 ): Promise<void> {
   const db = await getDb()
-  await db.query('INSERT INTO social_messages (id, from_token_id, to_token_id, content, kind) VALUES ($1, $2, $3, $4, $5)', [
+  await db.query('INSERT INTO social_messages (id, chain_key, from_token_id, to_token_id, content, kind) VALUES ($1, $2, $3, $4, $5, $6)', [
     randomUUID(),
+    chainKey,
     fromTokenId,
     toTokenId,
     content,
@@ -53,7 +56,7 @@ export async function recordSocialMessage(
 }
 
 /** 收件箱:该 Agent 收到的消息,按时间正序;since(ISO 时间)可选 */
-export async function getInbox(tokenId: number, since?: string): Promise<SocialMessage[]> {
+export async function getInbox(chainKey: string, tokenId: number, since?: string): Promise<SocialMessage[]> {
   const db = await getDb()
   const res = await db.query<{
     id: string
@@ -64,9 +67,9 @@ export async function getInbox(tokenId: number, since?: string): Promise<SocialM
     created_at: string
   }>(
     `SELECT * FROM social_messages
-     WHERE to_token_id = $1 AND ($2::timestamptz IS NULL OR created_at > $2)
+     WHERE chain_key = $1 AND to_token_id = $2 AND ($3::timestamptz IS NULL OR created_at > $3)
      ORDER BY created_at`,
-    [tokenId, since ?? null],
+    [chainKey, tokenId, since ?? null],
   )
   return res.rows.map((r) => ({
     id: r.id,
@@ -79,23 +82,23 @@ export async function getInbox(tokenId: number, since?: string): Promise<SocialM
 }
 
 /** X 是否已经给 Y 发过消息(打过招呼就不再重复发起) */
-export async function hasGreeted(fromTokenId: number, toTokenId: number): Promise<boolean> {
+export async function hasGreeted(chainKey: string, fromTokenId: number, toTokenId: number): Promise<boolean> {
   const db = await getDb()
-  const res = await db.query('SELECT 1 FROM social_messages WHERE from_token_id = $1 AND to_token_id = $2 LIMIT 1', [
-    fromTokenId,
-    toTokenId,
-  ])
+  const res = await db.query(
+    'SELECT 1 FROM social_messages WHERE chain_key = $1 AND from_token_id = $2 AND to_token_id = $3 LIMIT 1',
+    [chainKey, fromTokenId, toTokenId],
+  )
   return res.rows.length > 0
 }
 
 /** 同一对 Agent 间的 auto 消息总数(乒乓上限判断) */
-export async function pairAutoCount(a: number, b: number): Promise<number> {
+export async function pairAutoCount(chainKey: string, a: number, b: number): Promise<number> {
   const db = await getDb()
   const res = await db.query<{ n: number }>(
     `SELECT COUNT(*)::int AS n FROM social_messages
-     WHERE kind = 'auto'
-       AND ((from_token_id = $1 AND to_token_id = $2) OR (from_token_id = $2 AND to_token_id = $1))`,
-    [a, b],
+     WHERE chain_key = $1 AND kind = 'auto'
+       AND ((from_token_id = $2 AND to_token_id = $3) OR (from_token_id = $3 AND to_token_id = $2))`,
+    [chainKey, a, b],
   )
   return res.rows[0].n
 }
@@ -108,14 +111,14 @@ export interface PairMessage {
 }
 
 /** 两个 Agent 之间最新的一条消息(判断该谁回复) */
-export async function latestPairMessage(a: number, b: number): Promise<PairMessage | null> {
+export async function latestPairMessage(chainKey: string, a: number, b: number): Promise<PairMessage | null> {
   const db = await getDb()
   const res = await db.query<{ from_token_id: number; to_token_id: number; content: string; kind: SocialKind }>(
     `SELECT * FROM social_messages
-     WHERE (from_token_id = $1 AND to_token_id = $2) OR (from_token_id = $2 AND to_token_id = $1)
+     WHERE chain_key = $1 AND ((from_token_id = $2 AND to_token_id = $3) OR (from_token_id = $3 AND to_token_id = $2))
      ORDER BY created_at DESC
      LIMIT 1`,
-    [a, b],
+    [chainKey, a, b],
   )
   const r = res.rows[0]
   return r ? { fromTokenId: Number(r.from_token_id), toTokenId: Number(r.to_token_id), content: r.content, kind: r.kind } : null
@@ -129,10 +132,10 @@ function cleanOneLiner(text: string): string {
 }
 
 /** 用 from 的人格生成一句给 to 的打招呼 */
-export async function generateGreeting(fromTokenId: number, toName: string): Promise<string> {
-  const persona = await loadPersona(fromTokenId)
+export async function generateGreeting(chainKey: string, fromTokenId: number, toName: string): Promise<string> {
+  const persona = await loadPersona(chainKey, fromTokenId)
   const text = await complete(
-    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social', await buildShareableProfile(fromTokenId)),
+    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social', await buildShareableProfile(chainKey, fromTokenId), getChainContext(chainKey).cfg.name),
     `你在广场上注意到一个叫「${toName}」的 Agent,以你的人设主动跟他打个招呼。一两句话,简短自然,提到他的名字。`,
     0.9,
   )
@@ -140,10 +143,10 @@ export async function generateGreeting(fromTokenId: number, toName: string): Pro
 }
 
 /** 用 tokenId 的人格回复 fromName 发来的一句话 */
-export async function generateReply(tokenId: number, fromName: string, content: string): Promise<string> {
-  const persona = await loadPersona(tokenId)
+export async function generateReply(chainKey: string, tokenId: number, fromName: string, content: string): Promise<string> {
+  const persona = await loadPersona(chainKey, tokenId)
   const text = await complete(
-    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social', await buildShareableProfile(tokenId)),
+    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social', await buildShareableProfile(chainKey, tokenId), getChainContext(chainKey).cfg.name),
     `「${fromName}」对你说:"${content}"。以你的人设回复他,一两句话,简短自然。`,
     0.9,
   )

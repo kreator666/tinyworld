@@ -41,67 +41,68 @@ function toConversation(r: ConversationRow): Conversation {
 }
 
 /** 会话列表,按最近活跃倒序 */
-export async function listConversations(tokenId: number): Promise<Conversation[]> {
+export async function listConversations(chainKey: string, tokenId: number): Promise<Conversation[]> {
   const db = await getDb()
   const res = await db.query<ConversationRow>(
-    'SELECT * FROM conversations WHERE token_id = $1 ORDER BY updated_at DESC',
-    [tokenId],
+    'SELECT * FROM conversations WHERE chain_key = $1 AND token_id = $2 ORDER BY updated_at DESC',
+    [chainKey, tokenId],
   )
   return res.rows.map(toConversation)
 }
 
 /** 新建会话(标题默认"新对话",首轮对话后自动生成) */
-export async function createConversation(tokenId: number): Promise<Conversation> {
+export async function createConversation(chainKey: string, tokenId: number): Promise<Conversation> {
   const db = await getDb()
   const id = randomUUID()
   const res = await db.query<ConversationRow>(
-    'INSERT INTO conversations (id, token_id) VALUES ($1, $2) RETURNING *',
-    [id, tokenId],
+    'INSERT INTO conversations (id, chain_key, token_id) VALUES ($1, $2, $3) RETURNING *',
+    [id, chainKey, tokenId],
   )
   return toConversation(res.rows[0])
 }
 
 /** 删除会话,消息级联删除;返回会话是否确实存在 */
-export async function deleteConversation(id: string): Promise<boolean> {
+export async function deleteConversation(chainKey: string, id: string): Promise<boolean> {
   const db = await getDb()
-  const res = await db.query('DELETE FROM conversations WHERE id = $1 RETURNING id', [id])
+  const res = await db.query('DELETE FROM conversations WHERE chain_key = $1 AND id = $2 RETURNING id', [chainKey, id])
   return res.rows.length > 0
 }
 
-async function getConversation(id: string): Promise<ConversationRow | undefined> {
+async function getConversation(chainKey: string, id: string): Promise<ConversationRow | undefined> {
   const db = await getDb()
-  const res = await db.query<ConversationRow>('SELECT * FROM conversations WHERE id = $1', [id])
+  const res = await db.query<ConversationRow>('SELECT * FROM conversations WHERE chain_key = $1 AND id = $2', [chainKey, id])
   return res.rows[0]
 }
 
 /** 按 id 查会话(路由层解析 tokenId / 404 用) */
-export async function getConversationById(id: string): Promise<Conversation | undefined> {
-  const row = await getConversation(id)
+export async function getConversationById(chainKey: string, id: string): Promise<Conversation | undefined> {
+  const row = await getConversation(chainKey, id)
   return row ? toConversation(row) : undefined
 }
 
 /** 会话消息,按时间正序 */
-export async function listMessages(conversationId: string): Promise<ConversationMessage[] | null> {
-  if (!(await getConversation(conversationId))) return null
+export async function listMessages(chainKey: string, conversationId: string): Promise<ConversationMessage[] | null> {
+  if (!(await getConversation(chainKey, conversationId))) return null
   const db = await getDb()
   const res = await db.query<{ id: string; role: 'user' | 'assistant'; content: string; created_at: string }>(
-    'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at',
-    [conversationId],
+    'SELECT * FROM messages WHERE chain_key = $1 AND conversation_id = $2 ORDER BY created_at',
+    [chainKey, conversationId],
   )
   return res.rows.map((r) => ({ id: r.id, role: r.role, content: r.content, createdAt: r.created_at }))
 }
 
 /** 追加一条 assistant 消息(不经过 LLM),用于链上事件确认后的主动告知;会话不存在则忽略 */
-export async function appendAssistantMessage(conversationId: string, content: string): Promise<void> {
+export async function appendAssistantMessage(chainKey: string, conversationId: string, content: string): Promise<void> {
   const db = await getDb()
-  if (!(await getConversation(conversationId))) return
-  await db.query('INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)', [
+  if (!(await getConversation(chainKey, conversationId))) return
+  await db.query('INSERT INTO messages (id, chain_key, conversation_id, role, content) VALUES ($1, $2, $3, $4, $5)', [
     randomUUID(),
+    chainKey,
     conversationId,
     'assistant',
     content,
   ])
-  await db.query('UPDATE conversations SET updated_at = now() WHERE id = $1', [conversationId])
+  await db.query('UPDATE conversations SET updated_at = now WHERE chain_key = $1 AND id = $2', [chainKey, conversationId])
 }
 
 /** 用 LLM 给会话起标题(≤15 字);失败/超时就用首条消息截断兜底 */
@@ -125,25 +126,26 @@ async function generateTitle(firstMessage: string): Promise<string> {
  * 首轮对话后自动生成标题;会话不存在返回 null(由路由层转 404)
  */
 export async function chatInConversation(
+  chainKey: string,
   tokenId: number,
   conversationId: string,
   message: string,
 ): Promise<ChatResult | null> {
-  const conv = await getConversation(conversationId)
+  const conv = await getConversation(chainKey, conversationId)
   if (!conv || Number(conv.token_id) !== tokenId) return null // NUMERIC 返回字符串,收敛回 number
 
   const db = await getDb()
   const recent = await db.query<{ role: 'user' | 'assistant'; content: string }>(
     `SELECT role, content FROM messages
-     WHERE conversation_id = $1
+     WHERE chain_key = $1 AND conversation_id = $2
      ORDER BY created_at DESC
-     LIMIT $2`,
-    [conversationId, HISTORY_LIMIT * 2],
+     LIMIT $3`,
+    [chainKey, conversationId, HISTORY_LIMIT * 2],
   )
   const history: ChatMessage[] = recent.rows.reverse()
 
-  const persona = await loadPersona(tokenId)
-  const result = await runAgentTurn(persona, history, message, 'owner')
+  const persona = await loadPersona(chainKey, tokenId)
+  const result = await runAgentTurn(chainKey, persona, history, message, 'owner')
 
   // 问答(含被拦截的轮次)都落 messages 表,并刷新 updated_at
   await db.query('INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)', [

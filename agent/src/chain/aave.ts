@@ -11,6 +11,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts'
 import { sepolia, avalancheFuji } from 'viem/chains'
 import { config } from '../config'
+import { getChainContext } from './registry'
 import type { UnsignedTx } from './defi'
 
 // ============================================================
@@ -19,10 +20,32 @@ import type { UnsignedTx } from './defi'
 // Fuji 支持原生 AVAX(WrappedTokenGateway)与 ERC20(USDC/WAVAX 直接 supply)
 // ============================================================
 
+// 按链缓存只读客户端(链定义只影响编码细节;合约地址随请求链变化)
 const VIEM_CHAINS = { [sepolia.id]: sepolia, [avalancheFuji.id]: avalancheFuji } as const
-const viemChain = VIEM_CHAINS[config.chain.chainId as keyof typeof VIEM_CHAINS] ?? sepolia
+const clients = new Map<string, ReturnType<typeof createPublicClient>>()
 
-const publicClient = createPublicClient({ chain: viemChain, transport: http(config.chain.rpc) })
+function clientFor(chainKey: string): ReturnType<typeof createPublicClient> {
+  let client = clients.get(chainKey)
+  if (!client) {
+    const { cfg } = getChainContext(chainKey)
+    client = createPublicClient({
+      chain: VIEM_CHAINS[cfg.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
+      transport: http(cfg.rpc),
+    })
+    clients.set(chainKey, client)
+  }
+  return client
+}
+
+/** 按请求链创建热钱包客户端(签名/发交易用,私钥固定,chain/rpc 随 chainKey) */
+function walletClientFor(chainKey: string, account: ReturnType<typeof privateKeyToAccount>) {
+  const { cfg } = getChainContext(chainKey)
+  return createWalletClient({
+    account,
+    chain: VIEM_CHAINS[cfg.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
+    transport: http(cfg.rpc),
+  })
+}
 
 // Aave v3 Pool:getReserveData 返回完整 ReserveData,viem 解码需按结构体全量声明
 const poolAbi = [
@@ -160,9 +183,9 @@ export interface ReserveInfo {
 }
 
 /** 读取资产的 aToken 地址与当前供给 APY */
-export async function getReserveInfo(asset: Address): Promise<ReserveInfo> {
-  const data = (await publicClient.readContract({
-    address: config.chain.aave!.pool,
+export async function getReserveInfo(chainKey: string, asset: Address): Promise<ReserveInfo> {
+  const data = (await clientFor(chainKey).readContract({
+    address: getChainContext(chainKey).cfg.aave!.pool,
     abi: poolAbi,
     functionName: 'getReserveData',
     args: [asset],
@@ -177,8 +200,8 @@ export async function getReserveInfo(asset: Address): Promise<ReserveInfo> {
 }
 
 /** aToken 余额(= 用户在 Aave 的存款本金+利息,最小单位) */
-export async function getATokenBalance(aToken: Address, user: Address): Promise<bigint> {
-  return (await publicClient.readContract({
+export async function getATokenBalance(chainKey: string, aToken: Address, user: Address): Promise<bigint> {
+  return (await clientFor(chainKey).readContract({
     address: aToken,
     abi: erc20Abi,
     functionName: 'balanceOf',
@@ -187,8 +210,13 @@ export async function getATokenBalance(aToken: Address, user: Address): Promise<
 }
 
 /** ERC20 授权额度 */
-export async function getTokenAllowance(token: Address, owner: Address, spender: Address): Promise<bigint> {
-  return (await publicClient.readContract({
+export async function getTokenAllowance(
+  chainKey: string,
+  token: Address,
+  owner: Address,
+  spender: Address,
+): Promise<bigint> {
+  return (await clientFor(chainKey).readContract({
     address: token,
     abi: erc20Abi,
     functionName: 'allowance',
@@ -203,23 +231,24 @@ export interface LendingResult {
 }
 
 /** ERC20 存入 Aave:approve(不足才发)→ supply → 核实 aToken 余额真实增长 */
-export async function supplyErc20(asset: Address, amount: bigint): Promise<LendingResult> {
+export async function supplyErc20(chainKey: string, asset: Address, amount: bigint): Promise<LendingResult> {
+  const { cfg } = getChainContext(chainKey)
   const account = agentAccount()
   if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
-  const pool = config.chain.aave!.pool
+  const wallet = walletClientFor(chainKey, account)
+  const pool = cfg.aave!.pool
 
-  const info = await getReserveInfo(asset)
-  const before = await getATokenBalance(info.aToken, account.address)
+  const info = await getReserveInfo(chainKey, asset)
+  const before = await getATokenBalance(chainKey, info.aToken, account.address)
 
-  if ((await getTokenAllowance(asset, account.address, pool)) < amount) {
+  if ((await getTokenAllowance(chainKey, asset, account.address, pool)) < amount) {
     const t0 = await wallet.writeContract({
       address: asset,
       abi: erc20Abi,
       functionName: 'approve',
       args: [pool, amount],
     })
-    const r0 = await publicClient.waitForTransactionReceipt({ hash: t0, timeout: 120_000 })
+    const r0 = await clientFor(chainKey).waitForTransactionReceipt({ hash: t0, timeout: 120_000 })
     if (r0.status !== 'success') throw new Error(`approve(Pool) 失败: ${t0}`)
   }
 
@@ -229,47 +258,49 @@ export async function supplyErc20(asset: Address, amount: bigint): Promise<Lendi
     functionName: 'supply',
     args: [asset, amount, account.address, 0],
   })
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
+  const receipt = await clientFor(chainKey).waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
   if (receipt.status !== 'success') throw new Error(`supply 执行失败(revert): ${tx}`)
 
-  const after = await getATokenBalance(info.aToken, account.address)
+  const after = await getATokenBalance(chainKey, info.aToken, account.address)
   const delta = after - before
   if (delta < amount) throw new Error(`交易成功但 aToken 增长不足(假成功): ${tx}`)
   return { txHash: tx, delta }
 }
 
 /** 原生币(如 AVAX)经 Gateway 存入 Aave → 核实 aWAVAX 余额真实增长 */
-export async function supplyNative(amount: bigint): Promise<LendingResult> {
+export async function supplyNative(chainKey: string, amount: bigint): Promise<LendingResult> {
+  const { cfg } = getChainContext(chainKey)
   const account = agentAccount()
   if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
+  const wallet = walletClientFor(chainKey, account)
 
-  const info = await getReserveInfo(config.chain.defi!.wNative)
-  const before = await getATokenBalance(info.aToken, account.address)
+  const info = await getReserveInfo(chainKey, cfg.defi!.wNative)
+  const before = await getATokenBalance(chainKey, info.aToken, account.address)
 
   const tx = await wallet.writeContract({
     address: NATIVE_GATEWAY,
     abi: gatewayAbi,
     functionName: 'depositETH',
-    args: [config.chain.aave!.pool, account.address, 0],
+    args: [cfg.aave!.pool, account.address, 0],
     value: amount,
   })
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
+  const receipt = await clientFor(chainKey).waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
   if (receipt.status !== 'success') throw new Error(`depositETH 执行失败(revert): ${tx}`)
 
-  const after = await getATokenBalance(info.aToken, account.address)
+  const after = await getATokenBalance(chainKey, info.aToken, account.address)
   const delta = after - before
   if (delta < amount) throw new Error(`交易成功但 aToken 增长不足(假成功): ${tx}`)
   return { txHash: tx, delta }
 }
 
 /** 从 Aave 取出 ERC20 → 核实底层币到账 */
-export async function withdrawErc20(asset: Address, amount: bigint): Promise<LendingResult> {
+export async function withdrawErc20(chainKey: string, asset: Address, amount: bigint): Promise<LendingResult> {
+  const { cfg } = getChainContext(chainKey)
   const account = agentAccount()
   if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
+  const wallet = walletClientFor(chainKey, account)
 
-  const erc20Before = (await publicClient.readContract({
+  const erc20Before = (await clientFor(chainKey).readContract({
     address: asset,
     abi: erc20Abi,
     functionName: 'balanceOf',
@@ -277,15 +308,15 @@ export async function withdrawErc20(asset: Address, amount: bigint): Promise<Len
   })) as bigint
 
   const tx = await wallet.writeContract({
-    address: config.chain.aave!.pool,
+    address: cfg.aave!.pool,
     abi: poolAbi,
     functionName: 'withdraw',
     args: [asset, amount, account.address],
   })
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
+  const receipt = await clientFor(chainKey).waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
   if (receipt.status !== 'success') throw new Error(`withdraw 执行失败(revert): ${tx}`)
 
-  const erc20After = (await publicClient.readContract({
+  const erc20After = (await clientFor(chainKey).readContract({
     address: asset,
     abi: erc20Abi,
     functionName: 'balanceOf',
@@ -297,43 +328,46 @@ export async function withdrawErc20(asset: Address, amount: bigint): Promise<Len
 }
 
 /** 从 Aave 取回原生币(经 Gateway)→ 核实原生余额真实增长(gas 扣在同一余额,要加回来) */
-export async function withdrawNative(amount: bigint): Promise<LendingResult> {
+export async function withdrawNative(chainKey: string, amount: bigint): Promise<LendingResult> {
+  const { cfg } = getChainContext(chainKey)
   const account = agentAccount()
   if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = createWalletClient({ account, chain: viemChain, transport: http(config.chain.rpc) })
+  const wallet = walletClientFor(chainKey, account)
 
   // 网关 withdrawETH 会 transferFrom 用户的 aToken,必须先授权 aToken 给网关
-  const info = await getReserveInfo(config.chain.defi!.wNative)
-  if ((await getTokenAllowance(info.aToken, account.address, NATIVE_GATEWAY)) < amount) {
+  const info = await getReserveInfo(chainKey, cfg.defi!.wNative)
+  if ((await getTokenAllowance(chainKey, info.aToken, account.address, NATIVE_GATEWAY)) < amount) {
     const t0 = await wallet.writeContract({
       address: info.aToken,
       abi: erc20Abi,
       functionName: 'approve',
       args: [NATIVE_GATEWAY, amount],
     })
-    const r0 = await publicClient.waitForTransactionReceipt({ hash: t0, timeout: 120_000 })
+    const r0 = await clientFor(chainKey).waitForTransactionReceipt({ hash: t0, timeout: 120_000 })
     if (r0.status !== 'success') throw new Error(`approve(aToken→Gateway) 失败: ${t0}`)
   }
 
-  const before = await publicClient.getBalance({ address: account.address })
+  const before = await clientFor(chainKey).getBalance({ address: account.address })
   const tx = await wallet.writeContract({
     address: NATIVE_GATEWAY,
     abi: gatewayAbi,
     functionName: 'withdrawETH',
-    args: [config.chain.aave!.pool, amount, account.address],
+    args: [cfg.aave!.pool, amount, account.address],
   })
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
+  const receipt = await clientFor(chainKey).waitForTransactionReceipt({ hash: tx, timeout: 120_000 })
   if (receipt.status !== 'success') throw new Error(`withdrawETH 执行失败(revert): ${tx}`)
 
-  const after = await publicClient.getBalance({ address: account.address })
+  const after = await clientFor(chainKey).getBalance({ address: account.address })
   const gasCost = receipt.gasUsed * receipt.effectiveGasPrice
   const delta = after - before + gasCost
   if (delta < amount) throw new Error(`交易成功但原生币到账不足(假成功): ${tx}`)
   return { txHash: tx, delta }
 }
 
-/** 只读:无需私钥 */
-export const aavePublicClient = publicClient
+/** 只读:无需私钥(按请求链取只读客户端) */
+export function aavePublicClient(chainKey: string) {
+  return clientFor(chainKey)
+}
 
 /** 金额格式化辅助 */
 export { formatUnits }
@@ -346,65 +380,69 @@ export { formatUnits }
 // ============================================================
 
 /** 组装 ERC20 存入 Aave 的 unsigned supply(授权检查由调用方先做完) */
-export function buildUnsignedSupply(asset: Address, amount: bigint, onBehalfOf: Address): UnsignedTx {
+export function buildUnsignedSupply(chainKey: string, asset: Address, amount: bigint, onBehalfOf: Address): UnsignedTx {
+  const { cfg } = getChainContext(chainKey)
   const data = encodeFunctionData({
     abi: poolAbi,
     functionName: 'supply',
     args: [asset, amount, onBehalfOf, 0],
   })
   return {
-    to: config.chain.aave!.pool,
+    to: cfg.aave!.pool,
     data,
     value: '0',
-    chainId: config.chain.chainId,
+    chainId: cfg.chainId,
     description: `存入 Aave ${asset.slice(0, 6)}…${asset.slice(-4)}`,
   }
 }
 
 /** 组装原生币存入 Aave 的 unsigned depositETH(经 Gateway,payable) */
-export function buildUnsignedNativeSupply(amount: bigint, onBehalfOf: Address): UnsignedTx {
+export function buildUnsignedNativeSupply(chainKey: string, amount: bigint, onBehalfOf: Address): UnsignedTx {
+  const { cfg } = getChainContext(chainKey)
   const data = encodeFunctionData({
     abi: gatewayAbi,
     functionName: 'depositETH',
-    args: [config.chain.aave!.pool, onBehalfOf, 0],
+    args: [cfg.aave!.pool, onBehalfOf, 0],
   })
   return {
     to: NATIVE_GATEWAY,
     data,
     value: amount.toString(),
-    chainId: config.chain.chainId,
-    description: `存入 Aave ${config.chain.defi!.nativeSymbol}`,
+    chainId: cfg.chainId,
+    description: `存入 Aave ${cfg.defi!.nativeSymbol}`,
   }
 }
 
 /** 组装 ERC20 取回的 unsigned withdraw(用户直接收 ERC20,无需授权) */
-export function buildUnsignedWithdraw(asset: Address, amount: bigint, to: Address): UnsignedTx {
+export function buildUnsignedWithdraw(chainKey: string, asset: Address, amount: bigint, to: Address): UnsignedTx {
+  const { cfg } = getChainContext(chainKey)
   const data = encodeFunctionData({
     abi: poolAbi,
     functionName: 'withdraw',
     args: [asset, amount, to],
   })
   return {
-    to: config.chain.aave!.pool,
+    to: cfg.aave!.pool,
     data,
     value: '0',
-    chainId: config.chain.chainId,
+    chainId: cfg.chainId,
     description: `从 Aave 取回 ${asset.slice(0, 6)}…${asset.slice(-4)}`,
   }
 }
 
 /** 组装原生币取回的 unsigned withdrawETH(经 Gateway;调用方需先组装 aToken approve) */
-export function buildUnsignedNativeWithdraw(amount: bigint, to: Address): UnsignedTx {
+export function buildUnsignedNativeWithdraw(chainKey: string, amount: bigint, to: Address): UnsignedTx {
+  const { cfg } = getChainContext(chainKey)
   const data = encodeFunctionData({
     abi: gatewayAbi,
     functionName: 'withdrawETH',
-    args: [config.chain.aave!.pool, amount, to],
+    args: [cfg.aave!.pool, amount, to],
   })
   return {
     to: NATIVE_GATEWAY,
     data,
     value: '0',
-    chainId: config.chain.chainId,
-    description: `从 Aave 取回 ${config.chain.defi!.nativeSymbol}`,
+    chainId: cfg.chainId,
+    description: `从 Aave 取回 ${cfg.defi!.nativeSymbol}`,
   }
 }

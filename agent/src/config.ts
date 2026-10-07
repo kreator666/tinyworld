@@ -32,6 +32,7 @@ interface ChainConfig {
     pool: `0x${string}` // Aave v3 Pool(地址来自 Aave 官方 address book)
   }
 }
+export type { ChainConfig }
 
 const CHAINS: Record<string, ChainConfig> = {
   sepolia: {

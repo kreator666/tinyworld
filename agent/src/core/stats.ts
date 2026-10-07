@@ -15,39 +15,39 @@ export interface AgentStats {
 }
 
 /** 该 Agent 发出 + 收到的社交消息总数 */
-async function countSocialInteractions(tokenId: number): Promise<number> {
+async function countSocialInteractions(chainKey: string, tokenId: number): Promise<number> {
   const db = await getDb()
   const res = await db.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM social_messages WHERE from_token_id = $1 OR to_token_id = $1`,
-    [tokenId],
+    `SELECT COUNT(*)::text AS n FROM social_messages WHERE chain_key = $1 AND (from_token_id = $2 OR to_token_id = $2)`,
+    [chainKey, tokenId],
   )
   return Number(res.rows[0]?.n ?? 0)
 }
 
 /** 近 7 天活跃天数:tasks(链上任务)+ social_messages(社交)+ 助手对话消息 任意有记录即算活跃 */
-async function countActiveDays(tokenId: number, days = 7): Promise<number> {
+async function countActiveDays(chainKey: string, tokenId: number, days = 7): Promise<number> {
   const db = await getDb()
   const res = await db.query<{ d: string }>(
     `SELECT COUNT(DISTINCT d)::text AS d FROM (
        SELECT created_at::date AS d FROM tasks
-        WHERE token_id = $1 AND created_at > now() - make_interval(days => $2)
+        WHERE chain_key = $1 AND token_id = $2 AND created_at > now() - make_interval(days => $3)
        UNION
        SELECT created_at::date FROM social_messages
-        WHERE (from_token_id = $1 OR to_token_id = $1) AND created_at > now() - make_interval(days => $2)
+        WHERE chain_key = $1 AND (from_token_id = $2 OR to_token_id = $2) AND created_at > now() - make_interval(days => $3)
        UNION
        SELECT m.created_at::date FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
-        WHERE c.token_id = $1 AND m.created_at > now() - make_interval(days => $2)
+        WHERE c.chain_key = $1 AND c.token_id = $2 AND m.created_at > now() - make_interval(days => $3)
      ) t`,
-    [tokenId, days],
+    [chainKey, tokenId, days],
   )
   return Number(res.rows[0]?.d ?? 0)
 }
 
-export async function getAgentStats(tokenId: number): Promise<AgentStats> {
+export async function getAgentStats(chainKey: string, tokenId: number): Promise<AgentStats> {
   const [socialInteractions, activeDays7d] = await Promise.all([
-    countSocialInteractions(tokenId),
-    countActiveDays(tokenId, 7),
+    countSocialInteractions(chainKey, tokenId),
+    countActiveDays(chainKey, tokenId, 7),
   ])
   return {
     socialInteractions,

@@ -1,5 +1,6 @@
 import { config } from '../config'
 import { getDb } from '../db'
+import { getChainContext } from '../chain/registry'
 import type { UnsignedTx } from '../chain/defi'
 
 // ============================================================
@@ -46,31 +47,32 @@ export interface Verdict {
 }
 
 /** 代币白名单(按链):WAVAX/WETH + USDC + USDT(未配置的零地址自动过滤) */
-function tokenWhitelist(): string[] {
-  const { wNative, usdc, usdt } = config.chain.defi!
+function tokenWhitelist(chainKey: string): string[] {
+  const { wNative, usdc, usdt } = getChainContext(chainKey).cfg.defi!
   return [wNative, usdc, usdt].filter((a) => a !== '0x0000000000000000000000000000000000000000').map((a) => a.toLowerCase())
 }
 
 /** 当天已执行的 defi 交易总额(USD,tasks 表 result.usdValue 累计) */
-async function dailySpentUsd(): Promise<number> {
+async function dailySpentUsd(chainKey: string): Promise<number> {
   const db = await getDb()
   const res = await db.query<{ total: number | null }>(
     `SELECT COALESCE(SUM((result->>'usdValue')::numeric), 0)::float AS total FROM tasks
-     WHERE type = 'defi' AND status = 'done' AND created_at::date = CURRENT_DATE`,
+     WHERE chain_key = $1 AND type = 'defi' AND status = 'done' AND created_at::date = CURRENT_DATE`,
+    [chainKey],
   )
   return res.rows[0]?.total ?? 0
 }
 
 /** 同 action 距上次执行是否还在冷却期内 */
-async function inCooldown(action: string): Promise<boolean> {
+async function inCooldown(chainKey: string, action: string): Promise<boolean> {
   if (config.policyCooldownSeconds <= 0) return false
   const db = await getDb()
   const res = await db.query(
     `SELECT 1 FROM tasks
-     WHERE type = 'defi' AND status = 'done' AND payload->>'action' = $1
-       AND created_at > now() - make_interval(secs => $2)
+     WHERE chain_key = $1 AND type = 'defi' AND status = 'done' AND payload->>'action' = $2
+       AND created_at > now() - make_interval(secs => $3)
      LIMIT 1`,
-    [action, config.policyCooldownSeconds],
+    [chainKey, action, config.policyCooldownSeconds],
   )
   return res.rows.length > 0
 }
@@ -81,22 +83,23 @@ async function inCooldown(action: string): Promise<boolean> {
  * - needsApproval:估值失败(熔断)、超单笔限额、超日累计、冷却期内(软规则,人工审批可放行)
  * - execute:全部通过
  */
-export async function evaluateProposal(p: Proposal): Promise<Verdict> {
+export async function evaluateProposal(chainKey: string, p: Proposal): Promise<Verdict> {
+  const cfg = getChainContext(chainKey).cfg
   const hardFail: string[] = []
   const soft: string[] = []
 
   // 协议白名单:swap 只能走 DEX router;supply/withdraw 只能走 Aave Pool
-  if (p.chainId !== config.chain.chainId) {
-    hardFail.push(`链不匹配(提案 chainId=${p.chainId},当前 ${config.chain.chainId})`)
+  if (p.chainId !== cfg.chainId) {
+    hardFail.push(`链不匹配(提案 chainId=${p.chainId},当前 ${cfg.chainId})`)
   }
-  const allowedProtocol = p.action === 'swap' ? config.chain.defi!.router : config.chain.aave!.pool
+  const allowedProtocol = p.action === 'swap' ? cfg.defi!.router : cfg.aave!.pool
   if (p.protocol.toLowerCase() !== allowedProtocol.toLowerCase()) {
     hardFail.push(`协议不在白名单: ${p.protocol}(当前 action=${p.action} 仅允许 ${allowedProtocol})`)
   }
 
   // 代币白名单('native' 表示原生币;swap 双向都允许;supply/withdraw 只校验底层资产 tokenIn,
   // tokenOut 在借贷场景记 aToken 地址,由 Aave 协议本身保证其真实性,不重复校验)
-  const whitelist = tokenWhitelist()
+  const whitelist = tokenWhitelist(chainKey)
   if (p.params.tokenIn !== 'native' && !whitelist.includes(p.params.tokenIn.toLowerCase())) {
     hardFail.push(`tokenIn 不在白名单: ${p.params.tokenIn}`)
   }
@@ -113,13 +116,13 @@ export async function evaluateProposal(p: Proposal): Promise<Verdict> {
     if (p.estimatedValueUsd > config.policyMaxTxUsd) {
       soft.push(`单笔估值 $${p.estimatedValueUsd.toFixed(2)} 超过限额 $${config.policyMaxTxUsd}`)
     }
-    const spent = await dailySpentUsd()
+    const spent = await dailySpentUsd(chainKey)
     if (spent + p.estimatedValueUsd > config.policyDailyLimitUsd) {
       soft.push(`日累计将达到 $${(spent + p.estimatedValueUsd).toFixed(2)},超过日限额 $${config.policyDailyLimitUsd}`)
     }
   }
 
-  if (await inCooldown(p.action)) {
+  if (await inCooldown(chainKey, p.action)) {
     soft.push(`同 action(${p.action})在 ${config.policyCooldownSeconds}s 冷却期内`)
   }
 

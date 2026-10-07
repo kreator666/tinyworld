@@ -65,6 +65,8 @@ export default function NavBar() {
     setSwitching(true)
     setActive(key as typeof active.key)
     chainStore.clear()
+    // 多链提示:各链的 Agent/聊天记录互相独立,本期不支持跨链互动
+    showToast(`已切换到 ${target.name}:该链的 Agent 与聊天记录独立,暂不支持跨链互动`)
     try {
       if ((target.family ?? 'evm') === 'solana') {
         // Solana 链:走 Phantom 连接流程(EVM 会话与 Solana 不通用,需重新连接)

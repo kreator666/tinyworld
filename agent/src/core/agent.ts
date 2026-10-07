@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { Address } from 'viem'
 import { config } from '../config'
 import { loadPersona, type LoadedPersona, getWalletAssets } from '../chain/persona'
+import { getChainContext } from '../chain/registry'
 import type { UnsignedTx } from '../chain/defi'
 import type { Proposal, ProposalAction } from '../policy/engine'
 import { retrieveContext, writeEpisodic } from './memory'
@@ -64,13 +65,14 @@ export function buildInstructions(
   ctx?: { owner: string; tokenId: number },
   mode: ChatMode = 'owner',
   ownerProfile = '',
+  chainName = config.chain.name, // 链名随当前请求链变化,缺省回落到默认链
 ): string {
   const isSocial = mode === 'social'
   const topics = profile.topics.length > 0 ? profile.topics.join('、') : '不限'
   const ownerLine = ctx
     ? isSocial
-      ? `你的链上身份:tokenId ${ctx.tokenId},当前链 ${config.chain.name};你的主人钱包地址是 ${ctx.owner}。注意:当前是对外社交对话,对方不是你的主人,你**不能**替对方查询或操作任何资产、钱包、DeFi。`
-      : `你的链上身份:tokenId ${ctx.tokenId},当前链 ${config.chain.name};主人的钱包地址是 ${ctx.owner}。主人问"我有什么资产/我钱包里有什么"时,直接调用 get_wallet_assets 工具查这个地址,不要反问主人要地址。`
+      ? `你的链上身份:tokenId ${ctx.tokenId},当前链 ${chainName};你的主人钱包地址是 ${ctx.owner}。注意:当前是对外社交对话,对方不是你的主人,你**不能**替对方查询或操作任何资产、钱包、DeFi。`
+      : `你的链上身份:tokenId ${ctx.tokenId},当前链 ${chainName};主人的钱包地址是 ${ctx.owner}。主人问"我有什么资产/我钱包里有什么"时,直接调用 get_wallet_assets 工具查这个地址,不要反问主人要地址。`
     : ''
   const ownerToolsLines = isSocial
     ? []
@@ -117,34 +119,40 @@ export function buildInstructions(
   return lines.filter(Boolean).join('\n')
 }
 
-// 会话历史按(模式,身份)隔离:owner 模式按 tokenId 缓存;social 模式按 fromTokenId→toTokenId 对缓存
+// 会话历史按(链, 模式, 身份)隔离:owner 模式按 tokenId 缓存;social 模式按 fromTokenId→toTokenId 对缓存
 const histories = new Map<string, ChatMessage[]>()
-// Agent 实例按 tokenId + 模式缓存,因为不同模式工具集和 system prompt 不同
+// Agent 实例按 chainKey + tokenId + 模式缓存,因为不同链/模式工具集和 system prompt 不同
 const agents = new Map<string, Agent>()
 
-function historyKey(mode: ChatMode, toTokenId: number, fromTokenId?: number): string {
+function historyKey(chainKey: string, mode: ChatMode, toTokenId: number, fromTokenId?: number): string {
   if (mode === 'social' && fromTokenId !== undefined) {
-    return `social:${fromTokenId}:${toTokenId}`
+    return `${chainKey}:social:${fromTokenId}:${toTokenId}`
   }
-  return `owner:${toTokenId}`
+  return `${chainKey}:owner:${toTokenId}`
 }
 
-function agentKey(tokenId: number, mode: ChatMode): string {
-  return `agent:${tokenId}:${mode}`
+function agentKey(chainKey: string, tokenId: number, mode: ChatMode): string {
+  return `${chainKey}:agent:${tokenId}:${mode}`
 }
 
 // 侧信道:propose_swap 工具将需要前端签名的 action 临时缓存,runAgentTurn 从中读取。
-// 避免依赖 Mastra 返回的 toolResults 结构,兼容不同版本/调用方式。
-const pendingSignActions = new Map<number, SignTxAction>()
+// 避免依赖 Mastra 返回的 toolResults 结构,兼容不同版本/调用方式。按链+tokenId 隔离。
+const pendingSignActions = new Map<string, SignTxAction>()
 
-export function setPendingSignAction(tokenId: number, action: SignTxAction | undefined) {
-  if (action) pendingSignActions.set(tokenId, action)
-  else pendingSignActions.delete(tokenId)
+function signKey(chainKey: string, tokenId: number): string {
+  return `${chainKey}:${tokenId}`
 }
 
-export function takePendingSignAction(tokenId: number): SignTxAction | undefined {
-  const action = pendingSignActions.get(tokenId)
-  pendingSignActions.delete(tokenId)
+export function setPendingSignAction(chainKey: string, tokenId: number, action: SignTxAction | undefined) {
+  const key = signKey(chainKey, tokenId)
+  if (action) pendingSignActions.set(key, action)
+  else pendingSignActions.delete(key)
+}
+
+export function takePendingSignAction(chainKey: string, tokenId: number): SignTxAction | undefined {
+  const key = signKey(chainKey, tokenId)
+  const action = pendingSignActions.get(key)
+  pendingSignActions.delete(key)
   return action
 }
 
@@ -152,11 +160,11 @@ export function takePendingSignAction(tokenId: number): SignTxAction | undefined
  * mode='owner' 时额外挂载 get_wallet_assets 等资产查询工具;
  * mode='social' 时只加载 scope='social'|'all' 的技能,不挂载任何资产/DeFi 工具。
  */
-async function agentFor(persona: LoadedPersona, mode: ChatMode = 'owner'): Promise<Agent> {
-  const key = agentKey(persona.tokenId, mode)
+async function agentFor(chainKey: string, persona: LoadedPersona, mode: ChatMode = 'owner'): Promise<Agent> {
+  const key = agentKey(chainKey, persona.tokenId, mode)
   const cached = agents.get(key)
   if (cached) return cached
-  const tools = await getToolsFor(persona.tokenId, mode)
+  const tools = await getToolsFor(chainKey, persona.tokenId, mode)
 
   if (mode === 'owner') {
     // 内置钱包资产查询:主人问"我有什么资产"时直接用,无需安装技能
@@ -173,7 +181,7 @@ async function agentFor(persona: LoadedPersona, mode: ChatMode = 'owner'): Promi
         equipment: z.array(z.any()),
       }),
       execute: async () => {
-        const assets = await getWalletAssets(persona.owner as Address, persona.tokenId)
+        const assets = await getWalletAssets(chainKey, persona.owner as Address, persona.tokenId)
         return {
           address: assets.address,
           nativeBalance: assets.nativeBalance,
@@ -188,11 +196,11 @@ async function agentFor(persona: LoadedPersona, mode: ChatMode = 'owner'): Promi
   }
 
   // 社交模式注入主人公开画像(仅 general/coarse);主人模式不注入,避免 private 信息进 prompt
-  const ownerProfile = mode === 'social' ? await buildShareableProfile(persona.tokenId) : ''
+  const ownerProfile = mode === 'social' ? await buildShareableProfile(chainKey, persona.tokenId) : ''
 
   const agent = new Agent({
-    name: `agent-${persona.tokenId}`,
-    instructions: buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, mode, ownerProfile),
+    name: `agent-${chainKey}-${persona.tokenId}`,
+    instructions: buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, mode, ownerProfile, getChainContext(chainKey).cfg.name),
     model: openai(config.llmModel),
     tools,
   })
@@ -201,20 +209,22 @@ async function agentFor(persona: LoadedPersona, mode: ChatMode = 'owner'): Promi
 }
 
 /** 使缓存的 Agent 实例失效(技能装卸后下次对话会带上新工具集重建) */
-export function invalidateAgent(tokenId: number): void {
+export function invalidateAgent(chainKey: string, tokenId: number): void {
+  const prefix = `${chainKey}:agent:${tokenId}:`
   for (const key of agents.keys()) {
-    if (key.startsWith(`agent:${tokenId}:`)) agents.delete(key)
+    if (key.startsWith(prefix)) agents.delete(key)
   }
 }
 
 /** 强制重载人格并丢弃旧 Agent 实例(保留会话历史) */
-export async function reloadAgent(tokenId: number): Promise<LoadedPersona> {
-  invalidateAgent(tokenId)
-  return loadPersona(tokenId, true)
+export async function reloadAgent(chainKey: string, tokenId: number): Promise<LoadedPersona> {
+  invalidateAgent(chainKey, tokenId)
+  return loadPersona(chainKey, tokenId, true)
 }
 
 /** 单轮对话主流程(全局会话与多会话共用):人格开关 → 记忆注入 → generate → 情景记忆 */
 export async function runAgentTurn(
+  chainKey: string,
   persona: LoadedPersona,
   history: ChatMessage[],
   message: string,
@@ -231,17 +241,17 @@ export async function runAgentTurn(
   }
 
   // 新 Agent 首聊时自动补齐默认技能(社交/行情/兑换);有新增则让缓存的 Agent 实例重建,工具集才完整
-  const addedSkills = await ensureDefaultSkills(persona.tokenId)
-  if (addedSkills.length > 0) invalidateAgent(persona.tokenId)
+  const addedSkills = await ensureDefaultSkills(chainKey, persona.tokenId)
+  if (addedSkills.length > 0) invalidateAgent(chainKey, persona.tokenId)
 
   // 记忆检索:语义 topK + 最近情景,作为额外 system 消息拼在会话历史前(memory=false 时不读)
   let messages: ChatMessage[] = [...history, { role: 'user', content: message }]
   if (profile.memory !== false) {
-    const memoryContext = await retrieveContext(persona.tokenId, message)
+    const memoryContext = await retrieveContext(chainKey, persona.tokenId, message)
     if (memoryContext) messages = [{ role: 'system', content: memoryContext }, ...messages]
   }
 
-  const res = await (await agentFor(persona, mode)).generate(messages)
+  const res = await (await agentFor(chainKey, persona, mode)).generate(messages)
   const reply = res.text?.trim() || '(一时语塞)'
 
   // 检测是否需要前端交互(如用户钱包签名交易):
@@ -250,7 +260,7 @@ export async function runAgentTurn(
   if (mode === 'owner') {
     // 1) 优先从 propose_swap/propose_supply 工具设置的侧信道取(最可靠,不依赖 Mastra 返回结构)
     // 2) 兜底从 Mastra 返回的 toolResults 提取
-    action = takePendingSignAction(persona.tokenId)
+    action = takePendingSignAction(chainKey, persona.tokenId)
     if (!action) {
       const toolResults = ((res as unknown as { toolResults?: unknown[] }).toolResults ?? []).filter(Boolean)
       console.log('[runAgentTurn] toolResults count', toolResults.length, 'toolResults', JSON.stringify(toolResults))
@@ -266,24 +276,25 @@ export async function runAgentTurn(
 
   // 每轮结束落一条情景记忆,并按阈值触发后台蒸馏(memory=false 时不写)
   if (profile.memory !== false) {
-    await writeEpisodic(persona.tokenId, message, reply)
+    await writeEpisodic(chainKey, persona.tokenId, message, reply)
   }
   return { refused: false, reply, action }
 }
 
 /** 与 Agent 对话:owner 模式可操作资产/DeFi;social 模式仅聊天
- * 历史按模式隔离,避免社交对话污染主人对话上下文。
+ * 历史按(链, 模式)隔离,避免社交对话污染主人对话上下文。
  */
 export async function chatWithAgent(
+  chainKey: string,
   tokenId: number,
   message: string,
   mode: ChatMode = 'owner',
   fromTokenId?: number,
 ): Promise<ChatResult> {
-  const persona = await loadPersona(tokenId)
-  const key = historyKey(mode, tokenId, fromTokenId)
+  const persona = await loadPersona(chainKey, tokenId)
+  const key = historyKey(chainKey, mode, tokenId, fromTokenId)
   const history = histories.get(key) ?? []
-  const result = await runAgentTurn(persona, history, message, mode)
+  const result = await runAgentTurn(chainKey, persona, history, message, mode)
   if (result.refused) return result // 被拦截的轮次不进历史
 
   history.push({ role: 'user', content: message }, { role: 'assistant', content: result.reply })

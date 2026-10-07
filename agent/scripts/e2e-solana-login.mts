@@ -102,7 +102,7 @@ async function main() {
   // 登录全流
   const nonceRes = await fetch(`${AGENT}/auth/nonce`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Chain-Key': 'solana-testnet' },
     body: JSON.stringify({ address }),
   }).then((r) => r.json())
   console.log('[4] nonce:', nonceRes.nonce)
@@ -111,7 +111,7 @@ async function main() {
 
   const verifyRes = await fetch(`${AGENT}/auth/verify`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Chain-Key': 'solana-testnet' },
     body: JSON.stringify({ message, signature }),
   }).then((r) => r.json())
   if (!verifyRes.token) throw new Error('登录失败: ' + JSON.stringify(verifyRes))
@@ -120,7 +120,7 @@ async function main() {
   // 错误签名必须 401
   const bad = await fetch(`${AGENT}/auth/verify`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Chain-Key': 'solana-testnet' },
     body: JSON.stringify({ message, signature: base58Encode(new Uint8Array(64).fill(1)) }),
   })
   console.log('[6] 错误签名状态码(期望 401):', bad.status)
@@ -128,7 +128,7 @@ async function main() {
   // nonce 一次性:重放同一 nonce 应 401
   const replay = await fetch(`${AGENT}/auth/verify`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Chain-Key': 'solana-testnet' },
     body: JSON.stringify({ message, signature }),
   })
   console.log('    重放 nonce 状态码(期望 401):', replay.status)
@@ -138,7 +138,7 @@ async function main() {
   let statusBody: any = {}
   for (let attempt = 1; attempt <= 4; attempt++) {
     const res = await fetch(`${AGENT}/agents/${tokenId}/status`, {
-      headers: { Authorization: `Bearer ${verifyRes.token}` },
+      headers: { Authorization: `Bearer ${verifyRes.token}`, 'X-Chain-Key': 'solana-testnet' },
     })
     statusCode = res.status
     statusBody = await res.json()
@@ -152,7 +152,9 @@ async function main() {
   console.log('[8] 无 JWT 状态码(期望 401):', noAuth.status)
 
   // 公开调试接口:读链人格(新铸造 → 默认人格兜底)
-  const persona = await fetch(`${AGENT}/agents/${tokenId}/persona`).then((r) => r.json())
+  const persona = await fetch(`${AGENT}/agents/${tokenId}/persona`, {
+    headers: { 'X-Chain-Key': 'solana-testnet' },
+  }).then((r) => r.json())
   console.log('[9] GET /agents/:tokenId/persona:', persona.name, 'fromChain =', persona.fromChain, 'owner =', persona.owner)
 
   const ok =

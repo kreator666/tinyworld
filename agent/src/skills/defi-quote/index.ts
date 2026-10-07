@@ -17,8 +17,8 @@ const getAvaxPrice = createTool({
   execute: async () => getAvaxPriceUsd(),
 })
 
-/** get_my_equipment 闭包绑定 tokenId:读链 getEquipped + DIDParts balanceOf */
-function makeGetMyEquipment(tokenId: number) {
+/** get_my_equipment 闭包绑定 chainKey + tokenId:读链 getEquipped + DIDParts balanceOf */
+function makeGetMyEquipment(chainKey: string, tokenId: number) {
   return createTool({
     id: 'get_my_equipment',
     description: '查看自己(当前 Agent)在链上装备了哪些部件、主人持有多少',
@@ -27,13 +27,13 @@ function makeGetMyEquipment(tokenId: number) {
       items: z.array(z.object({ slot: z.number(), collection: z.string(), partId: z.number(), balance: z.number() })),
     }),
     execute: async () => {
-      return { items: await getEquipment(tokenId) }
+      return { items: await getEquipment(chainKey, tokenId) }
     },
   })
 }
 
 /** get_wallet_assets:查钱包在当前链上的资产;不传地址时默认查主人(ownerOf)的钱包 */
-function makeGetWalletAssets(tokenId: number) {
+function makeGetWalletAssets(chainKey: string, tokenId: number) {
   return createTool({
     id: 'get_wallet_assets',
     description:
@@ -52,10 +52,10 @@ function makeGetWalletAssets(tokenId: number) {
     execute: async ({ context }) => {
       let addr = context.address?.trim()
       if (!addr) {
-        addr = (await loadPersona(tokenId)).owner // 默认主人钱包
+        addr = (await loadPersona(chainKey, tokenId)).owner // 默认主人钱包
       }
       if (!isValidAddress(addr)) return Promise.reject(new Error(`地址不合法: ${addr}`))
-      return getWalletAssets(addr, tokenId)
+      return getWalletAssets(chainKey, addr, tokenId)
     },
   })
 }
@@ -70,9 +70,9 @@ export const defiQuote: SkillDef = {
     permissions: [],
     scope: 'owner', // 涉及钱包/资产/行情,仅限主人对话
   },
-  makeTools: (tokenId) => ({
+  makeTools: (chainKey, tokenId) => ({
     get_avax_price: getAvaxPrice,
-    get_my_equipment: makeGetMyEquipment(tokenId),
-    get_wallet_assets: makeGetWalletAssets(tokenId),
+    get_my_equipment: makeGetMyEquipment(chainKey, tokenId),
+    get_wallet_assets: makeGetWalletAssets(chainKey, tokenId),
   }),
 }

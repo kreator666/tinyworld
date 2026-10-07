@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { PGlite } from '@electric-sql/pglite'
 import { vector } from '@electric-sql/pglite-pgvector'
 import { EMBEDDING_DIM } from '../core/embedding'
+import { config } from '../config'
 
 // ============================================================
 // 存储层:PGlite(嵌入式 Postgres + pgvector),数据文件在 agent/data/
@@ -181,11 +182,67 @@ export async function initSchema(): Promise<void> {
     ALTER TABLE approvals ALTER COLUMN token_id TYPE NUMERIC(20,0);
     ALTER TABLE agent_settings ALTER COLUMN token_id TYPE NUMERIC(20,0);
     ALTER TABLE owner_facts ALTER COLUMN token_id TYPE NUMERIC(20,0);
+  `)
 
+  // ============================================================
+  // 多链重构(方案A)迁移:全部 token 表加 chain_key 维度。
+  // 迁移基线 = 启动默认链(TARGET_CHAIN):历史数据都产生自单链时代,回填默认链。
+  // 幂等:加列用 IF NOT EXISTS;主键改造用 DO 块检查,可重复执行。
+  // ============================================================
+  const baseline = config.chainKey
+  const TOKEN_TABLES = [
+    'memories',
+    'agent_skills',
+    'tasks',
+    'conversations',
+    'messages',
+    'social_messages',
+    'approvals',
+    'agent_settings',
+    'owner_facts',
+  ] as const
+  const addCol = TOKEN_TABLES.map(
+    (t) => `ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS chain_key TEXT NOT NULL DEFAULT '${baseline}';`,
+  ).join('\n')
+  await db.exec(`
+    ${addCol}
+
+    -- 唯一性升级:agent_skills / agent_settings 原主键只有 token_id,多链会跨链碰撞。
+    -- PG 不支持改主键,先 drop 再 add(DO 块保证幂等)。
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'agent_skills' AND constraint_name = 'agent_skills_pkey'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.key_column_usage
+        WHERE table_name = 'agent_skills' AND constraint_name = 'agent_skills_pkey' AND column_name = 'chain_key'
+      ) THEN
+        ALTER TABLE agent_skills DROP CONSTRAINT agent_skills_pkey;
+        ALTER TABLE agent_skills ADD PRIMARY KEY (chain_key, token_id, skill_id);
+      END IF;
+    END $$;
+
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'agent_settings' AND constraint_name = 'agent_settings_pkey'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.key_column_usage
+        WHERE table_name = 'agent_settings' AND constraint_name = 'agent_settings_pkey' AND column_name = 'chain_key'
+      ) THEN
+        ALTER TABLE agent_settings DROP CONSTRAINT agent_settings_pkey;
+        ALTER TABLE agent_settings ADD PRIMARY KEY (chain_key, token_id);
+      END IF;
+    END $$;
+  `)
+
+  await db.exec(`
     -- 链上身份镜像(重建种子):GPA 扫描/单户解析成功后落库,测试网重置后据此重建。
     -- 注意:token_id 由随机 mint 派生,重建重铸后会变化,rehydrate 脚本负责回写新值
     CREATE TABLE IF NOT EXISTS chain_identities (
-      token_id NUMERIC(20,0) PRIMARY KEY,
+      token_id NUMERIC(20,0) NOT NULL,
       owner TEXT NOT NULL,
       name TEXT NOT NULL,
       mint TEXT NOT NULL,
@@ -193,8 +250,23 @@ export async function initSchema(): Promise<void> {
       persona_arweave_id TEXT NOT NULL DEFAULT '',
       minted_at BIGINT NOT NULL DEFAULT 0,
       chain_key TEXT NOT NULL DEFAULT '',
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (chain_key, token_id)
     );
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'chain_identities' AND constraint_name = 'chain_identities_pkey'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.key_column_usage
+        WHERE table_name = 'chain_identities' AND constraint_name = 'chain_identities_pkey' AND column_name = 'chain_key'
+      ) THEN
+        ALTER TABLE chain_identities DROP CONSTRAINT chain_identities_pkey;
+        ALTER TABLE chain_identities ADD PRIMARY KEY (chain_key, token_id);
+      END IF;
+    END $$;
+
     CREATE INDEX IF NOT EXISTS chain_identities_owner_idx ON chain_identities (chain_key, owner);
   `)
 }
@@ -250,7 +322,7 @@ export interface ChainIdentityRow {
   chain_key: string
 }
 
-/** 批量 upsert(按 token_id 冲突更新);镜像写失败不允许影响链上读取,调用方自行 catch */
+/** 批量 upsert(按 chain_key + token_id 冲突更新);镜像写失败不允许影响链上读取,调用方自行 catch */
 export async function upsertChainIdentities(rows: ChainIdentityRow[]): Promise<void> {
   if (rows.length === 0) return
   const db = await getDb()
@@ -258,10 +330,10 @@ export async function upsertChainIdentities(rows: ChainIdentityRow[]): Promise<v
     await db.query(
       `INSERT INTO chain_identities (token_id, owner, name, mint, persona_hash, persona_arweave_id, minted_at, chain_key)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (token_id) DO UPDATE SET
+       ON CONFLICT (chain_key, token_id) DO UPDATE SET
          owner = EXCLUDED.owner, name = EXCLUDED.name, mint = EXCLUDED.mint,
          persona_hash = EXCLUDED.persona_hash, persona_arweave_id = EXCLUDED.persona_arweave_id,
-         minted_at = EXCLUDED.minted_at, chain_key = EXCLUDED.chain_key, updated_at = now()`,
+         minted_at = EXCLUDED.minted_at, updated_at = now()`,
       [r.token_id, r.owner, r.name, r.mint, r.persona_hash, r.persona_arweave_id, r.minted_at, r.chain_key],
     )
   }

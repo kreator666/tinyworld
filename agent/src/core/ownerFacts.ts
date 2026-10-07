@@ -33,7 +33,7 @@ export interface AddFactInput {
 }
 
 /** 写入一条主人事实;违反隐私硬规则时抛错(由工具转成 rejected 反馈给 Agent 重写) */
-export async function addOwnerFact(tokenId: number, input: AddFactInput): Promise<OwnerFact> {
+export async function addOwnerFact(chainKey: string, tokenId: number, input: AddFactInput): Promise<OwnerFact> {
   const fact = input.fact.trim()
   if (fact.length < 2 || fact.length > 300) throw new Error('fact 长度需在 2~300 字之间')
   if (!FACT_CATEGORIES.includes(input.category as (typeof FACT_CATEGORIES)[number])) {
@@ -45,8 +45,9 @@ export async function addOwnerFact(tokenId: number, input: AddFactInput): Promis
   }
   const id = randomUUID()
   const db = await getDb()
-  await db.query('INSERT INTO owner_facts (id, token_id, category, fact, sensitivity) VALUES ($1, $2, $3, $4, $5)', [
+  await db.query('INSERT INTO owner_facts (id, chain_key, token_id, category, fact, sensitivity) VALUES ($1, $2, $3, $4, $5, $6)', [
     id,
+    chainKey,
     tokenId,
     input.category,
     fact,
@@ -57,20 +58,22 @@ export async function addOwnerFact(tokenId: number, input: AddFactInput): Promis
 
 /** 列出主人事实;maxSensitivity 控制最高可见级别(social 注入只用 general/coarse) */
 export async function listOwnerFacts(
+  chainKey: string,
   tokenId: number,
   maxSensitivity: FactSensitivity = 'private',
 ): Promise<OwnerFact[]> {
   const rank: Record<FactSensitivity, number> = { general: 0, coarse: 1, private: 2 }
   const db = await getDb()
-  const res = await db.query<OwnerFact>('SELECT * FROM owner_facts WHERE token_id = $1 ORDER BY created_at', [tokenId])
+  const res = await db.query<OwnerFact>('SELECT * FROM owner_facts WHERE chain_key = $1 AND token_id = $2 ORDER BY created_at', [chainKey, tokenId])
   // NUMERIC 返回字符串,收敛回 number(下游只读 id/category/fact/sensitivity,这里保证类型与声明一致)
   return res.rows.filter((r) => rank[r.sensitivity] <= rank[maxSensitivity]).map((r) => ({ ...r, token_id: Number(r.token_id) }))
 }
 
 /** 按 id 前缀或文本模糊匹配删除(主人说"忘掉xxx");返回删除条数 */
-export async function removeOwnerFact(tokenId: number, keyword: string): Promise<number> {
+export async function removeOwnerFact(chainKey: string, tokenId: number, keyword: string): Promise<number> {
   const db = await getDb()
-  const res = await db.query('DELETE FROM owner_facts WHERE token_id = $1 AND (id LIKE $2 OR fact LIKE $3) RETURNING id', [
+  const res = await db.query('DELETE FROM owner_facts WHERE chain_key = $1 AND token_id = $2 AND (id LIKE $3 OR fact LIKE $4) RETURNING id', [
+    chainKey,
     tokenId,
     `${keyword}%`,
     `%${keyword}%`,
@@ -79,8 +82,8 @@ export async function removeOwnerFact(tokenId: number, keyword: string): Promise
 }
 
 /** 社交 prompt 用的主人公开画像(仅 general/coarse);无内容时返回空串 */
-export async function buildShareableProfile(tokenId: number): Promise<string> {
-  const facts = await listOwnerFacts(tokenId, 'coarse')
+export async function buildShareableProfile(chainKey: string, tokenId: number): Promise<string> {
+  const facts = await listOwnerFacts(chainKey, tokenId, 'coarse')
   if (facts.length === 0) return ''
   return facts.map((f) => `- [${f.category}] ${f.fact}`).join('\n')
 }

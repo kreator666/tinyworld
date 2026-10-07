@@ -3,7 +3,8 @@ import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
 import { keccak256, toBytes, type Hex } from 'viem'
 import { config } from './config'
-import { PersonaError, loadPersona, resolveTokenId } from './chain/persona'
+import { PersonaError, loadPersona, ownerOf, resolveTokenId } from './chain/persona'
+import { resolveChainKey, getChainContext } from './chain/registry'
 import { chatWithAgent, invalidateAgent, reloadAgent, type ChatMode } from './core/agent'
 import { clearMemories, distill, getMemoryCounts, listMemories } from './core/memory'
 import {
@@ -67,23 +68,33 @@ app.post('/auth/nonce', async (c) => {
   const address = body?.address?.trim()
   if (!address || !isValidAddress(address)) return c.json({ error: 'address 不合法' }, 400)
   try {
-    const payload = createNonce(address)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const payload = createNonce(chainKey, address)
     return c.json(payload)
   } catch (err) {
     return handleErr(c, err)
   }
 })
 
-// 验证签名消息,签发 JWT(按消息格式自动分派 EVM/Solana 验签;payload 带 chain 字段)
+// 验证签名消息,签发 JWT(按消息格式自动分派 EVM/Solana 验签;payload 带 chain/chainKey 字段)
 app.post('/auth/verify', async (c) => {
   const body = await c.req.json<{ message?: string; signature?: string }>().catch(() => null)
   if (!body?.message || !body?.signature) {
     return c.json({ error: 'message 和 signature 不能为空' }, 400)
   }
   try {
-    const { address, chain } = await verifyLogin({ message: body.message, signature: body.signature })
-    const token = signJwt({ address, chainId: config.chain.chainId, chain })
-    return c.json({ token, address, chainId: config.chain.chainId, chain })
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    // 地址格式必须与链家族匹配:solana 链必须 base58,evm 链必须 0x 地址
+    const { address, chain } = await verifyLogin(chainKey, { message: body.message, signature: body.signature })
+    if (getChainContext(chainKey).family === 'solana' && chain !== 'solana') {
+      return c.json({ error: '地址格式与当前链不匹配(Solana 链必须使用 base58 地址登录)' }, 400)
+    }
+    if (getChainContext(chainKey).family === 'evm' && chain !== 'evm') {
+      return c.json({ error: '地址格式与当前链不匹配(EVM 链必须使用 0x 地址登录)' }, 400)
+    }
+    const chainId = getChainContext(chainKey).cfg.chainId
+    const token = signJwt({ address, chainId, chain, chainKey })
+    return c.json({ token, address, chainId, chain, chainKey })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -139,7 +150,8 @@ app.get('/agents/:tokenId/persona', async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    const persona = await loadPersona(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const persona = await loadPersona(chainKey, tokenId)
     return c.json(persona)
   } catch (err) {
     return handleErr(c, err)
@@ -151,8 +163,9 @@ app.post('/agents/:tokenId/reload', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    await assertAgentOwnership(c, tokenId)
-    const persona = await reloadAgent(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const persona = await reloadAgent(chainKey, tokenId)
     return c.json({ ok: true, persona })
   } catch (err) {
     return handleErr(c, err)
@@ -175,9 +188,10 @@ app.post('/agents/by-owner/:address/chat', authRequired, async (c) => {
   if (!message) return c.json({ error: 'message 不能为空' }, 400)
 
   try {
-    const tokenId = await resolveTokenId(address)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const tokenId = await resolveTokenId(chainKey, address)
     if (tokenId === 0) return c.json({ error: '该地址还没有铸造 Agent,请先去铸造' }, 404)
-    const result = await chatWithAgent(tokenId, message, 'owner')
+    const result = await chatWithAgent(chainKey, tokenId, message, 'owner')
     return c.json({ reply: result.reply, tokenId, refused: result.refused, action: result.action })
   } catch (err) {
     return handleErr(c, err)
@@ -197,26 +211,33 @@ app.post('/agents/:tokenId/chat', authRequired, async (c) => {
     return c.json({ error: 'fromTokenId 不合法' }, 400)
   }
   try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
     const caller = c.get('address')
     // 只有与自己的 Agent 对话时才进入 owner 模式(可操作资产/DeFi);
     // 带有 fromTokenId 且指向他人 Agent 时强制 social 模式(仅聊天)。
     const mode: ChatMode = fromTokenId !== undefined && fromTokenId !== tokenId ? 'social' : 'owner'
 
     if (mode === 'owner') {
-      await assertAgentOwnership(c, tokenId)
+      await assertAgentOwnership(c, chainKey, tokenId)
     } else {
+      // social 模式:校验收件人 tokenId 在当前链上真实存在(暂不支持跨链互动)
+      try {
+        await ownerOf(chainKey, tokenId)
+      } catch {
+        return c.json({ error: '对方 Agent 不在当前链(暂不支持跨链互动)' }, 400)
+      }
       // social 模式:校验 fromTokenId 确实属于调用者,防止伪造发送方
-      const callerTokenId = await resolveTokenId(caller)
+      const callerTokenId = await resolveTokenId(chainKey, caller)
       if (callerTokenId === 0 || callerTokenId !== fromTokenId) {
         return c.json({ error: 'fromTokenId 与登录地址不匹配' }, 403)
       }
     }
 
-    const result = await chatWithAgent(tokenId, message, mode, fromTokenId)
+    const result = await chatWithAgent(chainKey, tokenId, message, mode, fromTokenId)
     // 社交线程:真人消息(fromTokenId→tokenId, kind='user')+ Agent 回复(tokenId→fromTokenId, kind='auto')
     if (fromTokenId !== undefined) {
-      await recordSocialMessage(fromTokenId, tokenId, message, 'user')
-      await recordSocialMessage(tokenId, fromTokenId, result.reply, 'auto')
+      await recordSocialMessage(chainKey, fromTokenId, tokenId, message, 'user')
+      await recordSocialMessage(chainKey, tokenId, fromTokenId, result.reply, 'auto')
     }
     return c.json({ reply: result.reply, tokenId, refused: result.refused, action: result.action })
   } catch (err) {
@@ -235,8 +256,9 @@ app.get('/agents/:tokenId/inbox', authRequired, async (c) => {
   const since = c.req.query('since')
   if (since && Number.isNaN(Date.parse(since))) return c.json({ error: 'since 不是合法时间' }, 400)
   try {
-    await assertAgentOwnership(c, tokenId)
-    const messages = await getInbox(tokenId, since)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const messages = await getInbox(chainKey, tokenId, since)
     return c.json({ messages })
   } catch (err) {
     return handleErr(c, err)
@@ -252,13 +274,14 @@ app.get('/agents/:tokenId/status', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    await assertAgentOwnership(c, tokenId)
-    const addedSkills = await ensureDefaultSkills(tokenId)
-    if (addedSkills.length > 0) invalidateAgent(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const addedSkills = await ensureDefaultSkills(chainKey, tokenId)
+    if (addedSkills.length > 0) invalidateAgent(chainKey, tokenId)
     const [persona, counts, skills] = await Promise.all([
-      loadPersona(tokenId),
-      getMemoryCounts(tokenId),
-      getInstalledSkills(tokenId),
+      loadPersona(chainKey, tokenId),
+      getMemoryCounts(chainKey, tokenId),
+      getInstalledSkills(chainKey, tokenId),
     ])
     return c.json({ tokenId, name: persona.name, personaFromChain: persona.fromChain, ...counts, skills })
   } catch (err) {
@@ -271,8 +294,9 @@ app.get('/agents/:tokenId/stats', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    await assertAgentOwnership(c, tokenId)
-    const stats = await getAgentStats(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const stats = await getAgentStats(chainKey, tokenId)
     return c.json({ tokenId, ...stats })
   } catch (err) {
     return handleErr(c, err)
@@ -289,8 +313,9 @@ app.get('/agents/:tokenId/memories', authRequired, async (c) => {
   }
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 200)
   try {
-    await assertAgentOwnership(c, tokenId)
-    const memories = await listMemories(tokenId, kind, limit)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const memories = await listMemories(chainKey, tokenId, kind, limit)
     return c.json({ tokenId, memories })
   } catch (err) {
     return handleErr(c, err)
@@ -302,8 +327,9 @@ app.delete('/agents/:tokenId/memories', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    await assertAgentOwnership(c, tokenId)
-    const deleted = await clearMemories(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const deleted = await clearMemories(chainKey, tokenId)
     return c.json({ ok: true, deleted })
   } catch (err) {
     return handleErr(c, err)
@@ -315,8 +341,9 @@ app.post('/agents/:tokenId/memories/distill', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    await assertAgentOwnership(c, tokenId)
-    const result = await distill(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const result = await distill(chainKey, tokenId)
     return c.json({ ok: true, ...result })
   } catch (err) {
     return handleErr(c, err)
@@ -328,7 +355,14 @@ app.post('/agents/:tokenId/memories/distill', authRequired, async (c) => {
 // ============================================================
 
 // 全部可安装技能(清单)
-app.get('/skills', (c) => c.json({ skills: listSkills() }))
+app.get('/skills', (c) => {
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    return c.json({ skills: listSkills(chainKey) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
 
 // 安装技能(含链上权限校验;未配置 AGENT_SERVICE_ADDRESS 时跳过校验并注明);仅主人
 app.post('/agents/:tokenId/skills', authRequired, async (c) => {
@@ -338,9 +372,10 @@ app.post('/agents/:tokenId/skills', authRequired, async (c) => {
   const skillId = body?.skillId?.trim()
   if (!skillId) return c.json({ error: 'skillId 不能为空' }, 400)
   try {
-    await assertAgentOwnership(c, tokenId)
-    const { manifest, permissionCheck, note } = await installSkill(tokenId, skillId)
-    invalidateAgent(tokenId) // 工具集变了,下次对话重建 Agent 实例
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const { manifest, permissionCheck, note } = await installSkill(chainKey, tokenId, skillId)
+    invalidateAgent(chainKey, tokenId) // 工具集变了,下次对话重建 Agent 实例
     return c.json({
       ok: true,
       skill: manifest,
@@ -358,10 +393,11 @@ app.delete('/agents/:tokenId/skills/:skillId', authRequired, async (c) => {
   if (tokenId === null) return
   const skillId = c.req.param('skillId')
   try {
-    await assertAgentOwnership(c, tokenId)
-    const removed = await uninstallSkill(tokenId, skillId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const removed = await uninstallSkill(chainKey, tokenId, skillId)
     if (!removed) return c.json({ error: `Agent ${tokenId} 未安装技能 ${skillId}` }, 404)
-    invalidateAgent(tokenId)
+    invalidateAgent(chainKey, tokenId)
     return c.json({ ok: true, skillId })
   } catch (err) {
     return handleErr(c, err)
@@ -377,8 +413,9 @@ app.get('/agents/:tokenId/conversations', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    await assertAgentOwnership(c, tokenId)
-    const conversations = await listConversations(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const conversations = await listConversations(chainKey, tokenId)
     return c.json({ conversations })
   } catch (err) {
     return handleErr(c, err)
@@ -390,8 +427,9 @@ app.post('/agents/:tokenId/conversations', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    await assertAgentOwnership(c, tokenId)
-    const conversation = await createConversation(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const conversation = await createConversation(chainKey, tokenId)
     return c.json({ conversation })
   } catch (err) {
     return handleErr(c, err)
@@ -402,10 +440,11 @@ app.post('/agents/:tokenId/conversations', authRequired, async (c) => {
 app.delete('/conversations/:id', authRequired, async (c) => {
   const id = c.req.param('id')
   try {
-    const conv = await getConversationById(id)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const conv = await getConversationById(chainKey, id)
     if (!conv) return c.json({ error: '会话不存在' }, 404)
-    await assertAgentOwnership(c, conv.tokenId)
-    const removed = await deleteConversation(id)
+    await assertAgentOwnership(c, chainKey, conv.tokenId)
+    const removed = await deleteConversation(chainKey, id)
     if (!removed) return c.json({ error: '会话不存在' }, 404)
     return c.json({ ok: true })
   } catch (err) {
@@ -417,10 +456,11 @@ app.delete('/conversations/:id', authRequired, async (c) => {
 app.get('/conversations/:id/messages', authRequired, async (c) => {
   const id = c.req.param('id')
   try {
-    const conv = await getConversationById(id)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const conv = await getConversationById(chainKey, id)
     if (!conv) return c.json({ error: '会话不存在' }, 404)
-    await assertAgentOwnership(c, conv.tokenId)
-    const messages = await listMessages(id)
+    await assertAgentOwnership(c, chainKey, conv.tokenId)
+    const messages = await listMessages(chainKey, id)
     if (messages === null) return c.json({ error: '会话不存在' }, 404)
     return c.json({ messages })
   } catch (err) {
@@ -435,10 +475,11 @@ app.post('/conversations/:id/chat', authRequired, async (c) => {
   const message = body?.message?.trim()
   if (!message) return c.json({ error: 'message 不能为空' }, 400)
   try {
-    const conv = await getConversationById(id)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const conv = await getConversationById(chainKey, id)
     if (!conv) return c.json({ error: '会话不存在' }, 404)
-    await assertAgentOwnership(c, conv.tokenId)
-    const result = await chatInConversation(conv.tokenId, id, message)
+    await assertAgentOwnership(c, chainKey, conv.tokenId)
+    const result = await chatInConversation(chainKey, conv.tokenId, id, message)
     if (result === null) return c.json({ error: '会话不存在' }, 404)
     return c.json({ reply: result.reply, refused: result.refused, action: result.action })
   } catch (err) {
@@ -455,8 +496,9 @@ app.get('/agents/:tokenId/approvals', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    await assertAgentOwnership(c, tokenId)
-    const approvals = await listApprovals(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const approvals = await listApprovals(chainKey, tokenId)
     return c.json({ approvals })
   } catch (err) {
     return handleErr(c, err)
@@ -467,18 +509,19 @@ app.get('/agents/:tokenId/approvals', authRequired, async (c) => {
 app.post('/approvals/:id/approve', authRequired, async (c) => {
   const id = c.req.param('id')
   try {
-    const approval = await getApproval(id)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const approval = await getApproval(chainKey, id)
     if (!approval) return c.json({ error: '审批单不存在' }, 404)
-    await assertAgentOwnership(c, approval.tokenId)
+    await assertAgentOwnership(c, chainKey, approval.tokenId)
     if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
     try {
       // 按 action 分发:swap 走兑换执行器;supply/withdraw 走借贷执行器
       const { txHash, amountOut } =
         approval.proposal.action === 'swap'
-          ? await executeProposal(approval.tokenId, approval.proposal)
-          : await executeLendingProposal(approval.tokenId, approval.proposal)
+          ? await executeProposal(chainKey, approval.tokenId, approval.proposal)
+          : await executeLendingProposal(chainKey, approval.tokenId, approval.proposal)
       await resolveApproval(id, 'executed', txHash)
-      return c.json({ ok: true, status: 'executed', txHash, amountOut, explorer: `${config.chain.explorer}/tx/${txHash}` })
+      return c.json({ ok: true, status: 'executed', txHash, amountOut, explorer: `${getChainContext(chainKey).cfg.explorer}/tx/${txHash}` })
     } catch (err) {
       // 执行失败(滑点/余额不足/revert):标 failed,保留人工处置痕迹
       await resolveApproval(id, 'failed')
@@ -494,9 +537,10 @@ app.post('/approvals/:id/approve', authRequired, async (c) => {
 app.post('/approvals/:id/reject', authRequired, async (c) => {
   const id = c.req.param('id')
   try {
-    const approval = await getApproval(id)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const approval = await getApproval(chainKey, id)
     if (!approval) return c.json({ error: '审批单不存在' }, 404)
-    await assertAgentOwnership(c, approval.tokenId)
+    await assertAgentOwnership(c, chainKey, approval.tokenId)
     if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
     await resolveApproval(id, 'rejected')
     return c.json({ ok: true, status: 'rejected' })
@@ -514,8 +558,9 @@ app.get('/agents/:tokenId/settings', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
-    await assertAgentOwnership(c, tokenId)
-    const swapMode = await getSwapMode(tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const swapMode = await getSwapMode(chainKey, tokenId)
     return c.json({ tokenId, swapMode })
   } catch (err) {
     return handleErr(c, err)
@@ -531,8 +576,9 @@ app.post('/agents/:tokenId/settings', authRequired, async (c) => {
     return c.json({ error: 'swapMode 必须是 hot_wallet 或 user_wallet' }, 400)
   }
   try {
-    await assertAgentOwnership(c, tokenId)
-    await setSwapMode(tokenId, body.swapMode)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    await setSwapMode(chainKey, tokenId, body.swapMode)
     return c.json({ ok: true, tokenId, swapMode: body.swapMode })
   } catch (err) {
     return handleErr(c, err)
@@ -548,16 +594,17 @@ app.post('/agents/:tokenId/broadcast', authRequired, async (c) => {
     return c.json({ error: 'signedTxs 不能为空数组' }, 400)
   }
   try {
-    await assertAgentOwnership(c, tokenId)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
     const txHashes: Hex[] = []
     for (const signedTx of body.signedTxs) {
-      const hash = await broadcastSignedTx(signedTx as Hex)
+      const hash = await broadcastSignedTx(chainKey, signedTx as Hex)
       txHashes.push(hash)
     }
     return c.json({
       ok: true,
       txHashes,
-      explorer: config.chain.explorer,
+      explorer: getChainContext(chainKey).cfg.explorer,
     })
   } catch (err) {
     return handleErr(c, err)
@@ -581,39 +628,41 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
   }
   const proposal = body.proposal as Proposal
   try {
-    await assertAgentOwnership(c, tokenId)
-    const receipt = await waitForTxReceipt(body.txHash as Hex)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const receipt = await waitForTxReceipt(chainKey, body.txHash as Hex)
     if (receipt.status !== 'success') {
       // revert:记失败任务(不计入限额),主动告知失败
-      await recordDefiTask(tokenId, proposal, { txHash: body.txHash, amountOut: '0', usdValue: null }, 'failed')
-      const notice = describeSwapResult(proposal, { confirmed: false, reverted: true, amountOut: null })
-      if (body.conversationId) await appendAssistantMessage(body.conversationId, notice)
+      await recordDefiTask(chainKey, tokenId, proposal, { txHash: body.txHash, amountOut: '0', usdValue: null }, 'failed')
+      const notice = describeSwapResult(chainKey, proposal, { confirmed: false, reverted: true, amountOut: null })
+      if (body.conversationId) await appendAssistantMessage(chainKey, body.conversationId, notice)
       return c.json({ ok: true, confirmed: false, reverted: true, notice })
     }
     // 仅 swap 需要解析 Swap 事件拿实际输出;supply/withdraw 以提案金额为准
     const parsed = action === 'swap' ? parseSwapAmountOut(receipt) : null
     const amountOut = parsed?.amountOut ?? null
-    await recordDefiTask(tokenId, proposal, {
+    await recordDefiTask(chainKey, tokenId, proposal, {
       txHash: body.txHash,
       amountOut: amountOut?.toString() ?? '0',
       usdValue: proposal.estimatedValueUsd ?? null,
     })
-    const notice = describeSwapResult(proposal, { confirmed: true, reverted: false, amountOut })
-    if (body.conversationId) await appendAssistantMessage(body.conversationId, notice)
+    const notice = describeSwapResult(chainKey, proposal, { confirmed: true, reverted: false, amountOut })
+    if (body.conversationId) await appendAssistantMessage(chainKey, body.conversationId, notice)
     return c.json({
       ok: true,
       confirmed: true,
       amountOut: amountOut?.toString() ?? null,
       notice,
-      explorer: `${config.chain.explorer}/tx/${body.txHash}`,
+      explorer: `${getChainContext(chainKey).cfg.explorer}/tx/${body.txHash}`,
     })
   } catch (err) {
     // 回执超时/链上查询失败:不阻塞前端,记一笔待确认(金额 0),让 Agent 稍后自查
     const msg = err instanceof Error ? err.message : String(err)
     console.warn('[sign-confirm] 回执核实失败,按待确认处理:', msg)
-    await recordDefiTask(tokenId, proposal, { txHash: body.txHash, amountOut: '0', usdValue: proposal.estimatedValueUsd ?? null })
-    const notice = describeSwapResult(proposal, { confirmed: false, reverted: false, amountOut: null })
-    if (body.conversationId) await appendAssistantMessage(body.conversationId, notice)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await recordDefiTask(chainKey, tokenId, proposal, { txHash: body.txHash, amountOut: '0', usdValue: proposal.estimatedValueUsd ?? null })
+    const notice = describeSwapResult(chainKey, proposal, { confirmed: false, reverted: false, amountOut: null })
+    if (body.conversationId) await appendAssistantMessage(chainKey, body.conversationId, notice)
     return c.json({ ok: true, confirmed: false, amountOut: null, notice })
   }
 })
@@ -630,6 +679,10 @@ function handleErr(c: Context, err: unknown) {
     return c.json({ error: err.message }, err.status)
   }
   const msg = err instanceof Error ? err.message : String(err)
+  // 未知链是客户端错误,直接 400
+  if (msg.startsWith('未知链:')) {
+    return c.json({ error: msg }, 400)
+  }
   // viem/网络错误和 LLM 网关错误都按上游故障处理
   if (/fetch|network|timeout|LLM|api|429|5\d\d/i.test(msg)) {
     console.error('[upstream]', msg)

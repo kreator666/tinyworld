@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { formatEther, formatUnits, parseEther, parseUnits, type Address } from 'viem'
-import { config } from '../../config'
 import { getDb } from '../../db'
 import {
   getATokenBalance,
@@ -22,6 +21,7 @@ import {
 } from '../../chain/aave'
 import { buildUnsignedErc20Approve } from '../../chain/defi'
 import { getNativeBalance, getTokenBalance, hasAgentKey } from '../../chain/defi'
+import { getChainContext } from '../../chain/registry'
 import { getAvaxPriceUsd } from '../../core/price'
 import { getSwapMode } from '../../core/settings'
 import { createApproval } from '../../core/approvals'
@@ -43,19 +43,20 @@ import type { SkillDef } from '../registry'
 const USDC_DECIMALS = 6
 
 /** 代币符号 → 地址/USDC/WAVAX/AVAX(原生);无法识别返回 null */
-function resolveToken(symbolOrAddress: string): { address: Address; isNative: boolean } | null {
+function resolveToken(chainKey: string, symbolOrAddress: string): { address: Address; isNative: boolean } | null {
   const s = symbolOrAddress.trim()
   if (/^0x[0-9a-fA-F]{40}$/.test(s)) return { address: s as Address, isNative: false }
-  const { wNative, usdc } = config.chain.defi!
+  const { wNative, usdc } = getChainContext(chainKey).cfg.defi!
   if (['AVAX', 'ETH', 'NATIVE'].includes(s.toUpperCase())) return { address: wNative, isNative: true }
   if (s.toUpperCase() === 'USDC') return { address: usdc, isNative: false }
   if (['WAVAX', 'WETH', 'WNATIVE'].includes(s.toUpperCase())) return { address: wNative, isNative: false }
   return null
 }
 
-function symbolOf(token: { isNative: boolean; address: Address }): string {
-  if (token.isNative) return config.chain.defi!.nativeSymbol
-  return token.address.toLowerCase() === config.chain.defi!.usdc.toLowerCase() ? 'USDC' : 'WAVAX'
+function symbolOf(chainKey: string, token: { isNative: boolean; address: Address }): string {
+  const cfg = getChainContext(chainKey).cfg
+  if (token.isNative) return cfg.defi!.nativeSymbol
+  return token.address.toLowerCase() === cfg.defi!.usdc.toLowerCase() ? 'USDC' : 'WAVAX'
 }
 
 /** 估值:USDC 按 $1;AVAX/WAVAX 按行情价。价格源失败返回 null(熔断信号) */
@@ -72,13 +73,15 @@ async function estimateValueUsd(amount: bigint, isNative: boolean, isUsdc: boole
 
 /** 已执行的借贷操作落 tasks 表(审计 + 策略引擎日累计/冷却的数据源) */
 async function recordLendingTask(
+  chainKey: string,
   tokenId: number,
   proposal: Proposal,
   result: { txHash: string; amount: string; usdValue: number | null },
 ) {
   const db = await getDb()
-  await db.query('INSERT INTO tasks (id, token_id, type, status, payload, result) VALUES ($1, $2, $3, $4, $5, $6)', [
+  await db.query('INSERT INTO tasks (id, chain_key, token_id, type, status, payload, result) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
     randomUUID(),
+    chainKey,
     tokenId,
     'defi',
     'done',
@@ -102,23 +105,25 @@ function recordingProposal(p: Proposal) {
 
 /** supply 提案 */
 async function buildSupplyProposal(
+  chainKey: string,
   token: { address: Address; isNative: boolean },
   amountInHuman: string,
   reason: string,
   executionMode: Proposal['executionMode'],
 ): Promise<Proposal> {
+  const cfg = getChainContext(chainKey).cfg
   const decimals = token.isNative ? 18 : USDC_DECIMALS
   const amount = token.isNative ? parseEther(amountInHuman) : parseUnits(amountInHuman, decimals)
   if (amount <= 0n) throw new Error('amountIn 必须大于 0')
-  const isUsdc = !token.isNative && token.address.toLowerCase() === config.chain.defi!.usdc.toLowerCase()
+  const isUsdc = !token.isNative && token.address.toLowerCase() === cfg.defi!.usdc.toLowerCase()
   return {
     action: 'supply',
-    protocol: config.chain.aave!.pool,
-    chainId: config.chain.chainId,
+    protocol: cfg.aave!.pool,
+    chainId: cfg.chainId,
     executionMode,
     params: {
       tokenIn: token.isNative ? 'native' : token.address,
-      tokenOut: config.chain.defi!.nativeSymbol === 'AVAX' ? 'aToken(WAVAX)' : 'aToken',
+      tokenOut: cfg.defi!.nativeSymbol === 'AVAX' ? 'aToken(WAVAX)' : 'aToken',
       amountIn: amount.toString(),
     },
     estimatedValueUsd: await estimateValueUsd(amount, token.isNative, isUsdc),
@@ -128,19 +133,21 @@ async function buildSupplyProposal(
 
 /** withdraw 提案 */
 async function buildWithdrawProposal(
+  chainKey: string,
   token: { address: Address; isNative: boolean },
   amountInHuman: string,
   reason: string,
   executionMode: Proposal['executionMode'],
 ): Promise<Proposal> {
+  const cfg = getChainContext(chainKey).cfg
   const decimals = token.isNative ? 18 : USDC_DECIMALS
   const amount = token.isNative ? parseEther(amountInHuman) : parseUnits(amountInHuman, decimals)
   if (amount <= 0n) throw new Error('amountIn 必须大于 0')
-  const isUsdc = !token.isNative && token.address.toLowerCase() === config.chain.defi!.usdc.toLowerCase()
+  const isUsdc = !token.isNative && token.address.toLowerCase() === cfg.defi!.usdc.toLowerCase()
   return {
     action: 'withdraw',
-    protocol: config.chain.aave!.pool,
-    chainId: config.chain.chainId,
+    protocol: cfg.aave!.pool,
+    chainId: cfg.chainId,
     executionMode,
     params: {
       tokenIn: token.isNative ? 'native' : token.address,
@@ -154,20 +161,22 @@ async function buildWithdrawProposal(
 
 /** 执行已放行的借贷提案(工具 execute 分支和审批 approve 端点共用) */
 export async function executeLendingProposal(
+  chainKey: string,
   tokenId: number,
   proposal: Proposal,
 ): Promise<{ txHash: string; amountOut: string }> {
+  const cfg = getChainContext(chainKey).cfg
   const isNative = proposal.params.tokenIn === 'native'
-  const asset = (isNative ? config.chain.defi!.wNative : proposal.params.tokenIn) as Address
+  const asset = (isNative ? cfg.defi!.wNative : proposal.params.tokenIn) as Address
   const amount = BigInt(proposal.params.amountIn)
   const result = isNative
     ? proposal.action === 'supply'
-      ? await supplyNative(amount)
-      : await withdrawNative(amount)
+      ? await supplyNative(chainKey, amount)
+      : await withdrawNative(chainKey, amount)
     : proposal.action === 'supply'
-      ? await supplyErc20(asset, amount)
-      : await withdrawErc20(asset, amount)
-  await recordLendingTask(tokenId, proposal, {
+      ? await supplyErc20(chainKey, asset, amount)
+      : await withdrawErc20(chainKey, asset, amount)
+  await recordLendingTask(chainKey, tokenId, proposal, {
     txHash: result.txHash,
     amount: result.delta.toString(),
     usdValue: proposal.estimatedValueUsd,
@@ -176,7 +185,7 @@ export async function executeLendingProposal(
 }
 
 /** propose_supply 工具(存入赚收益) */
-function makeProposeSupply(tokenId: number) {
+function makeProposeSupply(chainKey: string, tokenId: number) {
   return createTool({
     id: 'propose_supply',
     description:
@@ -197,35 +206,36 @@ function makeProposeSupply(tokenId: number) {
       note: z.string().optional(),
     }),
     execute: async ({ context }) => {
-      const token = resolveToken(context.tokenIn)
+      const cfg = getChainContext(chainKey).cfg
+      const token = resolveToken(chainKey, context.tokenIn)
       if (!token) return { verdict: 'rejected', error: `无法识别的币种: ${context.tokenIn}(支持 AVAX/USDC)` }
 
-      const executionMode = await getSwapMode(tokenId)
+      const executionMode = await getSwapMode(chainKey, tokenId)
       const isNative = token.isNative
 
       // 实时 APY 报价(链上只读)
       let reserve: ReserveInfo
       try {
-        reserve = await getReserveInfo(token.address)
+        reserve = await getReserveInfo(chainKey, token.address)
       } catch (err) {
         return { verdict: 'rejected', error: `读取 Aave 储备数据失败: ${err instanceof Error ? err.message : String(err)}` }
       }
-      const symbol = symbolOf(token)
+      const symbol = symbolOf(chainKey, token)
       const decimals = isNative ? 18 : USDC_DECIMALS
       const amount = isNative ? parseEther(context.amountIn) : parseUnits(context.amountIn, decimals)
 
-      const proposal = await buildSupplyProposal(token, context.amountIn, context.reason, executionMode)
-      const { verdict, reasons } = await evaluateProposal(proposal)
+      const proposal = await buildSupplyProposal(chainKey, token, context.amountIn, context.reason, executionMode)
+      const { verdict, reasons } = await evaluateProposal(chainKey, proposal)
       const note = `这笔存款:\n- 存入 ${context.amountIn} ${symbol}\n- 当前 APY 约 ${(reserve.supplyApy * 100).toFixed(2)}%\n- 利息按秒累积,随时可取`
       if (verdict === 'rejected') return { verdict, reasons, note }
 
       // ---- 用户钱包签名模式:组装交易,前端弹钱包签名 ----
       if (executionMode === 'user_wallet') {
-        const persona = await loadPersona(tokenId)
+        const persona = await loadPersona(chainKey, tokenId)
         const user = persona.owner as Address
 
         // 用户余额预检(链上只读,提前给出口径一致的报错)
-        const userBalance = isNative ? await getNativeBalance(user) : await getTokenBalance(token.address, user)
+        const userBalance = isNative ? await getNativeBalance(chainKey, user) : await getTokenBalance(chainKey, token.address, user)
         if (isNative) {
           if (userBalance < amount + parseEther('0.01')) {
             return { verdict: 'rejected', error: `你的 AVAX 不足(需 ${context.amountIn} + gas,当前 ${formatEther(userBalance)})` }
@@ -236,13 +246,13 @@ function makeProposeSupply(tokenId: number) {
 
         const unsignedTxs: UnsignedTx[] = []
         if (isNative) {
-          unsignedTxs.push(buildUnsignedNativeSupply(amount, user))
+          unsignedTxs.push(buildUnsignedNativeSupply(chainKey, amount, user))
         } else {
-          const allowance = await getTokenAllowance(token.address, user, config.chain.aave!.pool)
+          const allowance = await getTokenAllowance(chainKey, token.address, user, cfg.aave!.pool)
           if (allowance < amount) {
-            unsignedTxs.push(buildUnsignedErc20Approve(token.address, config.chain.aave!.pool, amount))
+            unsignedTxs.push(buildUnsignedErc20Approve(chainKey, token.address, cfg.aave!.pool, amount))
           }
-          unsignedTxs.push(buildUnsignedSupply(token.address, amount, user))
+          unsignedTxs.push(buildUnsignedSupply(chainKey, token.address, amount, user))
         }
         proposal.unsignedTxs = unsignedTxs
         const action = {
@@ -251,7 +261,7 @@ function makeProposeSupply(tokenId: number) {
           note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认(${unsignedTxs.length} 笔交易)`,
           proposal: recordingProposal(proposal),
         }
-        setPendingSignAction(tokenId, action)
+        setPendingSignAction(chainKey, tokenId, action)
         return { verdict: 'sign', ...action }
       }
 
@@ -262,7 +272,7 @@ function makeProposeSupply(tokenId: number) {
       const wallet = getLendingWalletAddress()!
 
       // 余额预检(链上只读)
-      const balance = isNative ? await getNativeBalance(wallet) : await getTokenBalance(token.address, wallet)
+      const balance = isNative ? await getNativeBalance(chainKey, wallet) : await getTokenBalance(chainKey, token.address, wallet)
       if (isNative) {
         // 原生币要预留 gas(按 0.01 估算)
         if (balance < amount + parseEther('0.01')) {
@@ -273,23 +283,23 @@ function makeProposeSupply(tokenId: number) {
       }
 
       if (verdict === 'needsApproval') {
-        const approval = await createApproval(tokenId, proposal, context.reason)
+        const approval = await createApproval(chainKey, tokenId, proposal, context.reason)
         return { verdict, reasons, approvalId: approval.id, note: `${note};已生成审批单,等主人确认` }
       }
 
-      const { txHash } = await executeLendingProposal(tokenId, proposal)
+      const { txHash } = await executeLendingProposal(chainKey, tokenId, proposal)
       return {
         verdict,
         txHash,
         apy: reserve.supplyApy,
-        note: `${note};已存入: ${config.chain.explorer}/tx/${txHash}`,
+        note: `${note};已存入: ${cfg.explorer}/tx/${txHash}`,
       }
     },
   })
 }
 
 /** propose_withdraw 工具(取出) */
-function makeProposeWithdraw(tokenId: number) {
+function makeProposeWithdraw(chainKey: string, tokenId: number) {
   return createTool({
     id: 'propose_withdraw',
     description:
@@ -309,24 +319,25 @@ function makeProposeWithdraw(tokenId: number) {
       note: z.string().optional(),
     }),
     execute: async ({ context }) => {
-      const token = resolveToken(context.tokenOut)
+      const cfg = getChainContext(chainKey).cfg
+      const token = resolveToken(chainKey, context.tokenOut)
       if (!token) return { verdict: 'rejected', error: `无法识别的币种: ${context.tokenOut}(支持 AVAX/USDC)` }
 
-      const executionMode = await getSwapMode(tokenId)
+      const executionMode = await getSwapMode(chainKey, tokenId)
       // 用户钱包模式下查用户(owner)的 aToken 余额;热钱包模式查热钱包
-      const reserve = await getReserveInfo(token.address)
+      const reserve = await getReserveInfo(chainKey, token.address)
       const decimals = token.isNative ? 18 : USDC_DECIMALS
       const isNative = token.isNative
-      const symbol = symbolOf(token)
+      const symbol = symbolOf(chainKey, token)
       const actor =
-        executionMode === 'user_wallet' ? ((await loadPersona(tokenId)).owner as Address) : getLendingWalletAddress()
+        executionMode === 'user_wallet' ? ((await loadPersona(chainKey, tokenId)).owner as Address) : getLendingWalletAddress()
 
       if (executionMode !== 'user_wallet' && !hasAgentKey()) {
         return { verdict: 'rejected', error: '未配置执行密钥(AGENT_PRIVATE_KEY),无法执行取出' }
       }
       if (!actor) return { verdict: 'rejected', error: '未配置执行密钥(AGENT_PRIVATE_KEY)' }
 
-      const supplied = await getATokenBalance(reserve.aToken, actor)
+      const supplied = await getATokenBalance(chainKey, reserve.aToken, actor)
       if (supplied === 0n) {
         return { verdict: 'rejected', error: `${executionMode === 'user_wallet' ? '你' : '热钱包'}没有 ${symbol} 存款` }
       }
@@ -344,8 +355,8 @@ function makeProposeWithdraw(tokenId: number) {
       }
       const amountHuman = formatUnits(amount, decimals)
 
-      const proposal = await buildWithdrawProposal(token, amountHuman, context.reason, executionMode)
-      const { verdict, reasons } = await evaluateProposal(proposal)
+      const proposal = await buildWithdrawProposal(chainKey, token, amountHuman, context.reason, executionMode)
+      const { verdict, reasons } = await evaluateProposal(chainKey, proposal)
       const note = `将取回 ≈${amountHuman} ${symbol}(含已累积利息)`
       if (verdict === 'rejected') return { verdict, reasons, note }
 
@@ -354,14 +365,14 @@ function makeProposeWithdraw(tokenId: number) {
         const unsignedTxs: UnsignedTx[] = []
         if (isNative) {
           // 网关 withdrawETH 会 transferFrom 用户的 aToken,需先 approve aToken→网关
-          const allowance = await getTokenAllowance(reserve.aToken, actor, NATIVE_GATEWAY)
+          const allowance = await getTokenAllowance(chainKey, reserve.aToken, actor, NATIVE_GATEWAY)
           if (allowance < amount) {
-            unsignedTxs.push(buildUnsignedErc20Approve(reserve.aToken, NATIVE_GATEWAY, amount))
+            unsignedTxs.push(buildUnsignedErc20Approve(chainKey, reserve.aToken, NATIVE_GATEWAY, amount))
           }
-          unsignedTxs.push(buildUnsignedNativeWithdraw(amount, actor))
+          unsignedTxs.push(buildUnsignedNativeWithdraw(chainKey, amount, actor))
         } else {
           // ERC20 直接 pool.withdraw,烧的是调用者的 aToken,无需授权
-          unsignedTxs.push(buildUnsignedWithdraw(token.address, amount, actor))
+          unsignedTxs.push(buildUnsignedWithdraw(chainKey, token.address, amount, actor))
         }
         proposal.unsignedTxs = unsignedTxs
         const action = {
@@ -370,24 +381,24 @@ function makeProposeWithdraw(tokenId: number) {
           note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认(${unsignedTxs.length} 笔交易)`,
           proposal: recordingProposal(proposal),
         }
-        setPendingSignAction(tokenId, action)
+        setPendingSignAction(chainKey, tokenId, action)
         return { verdict: 'sign', ...action }
       }
 
       // ---- 热钱包自动模式 ----
       if (verdict === 'needsApproval') {
-        const approval = await createApproval(tokenId, proposal, context.reason)
+        const approval = await createApproval(chainKey, tokenId, proposal, context.reason)
         return { verdict, reasons, approvalId: approval.id, note: `${note};已生成审批单,等主人确认` }
       }
 
-      const { txHash } = await executeLendingProposal(tokenId, proposal)
-      return { verdict, txHash, amountOut: amountHuman, note: `${note};已取回: ${config.chain.explorer}/tx/${txHash}` }
+      const { txHash } = await executeLendingProposal(chainKey, tokenId, proposal)
+      return { verdict, txHash, amountOut: amountHuman, note: `${note};已取回: ${cfg.explorer}/tx/${txHash}` }
     },
   })
 }
 
 /** get_lending_position 只读查询:当前存款 + 实时 APY(不经过策略引擎) */
-function makeGetPosition(tokenId: number) {
+function makeGetPosition(chainKey: string, tokenId: number) {
   return createTool({
     id: 'get_lending_position',
     description: '查询热钱包在 Aave 的存款仓位:各币种的存款数量与实时供给 APY。只读,不产生交易。',
@@ -406,19 +417,20 @@ function makeGetPosition(tokenId: number) {
     }),
     execute: async () => {
       try {
+        const cfg = getChainContext(chainKey).cfg
         // 跟随兑换执行模式:user_wallet 查主人钱包仓位,hot_wallet 查热钱包
-        const mode = await getSwapMode(tokenId)
+        const mode = await getSwapMode(chainKey, tokenId)
         const wallet =
-          mode === 'user_wallet' ? ((await loadPersona(tokenId)).owner as Address) : getLendingWalletAddress()
+          mode === 'user_wallet' ? ((await loadPersona(chainKey, tokenId)).owner as Address) : getLendingWalletAddress()
         if (!wallet) return { positions: [], total: 0, error: '未配置执行密钥(AGENT_PRIVATE_KEY)' }
         const targets = [
-          { symbol: config.chain.defi!.nativeSymbol, address: config.chain.defi!.wNative, decimals: 18 },
-          { symbol: 'USDC', address: config.chain.defi!.usdc, decimals: USDC_DECIMALS },
+          { symbol: cfg.defi!.nativeSymbol, address: cfg.defi!.wNative, decimals: 18 },
+          { symbol: 'USDC', address: cfg.defi!.usdc, decimals: USDC_DECIMALS },
         ].filter((t) => t.address !== '0x0000000000000000000000000000000000000000')
         const positions = []
         for (const t of targets) {
-          const reserve = await getReserveInfo(t.address)
-          const supplied = await getATokenBalance(reserve.aToken, wallet)
+          const reserve = await getReserveInfo(chainKey, t.address)
+          const supplied = await getATokenBalance(chainKey, reserve.aToken, wallet)
           positions.push({
             symbol: t.symbol,
             supplied: formatUnits(supplied, t.decimals),
@@ -446,9 +458,9 @@ export const defiLending: SkillDef = {
     scope: 'owner', // 资产操作,仅限主人对话
     evmOnly: true, // 依赖 Aave v3(EVM),Solana 下不可安装
   },
-  makeTools: (tokenId) => ({
-    propose_supply: makeProposeSupply(tokenId),
-    propose_withdraw: makeProposeWithdraw(tokenId),
-    get_lending_position: makeGetPosition(tokenId),
+  makeTools: (chainKey, tokenId) => ({
+    propose_supply: makeProposeSupply(chainKey, tokenId),
+    propose_withdraw: makeProposeWithdraw(chainKey, tokenId),
+    get_lending_position: makeGetPosition(chainKey, tokenId),
   }),
 }

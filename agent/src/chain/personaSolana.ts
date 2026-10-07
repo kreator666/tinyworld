@@ -8,6 +8,7 @@ import {
 } from '@solana/web3.js'
 import { config } from '../config'
 import { initSchema, listChainIdentities, upsertChainIdentities, type ChainIdentityRow } from '../db'
+import { getChainContext } from './registry'
 import { base58Decode, base58Encode } from '../core/base58'
 import { readPersonaMirror } from '../core/personaMirror'
 import idl from '../idl/tinyworld.json'
@@ -16,6 +17,7 @@ import {
   PersonaError,
   defaultAIProfile,
   personaCache,
+  personaCacheKey,
   parseVerifiedPersona,
   stripDataPrefix,
   type AgentSummary,
@@ -37,12 +39,16 @@ import {
 // Token-2022 程序地址(装备/身份代币;余额解析按基础账户布局,扩展字段在 165 字节之后)
 const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
 
-// 程序地址 lazy 解析:persona.ts 在 EVM 链下也会 import 本模块,
-// 模块级 new PublicKey(0x 地址)会把整个进程打崩,必须在首次 Solana 调用时才解析
-let programIdSingleton: PublicKey | null = null
-function programId(): PublicKey {
-  if (!programIdSingleton) programIdSingleton = new PublicKey(config.chain.identityAddress)
-  return programIdSingleton
+// 程序地址/连接按链分桶(多链重构):同一进程可能同时服务多条 Solana 链,
+// 懒解析懒连接,key = chainKey
+const programIds = new Map<string, PublicKey>()
+function programId(chainKey: string): PublicKey {
+  let pk = programIds.get(chainKey)
+  if (!pk) {
+    pk = new PublicKey(getChainContext(chainKey).cfg.identityAddress)
+    programIds.set(chainKey, pk)
+  }
+  return pk
 }
 
 // 账户 discriminator 取自 IDL(= sha256("account:<Name>") 前 8 字节,anchor 约定)
@@ -117,13 +123,15 @@ export class FailoverConnection {
   }
 }
 
-let connectionSingleton: FailoverConnection | null = null
-function connection(): FailoverConnection {
-  if (!connectionSingleton) {
-    const endpoints = [config.chain.rpc, ...(config.chain.rpcFallbacks ?? [])]
-    connectionSingleton = new FailoverConnection(endpoints)
+const connections = new Map<string, FailoverConnection>()
+function connection(chainKey: string): FailoverConnection {
+  let conn = connections.get(chainKey)
+  if (!conn) {
+    const { rpc, rpcFallbacks } = getChainContext(chainKey).cfg
+    conn = new FailoverConnection([rpc, ...(rpcFallbacks ?? [])])
+    connections.set(chainKey, conn)
   }
-  return connectionSingleton
+  return conn
 }
 
 // ------------------------------------------------------------
@@ -215,7 +223,7 @@ interface IdentityEntry {
 // 镜像写失败只告警,不影响链上读取。
 // ------------------------------------------------------------
 
-function mirrorRowsFromEntries(entries: IdentityEntry[]): ChainIdentityRow[] {
+function mirrorRowsFromEntries(chainKey: string, entries: IdentityEntry[]): ChainIdentityRow[] {
   return entries.map((e) => ({
     token_id: String(tokenIdFromMint(e.account.mint)),
     owner: e.account.owner,
@@ -224,36 +232,36 @@ function mirrorRowsFromEntries(entries: IdentityEntry[]): ChainIdentityRow[] {
     persona_hash: e.account.personaHash,
     persona_arweave_id: e.account.personaArweaveId,
     minted_at: e.account.mintedAt,
-    chain_key: config.chainKey,
+    chain_key: chainKey,
   }))
 }
 
 let mirrorSchemaReady = false
 
-async function mirrorIdentities(entries: IdentityEntry[]): Promise<void> {
+async function mirrorIdentities(chainKey: string, entries: IdentityEntry[]): Promise<void> {
   try {
     // 冒烟/脚本场景不会走服务启动的 initSchema,这里兜底一次(幂等)
     if (!mirrorSchemaReady) {
       await initSchema()
       mirrorSchemaReady = true
     }
-    await upsertChainIdentities(mirrorRowsFromEntries(entries))
+    await upsertChainIdentities(mirrorRowsFromEntries(chainKey, entries))
   } catch (e) {
     console.warn('[persona-solana] 身份镜像写入失败(不影响读取):', e)
   }
 }
 
 /** 镜像行 → IdentityEntry;equipped 链上未读,降级场景按空槽处理(装备读取需链上可用) */
-async function entriesFromMirror(): Promise<IdentityEntry[]> {
+async function entriesFromMirror(chainKey: string): Promise<IdentityEntry[]> {
   if (!mirrorSchemaReady) {
     await initSchema()
     mirrorSchemaReady = true
   }
-  const rows = await listChainIdentities(config.chainKey)
+  const rows = await listChainIdentities(chainKey)
   return rows.map((r) => ({
     pubkey: PublicKey.findProgramAddressSync(
       [Buffer.from('identity'), new PublicKey(r.owner).toBuffer()],
-      programId(),
+      programId(chainKey),
     )[0],
     account: {
       owner: r.owner,
@@ -267,53 +275,56 @@ async function entriesFromMirror(): Promise<IdentityEntry[]> {
   }))
 }
 
-let identityScanCache: { at: number; entries: IdentityEntry[] } | null = null
+// GPA 扫描缓存按链分桶(多链重构)
+const identityScanCaches = new Map<string, { at: number; entries: IdentityEntry[] }>()
 const SCAN_TTL_MS = 15_000
 
-async function fetchAllIdentities(force = false): Promise<IdentityEntry[]> {
-  if (!force && identityScanCache && Date.now() - identityScanCache.at < SCAN_TTL_MS) {
-    return identityScanCache.entries
+async function fetchAllIdentities(chainKey: string, force = false): Promise<IdentityEntry[]> {
+  const cached = identityScanCaches.get(chainKey)
+  if (!force && cached && Date.now() - cached.at < SCAN_TTL_MS) {
+    return cached.entries
   }
   try {
-    const res = await connection().getProgramAccounts(programId(), {
+    const res = await connection(chainKey).getProgramAccounts(programId(chainKey), {
       filters: [{ memcmp: { offset: 0, bytes: base58Encode(IDENTITY_DISC) } }],
     })
     const entries = res.map((r) => ({ pubkey: r.pubkey, account: decodeIdentity(r.account.data) }))
-    identityScanCache = { at: Date.now(), entries }
-    await mirrorIdentities(entries)
+    identityScanCaches.set(chainKey, { at: Date.now(), entries })
+    await mirrorIdentities(chainKey, entries)
     return entries
   } catch (e) {
     // GPA 失败(官方 RPC 不可达 + 备用节点不支持索引类方法):回退 DB 镜像
-    const mirrored = await entriesFromMirror()
+    const mirrored = await entriesFromMirror(chainKey)
     if (mirrored.length > 0) {
-      console.warn(`[persona-solana] GPA 失败(${String(e).slice(0, 80)}),回退 DB 镜像(${mirrored.length} 条,可能滞后)`)
-      identityScanCache = { at: Date.now(), entries: mirrored }
+      console.warn(`[persona-solana] ${chainKey} GPA 失败(${String(e).slice(0, 80)}),回退 DB 镜像(${mirrored.length} 条,可能滞后)`)
+      identityScanCaches.set(chainKey, { at: Date.now(), entries: mirrored })
       return mirrored
     }
     throw e
   }
 }
 
-async function findIdentityByTokenId(tokenId: number): Promise<IdentityEntry | null> {
-  const entries = await fetchAllIdentities()
+async function findIdentityByTokenId(chainKey: string, tokenId: number): Promise<IdentityEntry | null> {
+  const entries = await fetchAllIdentities(chainKey)
   const hit = entries.find((e) => tokenIdFromMint(e.account.mint) === tokenId)
   if (hit) return hit
   // TTL 缓存可能刚被新铸造的 Identity 绕过:未命中时强制重扫一次再下结论
-  const fresh = await fetchAllIdentities(true)
+  const fresh = await fetchAllIdentities(chainKey, true)
   return fresh.find((e) => tokenIdFromMint(e.account.mint) === tokenId) ?? null
 }
 
-let partScanCache: { at: number; parts: PartConfigAccount[] } | null = null
+const partScanCaches = new Map<string, { at: number; parts: PartConfigAccount[] }>()
 
-async function fetchAllPartConfigs(force = false): Promise<PartConfigAccount[]> {
-  if (!force && partScanCache && Date.now() - partScanCache.at < SCAN_TTL_MS) {
-    return partScanCache.parts
+async function fetchAllPartConfigs(chainKey: string, force = false): Promise<PartConfigAccount[]> {
+  const cached = partScanCaches.get(chainKey)
+  if (!force && cached && Date.now() - cached.at < SCAN_TTL_MS) {
+    return cached.parts
   }
-  const res = await connection().getProgramAccounts(programId(), {
+  const res = await connection(chainKey).getProgramAccounts(programId(chainKey), {
     filters: [{ memcmp: { offset: 0, bytes: base58Encode(PART_CONFIG_DISC) } }],
   })
   const parts = res.map((r) => decodePartConfig(r.account.data))
-  partScanCache = { at: Date.now(), parts }
+  partScanCaches.set(chainKey, { at: Date.now(), parts })
   return parts
 }
 
@@ -328,13 +339,13 @@ function normalizeArweaveId(raw: string): string | null {
 }
 
 // ------------------------------------------------------------
-// 公开接口(与 persona.ts 完全一致的签名与语义)
+// 公开接口(与 persona.ts 完全一致的签名与语义;多链重构:首参 chainKey)
 // ------------------------------------------------------------
 
-export { PERMISSION_SOCIAL, PersonaError, defaultAIProfile, personaCache }
+export { PERMISSION_SOCIAL, PersonaError, defaultAIProfile, personaCache, personaCacheKey }
 export type { AgentSummary, EquipmentItem, LoadedPersona, WalletAssets }
 
-/** base58 地址校验(32~44 位 base58 且能解析为 32 字节公钥) */
+/** base58 地址校验(32~44 位 base58 且能解析为 32 字节公钥;链无关) */
 export function isValidSolanaAddress(address: string): boolean {
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return false
   try {
@@ -346,33 +357,33 @@ export function isValidSolanaAddress(address: string): boolean {
 }
 
 /** 地址 → tokenId;未铸造(无 Identity PDA)返回 0(与 EVM 合约约定一致) */
-export async function resolveTokenId(owner: string): Promise<number> {
+export async function resolveTokenId(chainKey: string, owner: string): Promise<number> {
   const ownerPk = new PublicKey(owner) // 非法地址直接抛
-  const [identityPda] = PublicKey.findProgramAddressSync([Buffer.from('identity'), ownerPk.toBuffer()], programId())
-  const info = await connection().getAccountInfo(identityPda)
+  const [identityPda] = PublicKey.findProgramAddressSync([Buffer.from('identity'), ownerPk.toBuffer()], programId(chainKey))
+  const info = await connection(chainKey).getAccountInfo(identityPda)
   if (!info) return 0
   const account = decodeIdentity(info.data)
-  await mirrorIdentities([{ pubkey: identityPda, account }]) // 增量镜像:新铸造无需等全表扫
+  await mirrorIdentities(chainKey, [{ pubkey: identityPda, account }]) // 增量镜像:新铸造无需等全表扫
   return tokenIdFromMint(account.mint)
 }
 
 /** tokenId → owner 地址(GPA 扫 Identity 匹配 mint 前 8 字节;未来换索引器) */
-export async function ownerOf(tokenId: number): Promise<string> {
-  const hit = await findIdentityByTokenId(tokenId)
-  if (!hit) throw new Error(`链上不存在 tokenId=${tokenId} 的 Agent`)
+export async function ownerOf(chainKey: string, tokenId: number): Promise<string> {
+  const hit = await findIdentityByTokenId(chainKey, tokenId)
+  if (!hit) throw new Error(`[${chainKey}] 链上不存在 tokenId=${tokenId} 的 Agent`)
   return hit.account.owner
 }
 
 /** 链上 agentPermissions[tokenId][agent] 位掩码(无 AgentPermission PDA 返回 0n) */
-export async function getAgentPermissions(tokenId: number, agentAddr: string): Promise<bigint> {
-  const hit = await findIdentityByTokenId(tokenId)
+export async function getAgentPermissions(chainKey: string, tokenId: number, agentAddr: string): Promise<bigint> {
+  const hit = await findIdentityByTokenId(chainKey, tokenId)
   if (!hit) return 0n
   const agentPk = new PublicKey(agentAddr)
   const [permPda] = PublicKey.findProgramAddressSync(
     [Buffer.from('agent-permission'), hit.pubkey.toBuffer(), agentPk.toBuffer()],
-    programId(),
+    programId(chainKey),
   )
-  const info = await connection().getAccountInfo(permPda)
+  const info = await connection(chainKey).getAccountInfo(permPda)
   if (!info) return 0n
   // 布局:disc(8) identity(32) agent(32) permissions(u8) bump(u8)
   return BigInt(info.data[72])
@@ -385,9 +396,9 @@ export async function getAgentPermissions(tokenId: number, agentAddr: string): P
  * 镜像缺失时以 persona_arweave_id(ar:// 或 43 位 txid)从 https://arweave.net/<txid> 兜底;
  * 两者都拿不到:hash 全 0 → 默认人格兜底,否则抛 PersonaError(人格数据丢失)。
  */
-export async function fetchPersonaFromChain(tokenId: number): Promise<LoadedPersona> {
-  const hit = await findIdentityByTokenId(tokenId)
-  if (!hit) throw new Error(`链上不存在 tokenId=${tokenId} 的 Agent`)
+export async function fetchPersonaFromChain(chainKey: string, tokenId: number): Promise<LoadedPersona> {
+  const hit = await findIdentityByTokenId(chainKey, tokenId)
+  if (!hit) throw new Error(`[${chainKey}] 链上不存在 tokenId=${tokenId} 的 Agent`)
   const { name, owner, personaHash, personaArweaveId } = hit.account
 
   if (isZeroHash(personaHash)) {
@@ -415,40 +426,41 @@ export async function fetchPersonaFromChain(tokenId: number): Promise<LoadedPers
   return { tokenId, name, owner, profile, fromChain: true, contentHash: personaHash }
 }
 
-/** 人格缓存:每个 tokenId 只装载一次,reload 接口强制刷新(与 EVM 侧共用语义) */
-export async function loadPersona(tokenId: number, force = false): Promise<LoadedPersona> {
+/** 人格缓存:每个 (链, tokenId) 只装载一次,reload 接口强制刷新(与 EVM 侧共用语义) */
+export async function loadPersona(chainKey: string, tokenId: number, force = false): Promise<LoadedPersona> {
+  const cacheKey = personaCacheKey(chainKey, tokenId)
   if (!force) {
-    const cached = personaCache.get(tokenId)
+    const cached = personaCache.get(cacheKey)
     if (cached) return cached
   }
-  const persona = await fetchPersonaFromChain(tokenId)
-  personaCache.set(tokenId, persona)
+  const persona = await fetchPersonaFromChain(chainKey, tokenId)
+  personaCache.set(cacheKey, persona)
   return persona
 }
 
-export function getCachedPersona(tokenId: number): LoadedPersona | undefined {
-  return personaCache.get(tokenId)
+export function getCachedPersona(chainKey: string, tokenId: number): LoadedPersona | undefined {
+  return personaCache.get(personaCacheKey(chainKey, tokenId))
 }
 
 /** 列出全部已铸造的 Agent(心跳调度器每轮枚举用),按铸造时间(≈tokenId)升序 */
-export async function listMintedAgents(): Promise<AgentSummary[]> {
-  const entries = await fetchAllIdentities()
+export async function listMintedAgents(chainKey: string): Promise<AgentSummary[]> {
+  const entries = await fetchAllIdentities(chainKey)
   return entries
     .sort((a, b) => a.account.mintedAt - b.account.mintedAt)
     .map((e) => ({ tokenId: tokenIdFromMint(e.account.mint), name: e.account.name, owner: e.account.owner, bio: '' }))
 }
 
 /** 列出最新铸造的 N 个 Agent(social-greeter 的 list_new_agents 用),按铸造时间倒序 */
-export async function listRecentAgents(limit = 5): Promise<AgentSummary[]> {
-  const all = await listMintedAgents()
+export async function listRecentAgents(chainKey: string, limit = 5): Promise<AgentSummary[]> {
+  const all = await listMintedAgents(chainKey)
   return all.slice(-limit).reverse()
 }
 
 /** 读链上装备(Identity.equipped)并概述主人持有量(Token-2022 账户余额) */
-export async function getEquipment(tokenId: number): Promise<EquipmentItem[]> {
-  const hit = await findIdentityByTokenId(tokenId)
-  if (!hit) throw new Error(`链上不存在 tokenId=${tokenId} 的 Agent`)
-  const parts = await fetchAllPartConfigs()
+export async function getEquipment(chainKey: string, tokenId: number): Promise<EquipmentItem[]> {
+  const hit = await findIdentityByTokenId(chainKey, tokenId)
+  if (!hit) throw new Error(`[${chainKey}] 链上不存在 tokenId=${tokenId} 的 Agent`)
+  const parts = await fetchAllPartConfigs(chainKey)
   const result: EquipmentItem[] = []
   for (let slot = 0; slot < hit.account.equipped.length; slot++) {
     const partMint = hit.account.equipped[slot]
@@ -457,15 +469,15 @@ export async function getEquipment(tokenId: number): Promise<EquipmentItem[]> {
     // PartConfig 没有 name 字段,装备名前端按 part_id 对本地静态目录,对不上显示 Part #<id>;
     // 找不到 PartConfig(异常数据)时 partId 记 0
     const partId = part ? part.partId : 0
-    const balance = await ownerPartBalance(hit.account.owner, partMint)
+    const balance = await ownerPartBalance(chainKey, hit.account.owner, partMint)
     result.push({ slot, collection: partMint, partId, balance })
   }
   return result
 }
 
 /** 主人在 Token-2022 上某 part mint 的持有量(遍历主人的 token 账户求和;装备在 escrow 时不计入) */
-async function ownerPartBalance(owner: string, mint: string): Promise<number> {
-  const accounts = await connection().getTokenAccountsByOwner(new PublicKey(owner), {
+async function ownerPartBalance(chainKey: string, owner: string, mint: string): Promise<number> {
+  const accounts = await connection(chainKey).getTokenAccountsByOwner(new PublicKey(owner), {
     programId: TOKEN_2022_PROGRAM_ID,
     mint: new PublicKey(mint),
   })
@@ -478,9 +490,9 @@ async function ownerPartBalance(owner: string, mint: string): Promise<number> {
 }
 
 /** 钱包资产:SOL 原生余额(lamports→SOL)+ USDC/USDT 暂留 0(Solana 阶段未接 SPL 稳定币) + DID 装备 */
-export async function getWalletAssets(address: string, tokenId: number): Promise<WalletAssets> {
-  const lamports = await connection().getBalance(new PublicKey(address))
-  const equipment = await getEquipment(tokenId)
+export async function getWalletAssets(chainKey: string, address: string, tokenId: number): Promise<WalletAssets> {
+  const lamports = await connection(chainKey).getBalance(new PublicKey(address))
+  const equipment = await getEquipment(chainKey, tokenId)
   return {
     address,
     nativeBalance: (lamports / 1e9).toString(),

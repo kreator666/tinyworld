@@ -78,10 +78,10 @@ async function main() {
   const put = await fetch(`${AGENT}/personas/${hash}`, { method: 'PUT', body: persona })
   console.log('[2] PUT 镜像:', put.status)
 
-  // 通过本地函数读链(tokenId 由链上解析)
+  // 通过本地函数读链(tokenId 由链上解析;本脚本固定 solana-testnet)
   const { resolveTokenId, loadPersona } = await import('../src/chain/persona')
-  const tokenId = await resolveTokenId(me.publicKey.toBase58())
-  const p = await loadPersona(tokenId, true)
+  const tokenId = await resolveTokenId('solana-testnet', me.publicKey.toBase58())
+  const p = await loadPersona('solana-testnet', tokenId, true)
   console.log('[3] loadPersona: name =', p.name, 'fromChain =', p.fromChain, 'contentHash =', p.contentHash)
   console.log('    profile.template =', p.profile.template, 'personality =', p.profile.personality)
   const ok = p.fromChain === true && p.contentHash === hash && p.profile.template === '活泼'

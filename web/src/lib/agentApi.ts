@@ -2,8 +2,14 @@
 // base 可用 VITE_AGENT_API 覆盖,默认本地 dev 端口 4111
 
 import { useAppStore } from '../store/appStore'
+import { getActiveChain } from '../store/chainConfigStore'
 
 const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? ''
+
+/** 当前激活链标识:所有请求带 X-Chain-Key 头,agent 服务按链分派(多链重构) */
+function chainHeaders(): Record<string, string> {
+  return { 'X-Chain-Key': getActiveChain().key }
+}
 
 /** agent 服务 base 地址(供其他模块拼接 URL,如 Solana 人格镜像) */
 export function agentApiBase(): string {
@@ -19,7 +25,7 @@ export function agentApiBase(): string {
 export async function putPersonaMirror(contentHash: string, json: string): Promise<void> {
   const res = await fetch(`${AGENT_API}/personas/${contentHash}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...chainHeaders() },
     body: json,
   })
   if (!res.ok) throw new Error(`人格镜像保存失败(${res.status})`)
@@ -27,7 +33,7 @@ export async function putPersonaMirror(contentHash: string, json: string): Promi
 
 /** 读取人格镜像 JSON 原文;404 返回 null(按"未设置人格"处理) */
 export async function getPersonaMirror(contentHash: string): Promise<string | null> {
-  const res = await fetch(`${AGENT_API}/personas/${contentHash}`)
+  const res = await fetch(`${AGENT_API}/personas/${contentHash}`, { headers: chainHeaders() })
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`人格镜像读取失败(${res.status})`)
   return res.text()
@@ -50,7 +56,7 @@ interface VerifyResponse {
 export async function requestNonce(address: string): Promise<NonceResponse> {
   const res = await fetch(`${AGENT_API}/auth/nonce`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...chainHeaders() },
     body: JSON.stringify({ address }),
   })
   const data = (await res.json().catch(() => null)) as (NonceResponse & { error?: string }) | null
@@ -63,7 +69,7 @@ export async function requestNonce(address: string): Promise<NonceResponse> {
 export async function verifyAgentLogin(message: string, signature: string): Promise<VerifyResponse> {
   const res = await fetch(`${AGENT_API}/auth/verify`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...chainHeaders() },
     body: JSON.stringify({ message, signature }),
   })
   const data = (await res.json().catch(() => null)) as (VerifyResponse & { error?: string }) | null
@@ -74,7 +80,7 @@ export async function verifyAgentLogin(message: string, signature: string): Prom
 
 function authHeaders(headers?: HeadersInit): Record<string, string> {
   const token = useAppStore.getState().agentToken
-  const base: Record<string, string> = {}
+  const base: Record<string, string> = { ...chainHeaders() }
   if (headers instanceof Headers) {
     headers.forEach((value, key) => {
       base[key] = value

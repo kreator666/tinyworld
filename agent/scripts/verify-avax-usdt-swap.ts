@@ -9,7 +9,8 @@ const USDT = config.chain.defi.usdt
 const amountIn = parseEther('0.001') // 0.001 AVAX(热钱包余额 ~0.002,留 gas)
 const amountInHuman = '0.001'
 
-const quoted = await quoteSwap(amountIn, USDT)
+const CHAIN = config.chainKey // 跟随 TARGET_CHAIN(本脚本预期 fuji)
+const quoted = await quoteSwap(CHAIN, amountIn, USDT)
 console.log(`报价: ${amountInHuman} AVAX -> ${formatUnits(quoted, 6)} USDT`)
 
 const proposal: Proposal = {
@@ -26,17 +27,17 @@ const proposal: Proposal = {
   estimatedValueUsd: 0.08, // 测试网 AVAX 约 $8,0.01 AVAX ≈ $0.08
   reason: '端到端验证 AVAX/USDT 流动性接入',
 }
-const verdict = await evaluateProposal(proposal)
+const verdict = await evaluateProposal(CHAIN, proposal)
 console.log(`策略引擎判定: ${verdict.verdict} ${verdict.reasons.join('; ')}`)
 if (verdict.verdict === 'rejected') throw new Error('策略引擎拒绝,终止')
 
 const wallet = getAgentWalletAddress()
 console.log(`热钱包: ${wallet}`)
-const before = await getTokenBalance(USDT, wallet!)
+const before = await getTokenBalance(CHAIN, USDT, wallet!)
 console.log(`兑换前 USDT 余额: ${formatUnits(before, 6)}`)
 
-const r = await executeSwap(amountIn, BigInt(proposal.params.amountOutMin!), USDT)
-const after = await getTokenBalance(USDT, wallet!)
+const r = await executeSwap(CHAIN, amountIn, BigInt(proposal.params.amountOutMin!), USDT)
+const after = await getTokenBalance(CHAIN, USDT, wallet!)
 console.log(`tx: ${config.chain.explorer}/tx/${r.txHash}`)
 console.log(`链上回报 amountOut: ${formatUnits(r.amountOut, 6)} USDT`)
 console.log(`余额差核实: ${formatUnits(after - before, 6)} USDT`)

@@ -11,22 +11,25 @@ import type { SkillDef } from '../registry'
 // 发现新铸造的 Agent 并起草打招呼文案——M2 只产草稿,真实发送是 M3 的事
 // ============================================================
 
-const listNewAgents = createTool({
-  id: 'list_new_agents',
-  description: '列出链上最新铸造的 Agent(编号、名字、主人地址),用于发现新朋友',
-  inputSchema: z.object({
-    limit: z.number().int().min(1).max(20).default(5).describe('返回几个最新的 Agent'),
-  }),
-  outputSchema: z.object({
-    agents: z.array(z.object({ tokenId: z.number(), name: z.string(), owner: z.string() })),
-  }),
-  execute: async ({ context }) => {
-    return { agents: await listRecentAgents(context.limit) }
-  },
-})
+/** list_new_agents 闭包绑定 chainKey:列当前链最新铸造的 Agent */
+function makeListNewAgents(chainKey: string) {
+  return createTool({
+    id: 'list_new_agents',
+    description: '列出链上最新铸造的 Agent(编号、名字、主人地址),用于发现新朋友',
+    inputSchema: z.object({
+      limit: z.number().int().min(1).max(20).default(5).describe('返回几个最新的 Agent'),
+    }),
+    outputSchema: z.object({
+      agents: z.array(z.object({ tokenId: z.number(), name: z.string(), owner: z.string() })),
+    }),
+    execute: async ({ context }) => {
+      return { agents: await listRecentAgents(chainKey, context.limit) }
+    },
+  })
+}
 
-/** draft_greeting 闭包绑定 tokenId:按当前人格生成草稿,并把触发记录写 tasks 表 */
-function makeDraftGreeting(tokenId: number) {
+/** draft_greeting 闭包绑定 chainKey + tokenId:按当前人格生成草稿,并把触发记录写 tasks 表 */
+function makeDraftGreeting(chainKey: string, tokenId: number) {
   return createTool({
     id: 'draft_greeting',
     description: '为指定的 Agent 起草一段打招呼文案(只生成草稿,不会真实发送)',
@@ -35,7 +38,7 @@ function makeDraftGreeting(tokenId: number) {
     }),
     outputSchema: z.object({ draft: z.string() }),
     execute: async ({ context }) => {
-      const persona = await loadPersona(tokenId)
+      const persona = await loadPersona(chainKey, tokenId)
       const { profile } = persona
       const draft = await complete(
         [
@@ -47,8 +50,9 @@ function makeDraftGreeting(tokenId: number) {
 
       // 触发记录落 tasks 表(审计,设计文档 §11.4)
       const db = await getDb()
-      await db.query('INSERT INTO tasks (id, token_id, type, status, payload, result) VALUES ($1, $2, $3, $4, $5, $6)', [
+      await db.query('INSERT INTO tasks (id, chain_key, token_id, type, status, payload, result) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
         randomUUID(),
+        chainKey,
         tokenId,
         'social',
         'drafted',
@@ -70,8 +74,8 @@ export const socialGreeter: SkillDef = {
     permissions: ['social'],
     scope: 'all', // 主人对话中也可让 Agent 探索广场,社交对话中更是核心能力
   },
-  makeTools: (tokenId) => ({
-    list_new_agents: listNewAgents,
-    draft_greeting: makeDraftGreeting(tokenId),
+  makeTools: (chainKey, tokenId) => ({
+    list_new_agents: makeListNewAgents(chainKey),
+    draft_greeting: makeDraftGreeting(chainKey, tokenId),
   }),
 }

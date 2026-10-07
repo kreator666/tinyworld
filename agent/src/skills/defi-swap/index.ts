@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { formatEther, formatUnits, parseEther, parseUnits, type Address } from 'viem'
-import { config } from '../../config'
 import { getDb } from '../../db'
 import {
   broadcastSignedTx,
@@ -17,6 +16,7 @@ import {
   quoteSwap,
   type UnsignedTx,
 } from '../../chain/defi'
+import { getChainContext } from '../../chain/registry'
 import { getAvaxPriceUsd } from '../../core/price'
 import { createApproval } from '../../core/approvals'
 import { evaluateProposal, type Proposal } from '../../policy/engine'
@@ -48,10 +48,10 @@ function isNativeSymbol(s: string): boolean {
 }
 
 /** 代币符号 → 地址(USDC / USDT / WAVAX / WETH / 0x 地址原样);未配置的币种返回 null */
-function resolveToken(symbolOrAddress: string): Address | null {
+function resolveToken(chainKey: string, symbolOrAddress: string): Address | null {
   const s = symbolOrAddress.trim()
   if (/^0x[0-9a-fA-F]{40}$/.test(s)) return s as Address
-  const { wNative, usdc, usdt } = config.chain.defi!
+  const { wNative, usdc, usdt } = getChainContext(chainKey).cfg.defi!
   if (s.toUpperCase() === 'USDC') return usdc === ZERO_ADDRESS ? null : usdc
   if (s.toUpperCase() === 'USDT') return usdt === ZERO_ADDRESS ? null : usdt
   if (['WAVAX', 'WETH', 'WNATIVE'].includes(s.toUpperCase())) return wNative
@@ -59,12 +59,12 @@ function resolveToken(symbolOrAddress: string): Address | null {
 }
 
 /** 白名单代币地址 → 显示符号(未知地址截断显示) */
-export function tokenSymbolOf(address: Address): string {
-  const { usdc, usdt, wNative } = config.chain.defi!
+export function tokenSymbolOf(chainKey: string, address: Address): string {
+  const { usdc, usdt, wNative } = getChainContext(chainKey).cfg.defi!
   const a = address.toLowerCase()
   if (a === usdc.toLowerCase()) return 'USDC'
   if (a === usdt.toLowerCase()) return 'USDT'
-  if (a === wNative.toLowerCase()) return config.chain.defi!.nativeSymbol
+  if (a === wNative.toLowerCase()) return getChainContext(chainKey).cfg.defi!.nativeSymbol
   return `${address.slice(0, 8)}…`
 }
 
@@ -81,14 +81,16 @@ async function estimateValueUsd(amountIn: bigint, nativeIn: boolean): Promise<nu
 
 /** 已执行的 defi 交易落 tasks 表(审计 + 策略引擎日累计/冷却的数据源);status 支持 done/failed */
 export async function recordDefiTask(
+  chainKey: string,
   tokenId: number,
   proposal: Proposal,
   result: { txHash: string; amountOut: string; usdValue: number | null },
   status: 'done' | 'failed' = 'done',
 ) {
   const db = await getDb()
-  await db.query('INSERT INTO tasks (id, token_id, type, status, payload, result) VALUES ($1, $2, $3, $4, $5, $6)', [
+  await db.query('INSERT INTO tasks (id, chain_key, token_id, type, status, payload, result) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
     randomUUID(),
+    chainKey,
     tokenId,
     'defi',
     status,
@@ -99,12 +101,14 @@ export async function recordDefiTask(
 
 /** 人类可读的交易结果描述(签名确认后主动告知主人用;覆盖 swap 与 supply/withdraw) */
 export function describeSwapResult(
+  chainKey: string,
   proposal: Proposal,
   r: { confirmed: boolean; reverted: boolean; amountOut: bigint | null },
 ): string {
+  const cfg = getChainContext(chainKey).cfg
   const { action, params } = proposal
   const inIsNative = params.tokenIn === 'native'
-  const inSymbol = inIsNative ? config.chain.defi!.nativeSymbol : tokenSymbolOf(params.tokenIn as Address)
+  const inSymbol = inIsNative ? cfg.defi!.nativeSymbol : tokenSymbolOf(chainKey, params.tokenIn as Address)
   const inDecimals = inIsNative ? 18 : STABLE_DECIMALS
   const amountInHuman = formatUnits(BigInt(params.amountIn), inDecimals)
 
@@ -121,7 +125,7 @@ export function describeSwapResult(
   }
 
   // swap:按方向还原符号
-  const outSymbol = inIsNative ? tokenSymbolOf(params.tokenOut as Address) : config.chain.defi!.nativeSymbol
+  const outSymbol = inIsNative ? tokenSymbolOf(chainKey, params.tokenOut as Address) : cfg.defi!.nativeSymbol
   const outDecimals = inIsNative ? STABLE_DECIMALS : 18
   if (r.reverted) {
     return `刚才那笔兑换没能成交:${amountInHuman} ${inSymbol} → ${outSymbol} 的交易在链上执行失败(revert)。资金还在你的钱包里,没有动。要我重新组装一笔吗?`
@@ -151,6 +155,7 @@ function recordingProposal(p: Proposal) {
  * 发交易 → 等回执 → 余额核实 → 写 tasks 表
  */
 export async function executeProposal(
+  chainKey: string,
   tokenId: number,
   proposal: Proposal,
 ): Promise<{ txHash: string; amountOut: string }> {
@@ -159,15 +164,15 @@ export async function executeProposal(
   let result: { txHash: string; amountOut: bigint }
   if (tokenIn === 'native') {
     // 热钱包自有资金:原生币 → 代币
-    const r = await executeSwap(BigInt(amountIn), BigInt(amountOutMin), tokenOut as Address)
+    const r = await executeSwap(chainKey, BigInt(amountIn), BigInt(amountOutMin), tokenOut as Address)
     result = { txHash: r.txHash, amountOut: r.amountOut }
   } else {
     // 用户资金:代币 → 原生币(transferFrom + approve + swap,热钱包代执行)
     if (!owner) throw new Error('提案缺少 owner(用户资金路径)')
-    const r = await executeUserSwap(owner as Address, tokenIn as Address, BigInt(amountIn), BigInt(amountOutMin))
+    const r = await executeUserSwap(chainKey, owner as Address, tokenIn as Address, BigInt(amountIn), BigInt(amountOutMin))
     result = { txHash: r.txHash, amountOut: r.amountOut }
   }
-  await recordDefiTask(tokenId, proposal, {
+  await recordDefiTask(chainKey, tokenId, proposal, {
     txHash: result.txHash,
     amountOut: result.amountOut.toString(),
     usdValue: proposal.estimatedValueUsd,
@@ -177,18 +182,20 @@ export async function executeProposal(
 
 /** 原生币 → 代币提案 */
 async function buildNativeProposal(
+  chainKey: string,
   amountInHuman: string,
   tokenOut: Address,
   reason: string,
   executionMode: Proposal['executionMode'],
 ): Promise<Proposal> {
+  const cfg = getChainContext(chainKey).cfg
   const amountIn = parseEther(amountInHuman)
   if (amountIn <= 0n) throw new Error('amountIn 必须大于 0')
-  const quoted = await quoteSwap(amountIn, tokenOut) // path: [wNative, tokenOut]
+  const quoted = await quoteSwap(chainKey, amountIn, tokenOut) // path: [wNative, tokenOut]
   return {
     action: 'swap',
-    protocol: config.chain.defi!.router,
-    chainId: config.chain.chainId,
+    protocol: cfg.defi!.router,
+    chainId: cfg.chainId,
     executionMode,
     params: {
       tokenIn: 'native',
@@ -203,19 +210,21 @@ async function buildNativeProposal(
 
 /** 代币(USDC/USDT)→ 原生币提案;owner 为主人地址 */
 async function buildUserProposal(
+  chainKey: string,
   amountInHuman: string,
   tokenIn: Address,
   owner: Address,
   reason: string,
   executionMode: Proposal['executionMode'],
 ): Promise<Proposal> {
+  const cfg = getChainContext(chainKey).cfg
   const amountIn = parseUnits(amountInHuman, STABLE_DECIMALS)
   if (amountIn <= 0n) throw new Error('amountIn 必须大于 0')
-  const quoted = await quoteSwap(amountIn, tokenIn, true) // path: [tokenIn, wNative]
+  const quoted = await quoteSwap(chainKey, amountIn, tokenIn, true) // path: [tokenIn, wNative]
   return {
     action: 'swap',
-    protocol: config.chain.defi!.router,
-    chainId: config.chain.chainId,
+    protocol: cfg.defi!.router,
+    chainId: cfg.chainId,
     executionMode,
     params: {
       tokenIn,
@@ -229,8 +238,8 @@ async function buildUserProposal(
   }
 }
 
-/** propose_swap 闭包绑定 tokenId:提案 → 策略引擎 → 执行 / 转审批 / 签名 / 拒绝 */
-function makeProposeSwap(tokenId: number) {
+/** propose_swap 闭包绑定 chainKey + tokenId:提案 → 策略引擎 → 执行 / 转审批 / 签名 / 拒绝 */
+function makeProposeSwap(chainKey: string, tokenId: number) {
   return createTool({
     id: 'propose_swap',
     description:
@@ -272,21 +281,22 @@ function makeProposeSwap(tokenId: number) {
         return { verdict: 'rejected', error: '只支持 原生币↔代币 的兑换(AVAX→USDC/USDT 或 USDC/USDT→AVAX)' }
       }
 
-      const executionMode = context.executionMode ?? (await getSwapMode(tokenId))
+      const executionMode = context.executionMode ?? (await getSwapMode(chainKey, tokenId))
 
       if (nativeIn) {
         // ---- 原生币 → 代币(AVAX → USDC/USDT) ----
-        const tokenOut = resolveToken(context.tokenOut)
+        const tokenOut = resolveToken(chainKey, context.tokenOut)
         if (!tokenOut) return { verdict: 'rejected', error: `无法识别的 tokenOut: ${context.tokenOut}` }
-        const proposal = await buildNativeProposal(context.amountIn, tokenOut, context.reason, executionMode)
-        const { verdict, reasons } = await evaluateProposal(proposal)
+        const proposal = await buildNativeProposal(chainKey, context.amountIn, tokenOut, context.reason, executionMode)
+        const { verdict, reasons } = await evaluateProposal(chainKey, proposal)
         const quotedOut = formatUnits(BigInt(proposal.params.amountOutMin!), STABLE_DECIMALS)
-        const note = `约可换得 ≥${quotedOut} ${tokenSymbolOf(tokenOut)}(估值 $${proposal.estimatedValueUsd?.toFixed(4) ?? '未知'})`
+        const note = `约可换得 ≥${quotedOut} ${tokenSymbolOf(chainKey, tokenOut)}(估值 $${proposal.estimatedValueUsd?.toFixed(4) ?? '未知'})`
         if (verdict === 'rejected') return { verdict, reasons, note }
 
         if (executionMode === 'user_wallet') {
-          const user = proposal.params.owner ? (proposal.params.owner as Address) : ((await loadPersona(tokenId)).owner as Address)
+          const user = proposal.params.owner ? (proposal.params.owner as Address) : ((await loadPersona(chainKey, tokenId)).owner as Address)
           const unsignedTx = buildUnsignedNativeToTokenSwap(
+            chainKey,
             user,
             BigInt(proposal.params.amountIn),
             BigInt(proposal.params.amountOutMin!),
@@ -299,7 +309,7 @@ function makeProposeSwap(tokenId: number) {
             note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认`,
             proposal: recordingProposal(proposal),
           }
-          setPendingSignAction(tokenId, action)
+          setPendingSignAction(chainKey, tokenId, action)
           return { verdict: 'sign', ...action }
         }
 
@@ -308,34 +318,34 @@ function makeProposeSwap(tokenId: number) {
           return { verdict: 'rejected', error: '未配置执行密钥(AGENT_PRIVATE_KEY),无法使用热钱包模式执行兑换' }
         }
         if (verdict === 'needsApproval') {
-          const approval = await createApproval(tokenId, proposal, context.reason)
+          const approval = await createApproval(chainKey, tokenId, proposal, context.reason)
           return { verdict, reasons, approvalId: approval.id, note: `${note};已生成审批单,等主人确认` }
         }
-        const { txHash, amountOut } = await executeProposal(tokenId, proposal)
-        return { verdict, txHash, amountOut, note: `${note};已执行: ${config.chain.explorer}/tx/${txHash}` }
+        const { txHash, amountOut } = await executeProposal(chainKey, tokenId, proposal)
+        return { verdict, txHash, amountOut, note: `${note};已执行: ${getChainContext(chainKey).cfg.explorer}/tx/${txHash}` }
       }
 
       // ---- 代币 → 原生币(USDC/USDT → AVAX) ----
-      const tokenIn = resolveToken(context.tokenIn)
+      const tokenIn = resolveToken(chainKey, context.tokenIn)
       if (!tokenIn) return { verdict: 'rejected', error: `无法识别的 tokenIn: ${context.tokenIn}` }
-      const persona = await loadPersona(tokenId)
+      const persona = await loadPersona(chainKey, tokenId)
       const owner = persona.owner as Address
-      const proposal = await buildUserProposal(context.amountIn, tokenIn, owner, context.reason, executionMode)
-      const { verdict, reasons } = await evaluateProposal(proposal)
+      const proposal = await buildUserProposal(chainKey, context.amountIn, tokenIn, owner, context.reason, executionMode)
+      const { verdict, reasons } = await evaluateProposal(chainKey, proposal)
       const quotedOut = formatEther(BigInt(proposal.params.amountOutMin!))
       const note = `约可换得 ≥${quotedOut} AVAX(估值 $${proposal.estimatedValueUsd?.toFixed(4) ?? '未知'})`
       if (verdict === 'rejected') return { verdict, reasons, note }
 
       if (executionMode === 'user_wallet') {
         const unsignedTxs: UnsignedTx[] = []
-        const router = config.chain.defi!.router
+        const router = getChainContext(chainKey).cfg.defi!.router
         // 用户钱包模式下,用户直接授权 router,不需要先 approve 热钱包
-        const allowanceToRouter = await getAllowance(tokenIn, owner, router)
+        const allowanceToRouter = await getAllowance(chainKey, tokenIn, owner, router)
         if (allowanceToRouter < BigInt(proposal.params.amountIn)) {
-          unsignedTxs.push(buildUnsignedErc20Approve(tokenIn, router, BigInt(proposal.params.amountIn)))
+          unsignedTxs.push(buildUnsignedErc20Approve(chainKey, tokenIn, router, BigInt(proposal.params.amountIn)))
         }
         unsignedTxs.push(
-          buildUnsignedTokenToNativeSwap(owner, tokenIn, BigInt(proposal.params.amountIn), BigInt(proposal.params.amountOutMin!)),
+          buildUnsignedTokenToNativeSwap(chainKey, owner, tokenIn, BigInt(proposal.params.amountIn), BigInt(proposal.params.amountOutMin!)),
         )
         proposal.unsignedTxs = unsignedTxs
         const action = {
@@ -344,7 +354,7 @@ function makeProposeSwap(tokenId: number) {
           note: `${note};请点击聊天区下方的【签名并发送】按钮,在钱包中确认(${unsignedTxs.length} 笔交易)`,
           proposal: recordingProposal(proposal),
         }
-        setPendingSignAction(tokenId, action)
+        setPendingSignAction(chainKey, tokenId, action)
         return { verdict: 'sign', ...action }
       }
 
@@ -353,9 +363,9 @@ function makeProposeSwap(tokenId: number) {
         return { verdict: 'rejected', error: '未配置执行密钥(AGENT_PRIVATE_KEY),无法使用热钱包模式执行兑换' }
       }
       const hotWallet = getAgentWalletAddress()
-      const allowance = await getAllowance(tokenIn, owner, hotWallet as Address)
+      const allowance = await getAllowance(chainKey, tokenIn, owner, hotWallet as Address)
       if (allowance < BigInt(proposal.params.amountIn)) {
-        const inSymbol = tokenSymbolOf(tokenIn)
+        const inSymbol = tokenSymbolOf(chainKey, tokenIn)
         proposal.signatureRequest = {
           type: 'erc20_approve',
           token: tokenIn,
@@ -364,7 +374,7 @@ function makeProposeSwap(tokenId: number) {
           amount: proposal.params.amountIn,
           decimals: STABLE_DECIMALS,
         }
-        const approval = await createApproval(tokenId, proposal, context.reason)
+        const approval = await createApproval(chainKey, tokenId, proposal, context.reason)
         return {
           verdict: 'needsApproval',
           reasons: [...reasons, `用户对热钱包的 ${inSymbol} 授权额度不足,需主人钱包完成 approve 签名`],
@@ -374,11 +384,11 @@ function makeProposeSwap(tokenId: number) {
         }
       }
       if (verdict === 'needsApproval') {
-        const approval = await createApproval(tokenId, proposal, context.reason)
+        const approval = await createApproval(chainKey, tokenId, proposal, context.reason)
         return { verdict, reasons, approvalId: approval.id, note: `${note};已生成审批单,等主人确认` }
       }
-      const { txHash, amountOut } = await executeProposal(tokenId, proposal)
-      return { verdict, txHash, amountOut, note: `${note};已执行: ${config.chain.explorer}/tx/${txHash}` }
+      const { txHash, amountOut } = await executeProposal(chainKey, tokenId, proposal)
+      return { verdict, txHash, amountOut, note: `${note};已执行: ${getChainContext(chainKey).cfg.explorer}/tx/${txHash}` }
     },
   })
 }
@@ -394,8 +404,8 @@ export const defiSwap: SkillDef = {
     scope: 'owner', // 资产操作,仅限主人对话
     evmOnly: true, // 依赖 EVM Router/ERC-20,Solana 下不可安装
   },
-  makeTools: (tokenId) => ({
-    propose_swap: makeProposeSwap(tokenId),
+  makeTools: (chainKey, tokenId) => ({
+    propose_swap: makeProposeSwap(chainKey, tokenId),
   }),
 }
 
