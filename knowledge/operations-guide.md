@@ -278,3 +278,16 @@ npm run down       # 停止并移除
 
 注意：PM2 在 Windows 不能 spawn `npm`（.cmd 会被当 JS 解析崩溃），pm2.config.cjs
 里统一用 node 直跑 tsx / vite CLI。临时手动跑仍可用 start.bat / start.sh。
+
+## 11. 多链架构(方案A,2026-10-07 起)
+
+- **单进程多链**:agent 服务按请求的 `X-Chain-Key` 头分派链(空 → TARGET_CHAIN 默认链)。
+  链目录 = `config.ts ALL_CHAINS`,同时服务 sepolia/fuji/solana-testnet。
+- **DB**:所有 token 表带 `chain_key` 维度(复合主键),迁移基线 = 启动默认链;
+  `initSchema()` 幂等自动迁移,部署只需 git pull + npm install + pm2 restart。
+- **鉴权**:JWT payload 带 chainKey,请求链与登录链不一致 → 401;nonce 按链隔离。
+- **社交**:本期不支持跨链互动(发送前校验收件人在当前链,否则 400);前端切链有提示文案。
+- **心跳**:逐链轮询(每 300s 一轮遍历全部链),单链失败不影响其他链。
+- **加新链**:config.ts 的 ALL_CHAINS 加条目(EVM 需 defi/aave 配置)→ 重启即生效,
+  无需迁移。
+- 新链加入后前端自动跟随(GET /chains 已带 family)。
