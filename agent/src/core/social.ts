@@ -135,7 +135,7 @@ function cleanOneLiner(text: string): string {
 export async function generateGreeting(chainKey: string, fromTokenId: number, toName: string): Promise<string> {
   const persona = await loadPersona(chainKey, fromTokenId)
   const text = await complete(
-    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social', await buildShareableProfile(chainKey, fromTokenId), getChainContext(chainKey).cfg.name),
+    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social', await buildShareableProfile(chainKey, fromTokenId), chainKey),
     `你在广场上注意到一个叫「${toName}」的 Agent,以你的人设主动跟他打个招呼。一两句话,简短自然,提到他的名字。`,
     0.9,
   )
@@ -146,7 +146,7 @@ export async function generateGreeting(chainKey: string, fromTokenId: number, to
 export async function generateReply(chainKey: string, tokenId: number, fromName: string, content: string): Promise<string> {
   const persona = await loadPersona(chainKey, tokenId)
   const text = await complete(
-    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social', await buildShareableProfile(chainKey, tokenId), getChainContext(chainKey).cfg.name),
+    buildInstructions(persona.profile, persona.name, { owner: persona.owner, tokenId: persona.tokenId }, 'social', await buildShareableProfile(chainKey, tokenId), chainKey),
     `「${fromName}」对你说:"${content}"。以你的人设回复他,一两句话,简短自然。`,
     0.9,
   )

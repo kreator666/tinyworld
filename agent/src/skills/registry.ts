@@ -27,6 +27,8 @@ export interface SkillManifest {
   scope?: 'social' | 'owner' | 'all'
   /** 仅 EVM 家族链可用(Solana 下从清单/默认安装/工具集里隐藏,如 defi-swap/defi-lending) */
   evmOnly?: boolean
+  /** 仅 Solana 家族链可用,且要求该链已配置 Jupiter API(如 defi-swap-sol) */
+  solanaOnly?: boolean
 }
 
 export interface SkillDef {
@@ -50,9 +52,12 @@ export function registerSkill(def: SkillDef): void {
   builtins.set(def.manifest.id, def)
 }
 
-/** 技能在指定链家族是否可用(evmOnly 技能在 Solana 下不可用) */
+/** 技能在指定链家族是否可用(evmOnly 技能在 Solana 下不可用;solanaOnly 技能要求 Solana 链且已配置 Jupiter API) */
 export function isSkillAvailable(chainKey: string, manifest: SkillManifest): boolean {
-  return !manifest.evmOnly || getChainContext(chainKey).family === 'evm'
+  const ctx = getChainContext(chainKey)
+  if (manifest.evmOnly && ctx.family !== 'evm') return false
+  if (manifest.solanaOnly) return ctx.family === 'solana' && Boolean(ctx.cfg.solana?.jupiterApiUrl)
+  return true
 }
 
 /** 全部可安装技能(清单);Solana 链下隐藏 evmOnly 技能 */
@@ -119,6 +124,12 @@ export async function getInstalledSkills(chainKey: string, tokenId: number): Pro
   return res.rows
 }
 
+/** 已安装技能的 manifest 列表(含 description,供系统提示词生成能力摘要用;未匹配内置技能的跳过) */
+export async function getInstalledManifests(chainKey: string, tokenId: number): Promise<SkillManifest[]> {
+  const installed = await getInstalledSkills(chainKey, tokenId)
+  return installed.map((s) => builtins.get(s.id)?.manifest).filter((m): m is SkillManifest => Boolean(m))
+}
+
 export interface InstallResult {
   manifest: SkillManifest
   // passed = 链上权限校验通过;skipped = 跳过校验(原因见 note);none = 无需权限
@@ -131,7 +142,7 @@ export async function installSkill(chainKey: string, tokenId: number, skillId: s
   const def = builtins.get(skillId)
   if (!def) throw new SkillError(`未知技能: ${skillId}`)
   if (!isSkillAvailable(chainKey, def.manifest)) {
-    throw new SkillError(`技能 ${skillId} 仅在 EVM 链可用,当前链 ${getChainContext(chainKey).cfg.name} 不支持`, 400)
+    throw new SkillError(`技能 ${skillId} 在当前链 ${getChainContext(chainKey).cfg.name} 不可用(链家族或链配置不满足技能要求)`, 400)
   }
 
   let permissionCheck: InstallResult['permissionCheck'] = 'none'

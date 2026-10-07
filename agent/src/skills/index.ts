@@ -2,6 +2,7 @@ import { registerSkill } from './registry'
 import { socialGreeter } from './social-greeter'
 import { defiQuote } from './defi-quote'
 import { defiSwap } from './defi-swap'
+import { defiSwapSol } from './defi-swap-solana'
 import { defiLending } from './defi-lending'
 import { ownerTuning } from './owner-tuning'
 
@@ -9,6 +10,7 @@ import { ownerTuning } from './owner-tuning'
 registerSkill(socialGreeter)
 registerSkill(defiQuote)
 registerSkill(defiSwap)
+registerSkill(defiSwapSol)
 registerSkill(defiLending)
 registerSkill(ownerTuning)
 

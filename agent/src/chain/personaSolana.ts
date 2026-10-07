@@ -121,6 +121,16 @@ export class FailoverConnection {
   getBalance(publicKey: PublicKey): Promise<number> {
     return this.withFailover((c) => c.getBalance(publicKey))
   }
+
+  // 写路径(Jupiter 兑换发送交易):网络类错误重试是安全的——
+  // 同一笔已签名交易按签名去重,重复提交不会产生第二笔扣款
+  sendRawTransaction(raw: Uint8Array): Promise<string> {
+    return this.withFailover((c) => c.sendRawTransaction(raw))
+  }
+
+  confirmTransaction(signature: string): Promise<void> {
+    return this.withFailover((c) => c.confirmTransaction(signature, 'confirmed')).then(() => undefined)
+  }
 }
 
 const connections = new Map<string, FailoverConnection>()
@@ -132,6 +142,11 @@ function connection(chainKey: string): FailoverConnection {
     connections.set(chainKey, conn)
   }
   return conn
+}
+
+/** 写路径(如 Jupiter 兑换)按 chainKey 取故障转移连接;读路径仍走上面的私有 connection */
+export function solanaConnection(chainKey: string): FailoverConnection {
+  return connection(chainKey)
 }
 
 // ------------------------------------------------------------
@@ -475,30 +490,55 @@ export async function getEquipment(chainKey: string, tokenId: number): Promise<E
   return result
 }
 
-/** 主人在 Token-2022 上某 part mint 的持有量(遍历主人的 token 账户求和;装备在 escrow 时不计入) */
+/** 主人在某 part mint 的持有量(按 mint 过滤,Token-2022 与经典 SPL 账户都命中;装备在 escrow 时不计入) */
 async function ownerPartBalance(chainKey: string, owner: string, mint: string): Promise<number> {
+  // 注意:getTokenAccountsByOwner 的 filter 只能是 mint 或 programId 二选一,
+  // 同时传两个会报 "Token mint could not be unpacked";按 mint 过滤天然跨两种代币程序
   const accounts = await connection(chainKey).getTokenAccountsByOwner(new PublicKey(owner), {
-    programId: TOKEN_2022_PROGRAM_ID,
     mint: new PublicKey(mint),
   })
   let total = 0
   for (const { account } of accounts.value) {
-    // Token-2022 账户基础布局与 SPL Token 一致:amount 在偏移 64(u64le);扩展字段在其后
+    // 代币账户基础布局一致:amount 在偏移 64(u64le);Token-2022 扩展字段在其后
     total += Number(account.data.readBigUInt64LE(64))
   }
   return total
 }
 
-/** 钱包资产:SOL 原生余额(lamports→SOL)+ USDC/USDT 暂留 0(Solana 阶段未接 SPL 稳定币) + DID 装备 */
+/** 主人在指定 mint 的代币余额:按 mint 过滤(跨 Token-2022/经典 SPL),按基础布局偏移 64(u64le)求和,6 位小数 */
+async function stablecoinBalance(chainKey: string, owner: string, mint: string): Promise<number> {
+  if (!mint) return 0
+  try {
+    const accounts = await connection(chainKey).getTokenAccountsByOwner(new PublicKey(owner), {
+      mint: new PublicKey(mint),
+    })
+    let total = 0n
+    for (const { account } of accounts.value) {
+      total += account.data.readBigUInt64LE(64)
+    }
+    return Number(total) / 1e6
+  } catch (e) {
+    // mint 在该链不存在/不是合法 mint 时 RPC 会拒绝过滤条件,按余额 0 处理(不影响 SOL 与装备)
+    console.warn(`[persona-solana] ${chainKey} 稳定币余额查询失败(mint ${mint}):`, String(e).slice(0, 100))
+    return 0
+  }
+}
+
+/** 钱包资产:SOL 原生余额 + USDC/USDT(Token-2022/经典 SPL 账户)+ DID 装备 */
 export async function getWalletAssets(chainKey: string, address: string, tokenId: number): Promise<WalletAssets> {
   const lamports = await connection(chainKey).getBalance(new PublicKey(address))
   const equipment = await getEquipment(chainKey, tokenId)
+  const { usdcMint, usdtMint } = getChainContext(chainKey).cfg.solana ?? {}
+  const [usdc, usdt] = await Promise.all([
+    stablecoinBalance(chainKey, address, usdcMint ?? ''),
+    stablecoinBalance(chainKey, address, usdtMint ?? ''),
+  ])
   return {
     address,
     nativeBalance: (lamports / 1e9).toString(),
     nativeSymbol: 'SOL',
-    usdcBalance: '0', // TODO(Solana):接 USDC(Token-2022 账户解析)后填实际值
-    usdtBalance: '0',
+    usdcBalance: usdc.toString(),
+    usdtBalance: usdt.toString(),
     equipment,
   }
 }

@@ -20,6 +20,8 @@ interface ChainConfig {
   explorer: string
   identityAddress: string // EVM 为 0x 合约地址;Solana 为程序地址(base58)
   partsAddress: string
+  nativePriceId?: string // 原生币 CoinGecko id(defi-quote 技能用;缺省回落 AVAX)
+  nativeGatePair?: string // 原生币 Gate.io 交易对(回退行情源)
   defi?: {
     router: `0x${string}` // V2 风格 Router(Fuji=TraderJoe,Sepolia=Uniswap)
     wNative: `0x${string}` // WAVAX / WETH
@@ -30,6 +32,12 @@ interface ChainConfig {
   }
   aave?: {
     pool: `0x${string}` // Aave v3 Pool(地址来自 Aave 官方 address book)
+  }
+  // Solana 家族专属:稳定币 mint 与 Jupiter 兑换 API(测试网需自托管 quote API,见运维手册)
+  solana?: {
+    usdcMint?: string // 测试 USDC mint(devnet 通用 4zMMC9...);可用 SOLANA_USDC_MINT 覆盖
+    usdtMint?: string // 测试 USDT mint;未配置则余额恒为 0
+    jupiterApiUrl?: string // Jupiter v6 API 地址;空 = 本链不支持兑换(技能隐藏)
   }
 }
 export type { ChainConfig }
@@ -64,6 +72,8 @@ const CHAINS: Record<string, ChainConfig> = {
     explorer: 'https://testnet.snowtrace.io',
     identityAddress: '0x15dC02b5678b8454C75EeA0208C1C027b1903d9c',
     partsAddress: '0xdac819D6B834E26B23EE30Edc9C13eA0a4b834f2',
+    nativePriceId: 'avalanche-2', // defi-quote 行情技能:原生币 CoinGecko id
+    nativeGatePair: 'AVAX_USDT', // Gate.io 回退源交易对
     defi: {
       router: '0xd7f655E3376cE2D7A2b08fF01Eb3B1023191A901',
       wNative: '0xd00ae08403B9bbb9124bB305C09058E32C39A48c',
@@ -78,7 +88,7 @@ const CHAINS: Record<string, ChainConfig> = {
     },
   },
   // Solana testnet:Anchor 程序 tinyworld(Soulbound DID + 装备,Token-2022)
-  // 无 defi/aave 配置——DeFi 技能仅在 EVM 家族可用
+  // 无 defi/aave 配置——DeFi 技能仅在 EVM 家族可用;兑换经 Jupiter(需配置 solana.jupiterApiUrl)
   'solana-testnet': {
     family: 'solana',
     name: 'Solana Testnet',
@@ -89,6 +99,13 @@ const CHAINS: Record<string, ChainConfig> = {
     explorer: 'https://explorer.solana.com?cluster=testnet',
     identityAddress: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp',
     partsAddress: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp',
+    nativePriceId: 'solana',
+    nativeGatePair: 'SOL_USDT',
+    solana: {
+      usdcMint: env('SOLANA_USDC_MINT', 'AQb9N6naGGRcDsz4EhBez4BkWdEyWK6HHXN4i8ZxoM74'), // 项目自建 tUSDC(Token-2022, 6 位小数)
+      usdtMint: env('SOLANA_USDT_MINT', ''), // 测试网无公认 USDT,留空 = 余额恒 0
+      jupiterApiUrl: env('JUPITER_API_URL', ''), // 官方 api.jup.ag 仅主网;测试网需自托管 jupiter-quote-api
+    },
   },
 }
 
@@ -119,6 +136,9 @@ export const config = {
   heartbeatSeconds: Number(env('HEARTBEAT_SECONDS', '300')),
   // Agent 热钱包私钥(M4 DeFi 执行用;未配置时 defi-swap 工具只报价不执行)。永远不要打印/提交
   agentPrivateKey: env('AGENT_PRIVATE_KEY'),
+  // Agent Solana 热钱包私钥(base58 编码的 64 字节 secret key,defi-swap-sol 经 Jupiter 执行兑换时签名用)。
+  // 永远不要打印/提交真实值
+  agentSolanaKey: env('AGENT_SOLANA_PRIVATE_KEY', ''),
   // 价格源 URL(可用 env 覆盖;策略引擎熔断验证时故意改错)
   priceCoingeckoUrl: env('PRICE_COINGECKO_URL', 'https://api.coingecko.com/api/v3/simple/price?ids=avalanche-2&vs_currencies=usd'),
   priceGateUrl: env('PRICE_GATE_URL', 'https://api.gateio.ws/api/v4/spot/tickers?currency_pair=AVAX_USDT'),
