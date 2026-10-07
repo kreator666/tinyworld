@@ -148,14 +148,18 @@ export async function chatInConversation(
   const result = await runAgentTurn(chainKey, persona, history, message, 'owner')
 
   // 问答(含被拦截的轮次)都落 messages 表,并刷新 updated_at
-  await db.query('INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)', [
+  // 注意:chain_key 必须显式写入——列默认值是迁移基线(默认链),缺省会把消息记到错误的链上,
+  // 导致 listMessages(按链过滤)查不到,表现为"回复在会话列表可见、聊天区空白"
+  await db.query('INSERT INTO messages (id, chain_key, conversation_id, role, content) VALUES ($1, $2, $3, $4, $5)', [
     randomUUID(),
+    chainKey,
     conversationId,
     'user',
     message,
   ])
-  await db.query('INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)', [
+  await db.query('INSERT INTO messages (id, chain_key, conversation_id, role, content) VALUES ($1, $2, $3, $4, $5)', [
     randomUUID(),
+    chainKey,
     conversationId,
     'assistant',
     result.reply,

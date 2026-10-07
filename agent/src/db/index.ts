@@ -268,6 +268,11 @@ export async function initSchema(): Promise<void> {
     END $$;
 
     CREATE INDEX IF NOT EXISTS chain_identities_owner_idx ON chain_identities (chain_key, owner);
+
+    -- 数据自愈:messages.chain_key 以会话归属链为准(防御任何遗漏 chain_key 的写入路径)
+    UPDATE messages SET chain_key = c.chain_key
+    FROM conversations c
+    WHERE messages.conversation_id = c.id AND messages.chain_key <> c.chain_key;
   `)
 }
 
