@@ -167,3 +167,35 @@ anchor deploy --provider.cluster devnet
 CLUSTER_URL=https://api.devnet.solana.com npx ts-node scripts/devnet-smoke.ts <name>
 # testnet 冒烟：CLUSTER_URL=https://api.testnet.solana.com npx ts-node scripts/devnet-smoke.ts <name>
 ```
+
+## 测试网重置后的恢复（重要）
+
+Solana 测试网会定期清空全部账户（先例：2026-09-25 devnet 因 Alpenglow 升级
+genesis 重启，本程序及所有身份/装备/配置账户全部丢失）。恢复分两层：
+
+**1. 程序重部署**（程序 ID 不变，用固定密钥对）：
+
+```bash
+cd solana
+solana airdrop 2 --url testnet   # 需要 ~7.5 SOL；或 redeploy-devnet.sh 自动重试
+anchor deploy --provider.cluster testnet
+```
+
+**2. 身份数据重建**（agent 侧，DB 镜像为种子）：
+
+agent 在 GPA 扫描/单户解析成功时会自动把链上身份快照进 `chain_identities`
+镜像表（PGlite）。重置后一键重建：
+
+```bash
+cd agent
+TARGET_CHAIN=solana-testnet npx tsx scripts/rehydrate-solana.mts [--dry-run]
+```
+
+- 自动检查程序存活 → 领水 → 补 `initialize_config` → 按镜像重铸**本钱包**的身份
+  并恢复人格哈希（`update_persona`）→ 回写镜像新 token_id/mint
+- `mint_identity` 要求 owner 签名：**其他用户的身份无法代铸**，脚本会列出清单，
+  需各主人用原钱包自行重铸（重铸后 token_id 变化，DB 中按旧 token_id 关联的
+  memories/conversations 等需按 owner 重新关联）
+- 名字被占用（name-record 未随重置释放）时会跳过并记入待处理清单
+- agent 读链路有 RPC 故障转移（官方节点间歇不可达时切 publicnode）+ GPA 失败
+  时回退 DB 镜像；免费备用节点不支持 getProgramAccounts，装备/余额明细仍依赖官方 RPC

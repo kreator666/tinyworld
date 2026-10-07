@@ -16,6 +16,7 @@ interface ChainConfig {
   name: string
   chainId: number // Solana 家族为哨兵值(101=testnet,与 solana-cli 的 cluster 约定一致)
   rpc: string
+  rpcFallbacks?: string[] // 备用 RPC:主端点网络故障时自动切换(Solana 官方域名间歇性不可达,必须配)
   explorer: string
   identityAddress: string // EVM 为 0x 合约地址;Solana 为程序地址(base58)
   partsAddress: string
@@ -82,6 +83,8 @@ const CHAINS: Record<string, ChainConfig> = {
     name: 'Solana Testnet',
     chainId: 101,
     rpc: 'https://api.testnet.solana.com',
+    // 官方域名在本机网络间歇性 TCP 超时(2026-10 实测);publicnode 为同一 testnet 的免费公共节点
+    rpcFallbacks: ['https://solana-testnet-rpc.publicnode.com'],
     explorer: 'https://explorer.solana.com?cluster=testnet',
     identityAddress: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp',
     partsAddress: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp',
@@ -91,9 +94,11 @@ const CHAINS: Record<string, ChainConfig> = {
 const targetKey = env('TARGET_CHAIN', 'sepolia').toLowerCase()
 const target = CHAINS[targetKey]
 if (!target) throw new Error(`未知的 TARGET_CHAIN: ${targetKey}(可选: ${Object.keys(CHAINS).join('/')})`)
-
 // 允许用环境变量覆盖单条链的 RPC/地址(比如换私有 RPC 节点)
 target.rpc = env('CHAIN_RPC', target.rpc)
+// 备用 RPC:逗号分隔;显式配置时覆盖内置默认
+const fallbackEnv = env('CHAIN_RPC_FALLBACKS')
+if (fallbackEnv) target.rpcFallbacks = fallbackEnv.split(',').map((s) => s.trim()).filter(Boolean)
 target.identityAddress = env('DID_IDENTITY_ADDRESS', target.identityAddress)
 
 /** 全部链配置(chains 表种子数据用) */
@@ -105,6 +110,7 @@ export const config = {
   llmModel: env('LLM_MODEL', 'gpt-4o-mini'),
   port: Number(env('PORT', '4111')),
   chain: target,
+  chainKey: targetKey, // chains 表主键/镜像表 chain_key;镜像按链隔离
   // Agent 服务热钱包地址,安装需要权限的技能时查链上 agentPermissions;
   // 未配置(空串)则跳过链上校验并在安装响应中注明
   agentServiceAddress: env('AGENT_SERVICE_ADDRESS'),

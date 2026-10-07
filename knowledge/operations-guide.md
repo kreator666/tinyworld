@@ -221,3 +221,44 @@ ssh claw 'curl -s http://127.0.0.1:4111/health'
 - 前端构建产物文件名含 hash，旧文件会残留在 `dist/assets/`，建议部署时先清空 `dist` 再复制。
 - Certbot 会自动续期 SSL 证书，一般无需手动干预；若证书异常，可执行 `certbot renew --nginx`。
 - 生产环境不要直接运行 `npm run dev`，应使用 PM2 管理；`dev` 模式仅用于本地或临时排查。
+
+## 10. Solana 测试网故障与重置恢复
+
+### 背景
+
+- Solana 官方 RPC 域名（`api.testnet.solana.com` / `api.devnet.solana.com` / `explorer.solana.com`）
+  在部分网络环境**间歇性 TCP 超时**（2026-10 本机实测），表现为链上调用全部失败。
+- Solana 测试网会**定期清空全部账户**（先例：2026-09-25 devnet Alpenglow 升级 genesis 重启，
+  tinyworld 程序 `5JEXwXv9...` 及所有身份/配置账户丢失）。
+
+### 已内建的容错（agent 侧）
+
+- **RPC 故障转移**：`personaSolana.ts` 的 `FailoverConnection` 对网络类错误自动切换备用端点。
+  solana-testnet 内置备用 `https://solana-testnet-rpc.publicnode.com`；
+  可用 `CHAIN_RPC_FALLBACKS`（逗号分隔）覆盖（见 `.env.example`）。
+- **身份镜像**：GPA 扫描 / `resolveTokenId` 成功后自动把链上身份快照进 PGlite 的
+  `chain_identities` 表；GPA 失败（官方节点不可达 + 免费节点不支持索引类方法）时
+  读路径自动回退镜像。注意：免费备用节点不支持 `getProgramAccounts`，
+  装备明细/他人 tokenId 反查等仍依赖官方 RPC 可达。
+- 不要把 `CHAIN_RPC` 指向免费公共节点跑生产——其索引方法（GPA）和方法级限流都会咬人；
+  有 Helius/QuickNode 私有节点优先用。
+
+### 测试网重置后的恢复流程
+
+1. **重部署程序**（程序 ID 不变）：
+   ```bash
+   cd D:/agent/tinyworld/solana
+   solana airdrop 2 --url testnet        # ~7.5 SOL，限流时多试或 faucet.solana.com
+   anchor deploy --provider.cluster testnet
+   ```
+2. **重建身份数据**（DB 镜像为种子，一键）：
+   ```bash
+   cd D:/agent/tinyworld/agent
+   TARGET_CHAIN=solana-testnet npx tsx scripts/rehydrate-solana.mts [--dry-run]
+   ```
+   - 只恢复**本钱包**（`~/.config/solana/id.json`）持有的身份；`mint_identity` 要求
+     owner 签名，其他用户的身份脚本只列清单，需各主人自行重铸。
+   - 重铸后 token_id 必然变化（随机 mint 派生）；DB 中按旧 token_id 关联的数据
+     （memories/conversations/approvals 等）需按 owner 重新关联或迁移。
+   - 名字被占用（name-record 未随重置释放）会跳过并列入待处理清单。
+3. 验证：`npx tsx scripts/smoke-solana-reads.ts`（需 TARGET_CHAIN=solana-testnet）。

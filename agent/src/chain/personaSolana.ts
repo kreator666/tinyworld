@@ -1,5 +1,13 @@
-import { Connection, PublicKey } from '@solana/web3.js'
+import {
+  Connection,
+  PublicKey,
+  type AccountInfo,
+  type GetProgramAccountsConfig,
+  type RpcResponseAndContext,
+  type TokenAccountsFilter,
+} from '@solana/web3.js'
 import { config } from '../config'
+import { initSchema, listChainIdentities, upsertChainIdentities, type ChainIdentityRow } from '../db'
 import { base58Decode, base58Encode } from '../core/base58'
 import { readPersonaMirror } from '../core/personaMirror'
 import idl from '../idl/tinyworld.json'
@@ -47,9 +55,74 @@ function accountDisc(name: string): Buffer {
 const IDENTITY_DISC = accountDisc('Identity')
 const PART_CONFIG_DISC = accountDisc('PartConfig')
 
-let connectionSingleton: Connection | null = null
-function connection(): Connection {
-  if (!connectionSingleton) connectionSingleton = new Connection(config.chain.rpc, 'confirmed')
+// ------------------------------------------------------------
+// RPC 故障转移:Solana 官方域名在某些网络环境间歇性不可达,
+// 主端点出现网络类错误时按顺序轮换备用端点重试(只读调用,重试安全)。
+// 只包装本模块用到的 4 个读方法,语义与 Connection 一致。
+// ------------------------------------------------------------
+
+function isNetworkError(e: unknown): boolean {
+  const msg = String(e)
+  return /fetch|timeout|ECONN|ETIMEDOUT|ENET|EAI_|socket|503|502|403|429/i.test(msg)
+}
+
+export class FailoverConnection {
+  private conns: Connection[]
+  private idx = 0
+
+  constructor(endpoints: string[]) {
+    this.conns = endpoints.map((u) => new Connection(u, 'confirmed'))
+  }
+
+  get endpoint(): string {
+    return this.conns[this.idx].rpcEndpoint
+  }
+
+  private async withFailover<T>(op: (c: Connection) => Promise<T>): Promise<T> {
+    let lastErr: unknown = null
+    for (let attempt = 0; attempt < this.conns.length; attempt++) {
+      const i = (this.idx + attempt) % this.conns.length
+      try {
+        const r = await op(this.conns[i])
+        this.idx = i // 成功的端点提升为当前主端点
+        return r
+      } catch (e) {
+        lastErr = e
+        if (!isNetworkError(e)) throw e // 业务错误(RPC 可达)不重试
+      }
+    }
+    throw lastErr
+  }
+
+  getProgramAccounts(
+    programId: PublicKey,
+    config?: GetProgramAccountsConfig,
+  ): Promise<readonly { pubkey: PublicKey; account: AccountInfo<Buffer> }[]> {
+    return this.withFailover((c) => c.getProgramAccounts(programId, config))
+  }
+
+  getAccountInfo(publicKey: PublicKey): Promise<AccountInfo<Buffer> | null> {
+    return this.withFailover((c) => c.getAccountInfo(publicKey))
+  }
+
+  getTokenAccountsByOwner(
+    owner: PublicKey,
+    filter: TokenAccountsFilter,
+  ): Promise<RpcResponseAndContext<readonly { pubkey: PublicKey; account: AccountInfo<Buffer> }[]>> {
+    return this.withFailover((c) => c.getTokenAccountsByOwner(owner, filter))
+  }
+
+  getBalance(publicKey: PublicKey): Promise<number> {
+    return this.withFailover((c) => c.getBalance(publicKey))
+  }
+}
+
+let connectionSingleton: FailoverConnection | null = null
+function connection(): FailoverConnection {
+  if (!connectionSingleton) {
+    const endpoints = [config.chain.rpc, ...(config.chain.rpcFallbacks ?? [])]
+    connectionSingleton = new FailoverConnection(endpoints)
+  }
   return connectionSingleton
 }
 
@@ -135,6 +208,65 @@ interface IdentityEntry {
   account: IdentityAccount
 }
 
+// ------------------------------------------------------------
+// 链上身份镜像(DB):GPA 是索引类方法,官方 RPC 不可达时常用备用节点不支持,
+// 且测试网会定期重置。扫描/解析成功后把身份快照落库(chain_identities 表),
+// GPA 失败时以镜像兜底(可能滞后),同时为测试网重置后的重建提供种子。
+// 镜像写失败只告警,不影响链上读取。
+// ------------------------------------------------------------
+
+function mirrorRowsFromEntries(entries: IdentityEntry[]): ChainIdentityRow[] {
+  return entries.map((e) => ({
+    token_id: String(tokenIdFromMint(e.account.mint)),
+    owner: e.account.owner,
+    name: e.account.name,
+    mint: e.account.mint,
+    persona_hash: e.account.personaHash,
+    persona_arweave_id: e.account.personaArweaveId,
+    minted_at: e.account.mintedAt,
+    chain_key: config.chainKey,
+  }))
+}
+
+let mirrorSchemaReady = false
+
+async function mirrorIdentities(entries: IdentityEntry[]): Promise<void> {
+  try {
+    // 冒烟/脚本场景不会走服务启动的 initSchema,这里兜底一次(幂等)
+    if (!mirrorSchemaReady) {
+      await initSchema()
+      mirrorSchemaReady = true
+    }
+    await upsertChainIdentities(mirrorRowsFromEntries(entries))
+  } catch (e) {
+    console.warn('[persona-solana] 身份镜像写入失败(不影响读取):', e)
+  }
+}
+
+/** 镜像行 → IdentityEntry;equipped 链上未读,降级场景按空槽处理(装备读取需链上可用) */
+async function entriesFromMirror(): Promise<IdentityEntry[]> {
+  if (!mirrorSchemaReady) {
+    await initSchema()
+    mirrorSchemaReady = true
+  }
+  const rows = await listChainIdentities(config.chainKey)
+  return rows.map((r) => ({
+    pubkey: PublicKey.findProgramAddressSync(
+      [Buffer.from('identity'), new PublicKey(r.owner).toBuffer()],
+      programId(),
+    )[0],
+    account: {
+      owner: r.owner,
+      mint: r.mint,
+      name: r.name,
+      personaHash: r.persona_hash,
+      personaArweaveId: r.persona_arweave_id,
+      equipped: [null, null, null, null],
+      mintedAt: Number(r.minted_at),
+    },
+  }))
+}
+
 let identityScanCache: { at: number; entries: IdentityEntry[] } | null = null
 const SCAN_TTL_MS = 15_000
 
@@ -142,12 +274,24 @@ async function fetchAllIdentities(force = false): Promise<IdentityEntry[]> {
   if (!force && identityScanCache && Date.now() - identityScanCache.at < SCAN_TTL_MS) {
     return identityScanCache.entries
   }
-  const res = await connection().getProgramAccounts(programId(), {
-    filters: [{ memcmp: { offset: 0, bytes: base58Encode(IDENTITY_DISC) } }],
-  })
-  const entries = res.map((r) => ({ pubkey: r.pubkey, account: decodeIdentity(r.account.data) }))
-  identityScanCache = { at: Date.now(), entries }
-  return entries
+  try {
+    const res = await connection().getProgramAccounts(programId(), {
+      filters: [{ memcmp: { offset: 0, bytes: base58Encode(IDENTITY_DISC) } }],
+    })
+    const entries = res.map((r) => ({ pubkey: r.pubkey, account: decodeIdentity(r.account.data) }))
+    identityScanCache = { at: Date.now(), entries }
+    await mirrorIdentities(entries)
+    return entries
+  } catch (e) {
+    // GPA 失败(官方 RPC 不可达 + 备用节点不支持索引类方法):回退 DB 镜像
+    const mirrored = await entriesFromMirror()
+    if (mirrored.length > 0) {
+      console.warn(`[persona-solana] GPA 失败(${String(e).slice(0, 80)}),回退 DB 镜像(${mirrored.length} 条,可能滞后)`)
+      identityScanCache = { at: Date.now(), entries: mirrored }
+      return mirrored
+    }
+    throw e
+  }
 }
 
 async function findIdentityByTokenId(tokenId: number): Promise<IdentityEntry | null> {
@@ -207,7 +351,9 @@ export async function resolveTokenId(owner: string): Promise<number> {
   const [identityPda] = PublicKey.findProgramAddressSync([Buffer.from('identity'), ownerPk.toBuffer()], programId())
   const info = await connection().getAccountInfo(identityPda)
   if (!info) return 0
-  return tokenIdFromMint(decodeIdentity(info.data).mint)
+  const account = decodeIdentity(info.data)
+  await mirrorIdentities([{ pubkey: identityPda, account }]) // 增量镜像:新铸造无需等全表扫
+  return tokenIdFromMint(account.mint)
 }
 
 /** tokenId → owner 地址(GPA 扫 Identity 匹配 mint 前 8 字节;未来换索引器) */

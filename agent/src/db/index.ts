@@ -181,6 +181,21 @@ export async function initSchema(): Promise<void> {
     ALTER TABLE approvals ALTER COLUMN token_id TYPE NUMERIC(20,0);
     ALTER TABLE agent_settings ALTER COLUMN token_id TYPE NUMERIC(20,0);
     ALTER TABLE owner_facts ALTER COLUMN token_id TYPE NUMERIC(20,0);
+
+    -- 链上身份镜像(重建种子):GPA 扫描/单户解析成功后落库,测试网重置后据此重建。
+    -- 注意:token_id 由随机 mint 派生,重建重铸后会变化,rehydrate 脚本负责回写新值
+    CREATE TABLE IF NOT EXISTS chain_identities (
+      token_id NUMERIC(20,0) PRIMARY KEY,
+      owner TEXT NOT NULL,
+      name TEXT NOT NULL,
+      mint TEXT NOT NULL,
+      persona_hash TEXT NOT NULL DEFAULT '',
+      persona_arweave_id TEXT NOT NULL DEFAULT '',
+      minted_at BIGINT NOT NULL DEFAULT 0,
+      chain_key TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS chain_identities_owner_idx ON chain_identities (chain_key, owner);
   `)
 }
 
@@ -217,4 +232,61 @@ export async function listChains(): Promise<ChainRow[]> {
   const db = await getDb()
   const res = await db.query<ChainRow>('SELECT * FROM chains WHERE enabled ORDER BY chain_id')
   return res.rows
+}
+
+// ============================================================
+// 链上身份镜像:测试网定期重置的重建种子(P1 方案)
+// 写入时机:GPA 扫描成功(批量)/ resolveTokenId 单户解析成功(增量)
+// ============================================================
+
+export interface ChainIdentityRow {
+  token_id: string // 十进制字符串;JS 侧往返转 number(与全库 token_id 约定一致)
+  owner: string
+  name: string
+  mint: string
+  persona_hash: string
+  persona_arweave_id: string
+  minted_at: number
+  chain_key: string
+}
+
+/** 批量 upsert(按 token_id 冲突更新);镜像写失败不允许影响链上读取,调用方自行 catch */
+export async function upsertChainIdentities(rows: ChainIdentityRow[]): Promise<void> {
+  if (rows.length === 0) return
+  const db = await getDb()
+  for (const r of rows) {
+    await db.query(
+      `INSERT INTO chain_identities (token_id, owner, name, mint, persona_hash, persona_arweave_id, minted_at, chain_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (token_id) DO UPDATE SET
+         owner = EXCLUDED.owner, name = EXCLUDED.name, mint = EXCLUDED.mint,
+         persona_hash = EXCLUDED.persona_hash, persona_arweave_id = EXCLUDED.persona_arweave_id,
+         minted_at = EXCLUDED.minted_at, chain_key = EXCLUDED.chain_key, updated_at = now()`,
+      [r.token_id, r.owner, r.name, r.mint, r.persona_hash, r.persona_arweave_id, r.minted_at, r.chain_key],
+    )
+  }
+}
+
+export async function listChainIdentities(chainKey: string): Promise<ChainIdentityRow[]> {
+  const db = await getDb()
+  const res = await db.query<ChainIdentityRow>(
+    'SELECT * FROM chain_identities WHERE chain_key = $1 ORDER BY minted_at',
+    [chainKey],
+  )
+  return res.rows
+}
+
+/** 重建重铸后 token_id/mint 变化:按 owner+chain 定位旧行并回写新值 */
+export async function rewriteChainIdentityToken(
+  chainKey: string,
+  owner: string,
+  newTokenId: string,
+  newMint: string,
+): Promise<void> {
+  const db = await getDb()
+  await db.query(
+    `UPDATE chain_identities SET token_id = $1, mint = $2, updated_at = now()
+     WHERE chain_key = $3 AND owner = $4`,
+    [newTokenId, newMint, chainKey, owner],
+  )
 }
