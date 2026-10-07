@@ -291,3 +291,24 @@ npm run down       # 停止并移除
 - **加新链**:config.ts 的 ALL_CHAINS 加条目(EVM 需 defi/aave 配置)→ 重启即生效,
   无需迁移。
 - 新链加入后前端自动跟随(GET /chains 已带 family)。
+
+### 各链能力差异(2026-10-08)
+
+Agent 的系统提示词按链生成(`buildInstructions(chainKey, installed)`),能力摘要来自
+实际安装的技能清单,不会跨链张冠李戴。
+
+| 能力 | Fuji | Solana Testnet |
+|---|---|---|
+| 查钱包资产 | AVAX + USDC + USDT(TraderJoe 测试币)+ 装备 | SOL + tUSDC + 装备 |
+| DEX 兑换 | TraderJoe(propose_swap,含策略引擎/审批) | Jupiter(propose_swap,直接执行) |
+| 理财(Aave) | ✅ | ❌(提示词明确告知不支持) |
+| 原生币行情 | AVAX | SOL |
+| 社交 / 主人画像 / 记忆 | ✅ | ✅ |
+
+Solana 专属配置(config.ts `solana` 字段,env 可覆盖):
+- `SOLANA_USDC_MINT`:默认项目自建 tUSDC `AQb9N6naGGRcDsz4EhBez4BkWdEyWK6HHXN4i8ZxoM74`
+  (测试网无官方 USDC;devnet 那个 4zMMC9... 在 testnet 是空账户。重建:
+  `cd solana && npx ts-node scripts/create-test-usdc.ts`)
+- `JUPITER_API_URL`:官方 api.jup.ag 仅主网;测试网要自托管 jupiter-quote-api
+  指向 testnet RPC 后填入。未配置 = Solana 链隐藏兑换技能。
+- `AGENT_SOLANA_PRIVATE_KEY`:Solana 热钱包(base58 secret),兑换执行签名用。
