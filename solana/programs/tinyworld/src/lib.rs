@@ -7,7 +7,7 @@ use anchor_spl::token_2022::spl_token_2022::state::Mint as SplMint;
 use anchor_spl::token_interface::{Mint, TokenInterface};
 use std::io::Cursor;
 
-declare_id!("AYPTCkaWoeEyQm4bzGqf4aLUm5JZYwFB8JGMLEwxyiBB");
+declare_id!("4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH");
 
 pub const SLOT_COUNT: usize = 4;
 pub const MAX_NAME_LEN: usize = 64;

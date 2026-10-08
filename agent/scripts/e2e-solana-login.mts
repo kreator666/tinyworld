@@ -23,7 +23,7 @@ import idl from '../src/idl/tinyworld.json'
 
 const RPC = process.env.SOLANA_RPC ?? 'https://api.testnet.solana.com'
 const AGENT = process.env.AGENT_URL ?? 'http://localhost:4111'
-const PROGRAM_ID = new PublicKey('AYPTCkaWoeEyQm4bzGqf4aLUm5JZYwFB8JGMLEwxyiBB')
+const PROGRAM_ID = new PublicKey('4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH')
 const TOKEN_2022 = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
 const ATA_PROGRAM = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
 

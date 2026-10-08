@@ -157,7 +157,7 @@ taskkill //F //IM solana-test-validator.exe
 
 ## 公共测试网部署与冒烟
 
-已实测部署于 **Solana testnet**（程序地址 `AYPTCkaWoeEyQm4bzGqf4aLUm5JZYwFB8JGMLEwxyiBB`，
+已实测部署于 **Solana testnet**（程序地址 `4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH`，
 `anchor deploy --provider.cluster testnet` + `devnet-smoke.ts` 真实铸造冒烟通过）。
 
 ```bash

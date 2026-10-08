@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-tinyworld = "AYPTCkaWoeEyQm4bzGqf4aLUm5JZYwFB8JGMLEwxyiBB"
+tinyworld = "4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH"
 
 [programs.devnet]
-tinyworld = "AYPTCkaWoeEyQm4bzGqf4aLUm5JZYwFB8JGMLEwxyiBB"
+tinyworld = "4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH"
 
 [registry]
 url = "https://api.apr.dev"
