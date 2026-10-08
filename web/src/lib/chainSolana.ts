@@ -568,6 +568,8 @@ export async function mintIdentity(owner: string, name: string, _profileURI: str
         readonlyKey(TOKEN_2022_PROGRAM_ID),
         readonlyKey(ASSOCIATED_TOKEN_PROGRAM_ID),
         readonlyKey(SystemProgram.programId),
+        // 可选铸造费接收账户(仅费率>0 时必须=config authority;Option 占位传程序 ID = None)
+        readonlyKey(programId()),
       ],
       borshString(trimmed),
     ),

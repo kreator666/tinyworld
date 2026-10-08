@@ -36,6 +36,14 @@ pub mod tinyworld {
         Ok(())
     }
 
+    /// 设置铸造费率(lamports/次,authority 专属;0 = 免费铸造)
+    pub fn set_mint_fee(ctx: Context<SetMintFee>, fee_lamports: u64) -> Result<()> {
+        let config = &mut ctx.accounts.config;
+        config.set_mint_fee_bytes(fee_lamports);
+        emit!(MintFeeSet { fee_lamports });
+        Ok(())
+    }
+
     pub fn mint_identity(ctx: Context<MintIdentity>, name: String) -> Result<()> {
         let name_bytes = name.as_bytes();
         require!(
@@ -58,6 +66,27 @@ pub mod tinyworld {
             ctx.accounts.name_record.key() == expected_nr,
             TinyWorldError::NameTaken
         );
+
+        // 铸造费:config 费率 >0 时 owner 需向 authority 支付(主网防机器人批量抢注名字)。
+        // fee_receiver 为 Option 且追加在账户列表末尾:费率=0 时旧客户端传程序 ID 占位即可,前向兼容。
+        let fee = ctx.accounts.config.mint_fee();
+        if fee > 0 {
+            let receiver = ctx
+                .accounts
+                .fee_receiver
+                .as_ref()
+                .ok_or(TinyWorldError::MintFeeReceiverRequired)?;
+            require!(
+                receiver.key() == ctx.accounts.config.authority,
+                TinyWorldError::InvalidFeeReceiver
+            );
+            transfer_lamports(
+                &ctx.accounts.owner.to_account_info(),
+                &receiver.to_account_info(),
+                fee,
+                &ctx.accounts.system_program.to_account_info(),
+            )?;
+        }
 
         // 1) 创建带 NonTransferable 扩展的 Token-2022 mint（decimals=0，mint_auth 为 mint authority）
         create_mint_account(
@@ -497,6 +526,17 @@ pub struct Config {
     pub reserved: [u8; 64],
 }
 
+impl Config {
+    /// 铸造费率(u64le,存 reserved[0..8])。
+    /// 刻意不新增结构体字段:账户布局/大小零变化,程序升级后已存在的 config 账户兼容(默认 0 = 免费)。
+    pub fn mint_fee(&self) -> u64 {
+        u64::from_le_bytes(self.reserved[0..8].try_into().unwrap())
+    }
+    fn set_mint_fee_bytes(&mut self, fee: u64) {
+        self.reserved[0..8].copy_from_slice(&fee.to_le_bytes());
+    }
+}
+
 #[account]
 pub struct Identity {
     pub owner: Pubkey,
@@ -621,6 +661,10 @@ pub struct MintIdentity<'info> {
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
     pub system_program: Program<'info, System>,
+    /// 可选:铸造费接收账户(仅 config.mint_fee()>0 时必须传入,且必须等于 config.authority)。
+    /// Option 占位约定:不需要时传程序 ID。追加在末尾保持与旧客户端前向兼容。
+    #[account(mut)]
+    pub fee_receiver: Option<UncheckedAccount<'info>>,
 }
 
 #[derive(Accounts)]
@@ -807,9 +851,21 @@ pub struct Unequip<'info> {
 }
 
 #[derive(Accounts)]
+pub struct SetMintFee<'info> {
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    #[account(address = config.authority @ TinyWorldError::Unauthorized)]
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
 pub struct CloseIdentity<'info> {
     #[account(mut, close = signer, seeds = [b"identity", identity.owner.as_ref()], bump = identity.bump)]
     pub identity: Account<'info, Identity>,
+    /// 名字记录 PDA:与身份同寿。关闭身份必须同时释放名字(租金退回 owner),
+    /// 否则名字被永久占用(主网上不可恢复)。seeds 校验确保就是该身份的名字记录。
+    #[account(mut, close = signer, seeds = [b"name-record", identity.name_hash.as_ref()], bump = name_record.bump)]
+    pub name_record: Account<'info, NameRecord>,
     #[account(mut)]
     pub signer: Signer<'info>,
     #[account(mut, address = identity.mint)]
@@ -829,6 +885,11 @@ pub struct Minted {
     pub owner: Pubkey,
     pub mint: Pubkey,
     pub name: String,
+}
+
+#[event]
+pub struct MintFeeSet {
+    pub fee_lamports: u64,
 }
 
 #[event]
@@ -947,6 +1008,10 @@ pub enum TinyWorldError {
     InvalidAta,
     #[msg("init: account serialize failed")]
     InitSerializeFailed,
+    #[msg("Mint fee receiver account is required when mint fee is enabled")]
+    MintFeeReceiverRequired,
+    #[msg("Fee receiver must equal config authority")]
+    InvalidFeeReceiver,
 }
 
 // ==================================================================
@@ -1082,8 +1147,20 @@ fn invoke_transfer<'info>(
     Ok(())
 }
 
-fn invoke_burn<'info>(
-    mint: &AccountInfo<'info>,
+/// SOL 转账(铸造费):from 必须签名;to 可为链上未初始化账户(系统自动创建)
+fn transfer_lamports<'info>(
+    from: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    lamports: u64,
+    system_program: &AccountInfo<'info>,
+) -> Result<()> {
+    let ix =
+        anchor_lang::solana_program::system_instruction::transfer(from.key, to.key, lamports);
+    invoke(&ix, &[from.clone(), to.clone(), system_program.clone()])?;
+    Ok(())
+}
+
+fn invoke_burn<'info>(    mint: &AccountInfo<'info>,
     ata: &AccountInfo<'info>,
     authority: &AccountInfo<'info>,
     amount: u64,

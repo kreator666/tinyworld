@@ -107,6 +107,8 @@ async function main() {
       tokenProgram: TOKEN_2022_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
+      // Option 占位:程序 ID = None(费率=0);费率>0 时传 config authority
+      feeReceiver: program.programId,
     } as any)
     .signers([mint])
     .rpc();

@@ -47,6 +47,39 @@
           }
         },
         {
+          "name": "name_record",
+          "docs": [
+            "名字记录 PDA:与身份同寿。关闭身份必须同时释放名字(租金退回 owner),",
+            "否则名字被永久占用(主网上不可恢复)。seeds 校验确保就是该身份的名字记录。"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  97,
+                  109,
+                  101,
+                  45,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "identity.name_hash",
+                "account": "Identity"
+              }
+            ]
+          }
+        },
+        {
           "name": "signer",
           "writable": true,
           "signer": true
@@ -349,6 +382,15 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "fee_receiver",
+          "docs": [
+            "可选:铸造费接收账户(仅 config.mint_fee()>0 时必须传入,且必须等于 config.authority)。",
+            "Option 占位约定:不需要时传程序 ID。追加在末尾保持与旧客户端前向兼容。"
+          ],
+          "writable": true,
+          "optional": true
         }
       ],
       "args": [
@@ -844,6 +886,53 @@
       ]
     },
     {
+      "name": "set_mint_fee",
+      "docs": [
+        "设置铸造费率(lamports/次,authority 专属;0 = 免费铸造)"
+      ],
+      "discriminator": [
+        52,
+        77,
+        178,
+        201,
+        245,
+        51,
+        250,
+        139
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_lamports",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "set_minter",
       "discriminator": [
         13,
@@ -1188,6 +1277,19 @@
       ]
     },
     {
+      "name": "NameRecord",
+      "discriminator": [
+        254,
+        22,
+        17,
+        161,
+        229,
+        49,
+        238,
+        105
+      ]
+    },
+    {
       "name": "PartConfig",
       "discriminator": [
         55,
@@ -1252,6 +1354,19 @@
         208,
         216,
         163
+      ]
+    },
+    {
+      "name": "MintFeeSet",
+      "discriminator": [
+        19,
+        160,
+        65,
+        66,
+        12,
+        237,
+        135,
+        42
       ]
     },
     {
@@ -1456,6 +1571,16 @@
       "code": 6021,
       "name": "InitSerializeFailed",
       "msg": "init: account serialize failed"
+    },
+    {
+      "code": 6022,
+      "name": "MintFeeReceiverRequired",
+      "msg": "Mint fee receiver account is required when mint fee is enabled"
+    },
+    {
+      "code": 6023,
+      "name": "InvalidFeeReceiver",
+      "msg": "Fee receiver must equal config authority"
     }
   ],
   "types": [
@@ -1688,6 +1813,18 @@
       }
     },
     {
+      "name": "MintFeeSet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "fee_lamports",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "Minted",
       "type": {
         "kind": "struct",
@@ -1739,6 +1876,39 @@
           {
             "name": "enabled",
             "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NameRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "created_slot",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
           }
         ]
       }

@@ -47,7 +47,7 @@ rustc 1.72，因此做了如下组合（均已固化，重装机器后需重做�
 | Config | `[b"config"]` | 107 | authority、version、bump、mint_auth_bump、reserved[64]；`initialize_config` 时建立 |
 | MintAuth | `[b"mint-auth"]` | —（仅 PDA 签名） | 所有身份/装备 mint 的 mint_authority，铸完不撤销（保留给 burn 语义用） |
 | Identity | `[b"identity", owner]` | 字段和 + 256 冗余（≈858 - 名称余量） | 每钱包 1 枚，见下方字段 |
-| NameRecord | `[b"name-record", name_hash]` | 145 | 名称占用记录，**关闭身份时不关闭**，永久占用防冒名 |
+| NameRecord | `[b"name-record", name_hash]` | 145 | 名称占用记录，与身份同寿（close_identity 一并关闭释放名字，租金退 owner） |
 | PartConfig | `[b"part", part_id(u64 LE)]` | 132 | part_id 区间沿用 EVM：头 1001–1030 / 身 2001–2030 / 配饰 3001–3030 / 宠物 4001–4030（仅文档约定，程序不强制） |
 | Minter | `[b"minter", wallet]` | 42 | enabled；bump；owner 可 set / remove（close） |
 | AgentPermission | `[b"agent-permission", identity, agent]` | 74 | permissions u8：bit0=PERMISSION_PERSONA，bit1=PERMISSION_SOCIAL 预留，bit2-7 预留 |
@@ -68,17 +68,18 @@ Token 层：身份 mint 带 **NonTransferable** 扩展（decimals=0，固定铸 
 | 指令 | 权限 | 说明 |
 | --- | --- | --- |
 | `initialize_config()` | 任意首个调用者（部署时执行一次） | 建立 Config，记录 authority 与 mint-auth bump |
-| `mint_identity(name)` | 任意钱包（每钱包 1 枚） | 名称 1–64B；name_hash=keccak256(小写)；名称唯一（大小写不敏感）且**永久占用**；创建 NonTransferable mint + ATA + mint 1 + Identity/NameRecord |
+| `mint_identity(name)` | 任意钱包（每钱包 1 枚） | 名称 1–64B；name_hash=keccak256(小写)；名称唯一（大小写不敏感）；铸造费=config.mint_fee()>0 时 owner 向 authority 付费；创建 NonTransferable mint + ATA + mint 1 + Identity/NameRecord |
 | `update_persona(persona_hash, arweave_id)` | owner 或持 PERMISSION_PERSONA 的 agent | arweave_id 为空串或 43 位 `[A-Za-z0-9_-]` |
 | `set_agent(agent, permissions)` | owner | permissions 仅允许 bit0/1，且非 0 |
 | `revoke_agent(agent)` | owner | 关闭 AgentPermission PDA |
 | `register_part(part_id, slot, rarity, max_supply)` | config authority | 创建装备 mint + PartConfig；max_supply>0 |
 | `set_part_mintable(part_id, mintable)` | config authority | 开关铸造（绝版控制） |
 | `set_minter(wallet, enabled)` / `remove_minter()` | config authority | Minter PDA 授权 / 关闭 |
+| `set_mint_fee(fee_lamports)` | config authority | 全局铸造费率（lamports/次，存 Config.reserved[0..8]，0=免费）；费率>0 时 mint_identity 必须传 fee_receiver=config authority |
 | `mint_part(part_id, to, amount)` | authority 或 enabled Minter | require mintable && supply+amount<=max_supply，超额整笔 revert |
 | `equip(part_id, slot)` | identity owner | 装备代币 1 枚转入 escrow ATA；**插槽已占用时自动退回旧件再装新件**（EVM 换装语义）；slot 不匹配 revert |
 | `unequip(slot)` | identity owner | 从 escrow 转回 owner ATA，插槽清空 |
-| `close_identity()` | owner | 4 插槽必须全空；burn 身份代币 + 关闭 owner ATA + 关闭 Identity PDA（rent 退 owner）；**NameRecord 保留** |
+| `close_identity()` | owner | 4 插槽必须全空；burn 身份代币 + 关闭 owner ATA + 关闭 Identity PDA + 关闭 NameRecord（名字释放，rent 全退 owner） |
 
 ## 事件
 
@@ -90,7 +91,7 @@ Minted、PersonaUpdated、AgentSet、AgentRevoked、PartRegistered、PartMintabl
 | --- | --- |
 | ERC-721 每地址 1 枚（tokenIdOf） | Identity PDA 每 owner 1 个 + NonTransferable mint |
 | ERC-5192 Soulbound 锁定 | Token-2022 NonTransferable 扩展（转账被协议层禁止） |
-| 名称 keccak256(小写) 永久占用（burn 不清） | NameRecord PDA 永久保留（close_identity 不关闭） |
+| 名称 keccak256(小写)，占用至 close_identity 释放 | NameRecord PDA 与身份同寿，关闭即释放（防主网名字被垃圾永久占用） |
 | keccak256 内容哈希 | `solana_program::keccak::hash`（同 keccak-256） |
 | 4 插槽纸娃娃装备（合约托管 ERC-1155） | escrow ATA（owner=Identity PDA）托管 Token-2022 代币 |
 | equip 自动换装（退旧装新，一笔交易） | equip 自动换装（先退旧件再装新件，一个指令） |

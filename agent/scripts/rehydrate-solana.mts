@@ -198,6 +198,8 @@ async function main(): Promise<void> {
               { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+              // Option 占位:程序 ID = None(费率=0 时);费率>0 时须传 config authority
+              { pubkey: PROGRAM_ID, isSigner: false, isWritable: false },
             ],
             data: Buffer.concat([ixDisc('mint_identity'), encodeString(row.name)]),
           }),

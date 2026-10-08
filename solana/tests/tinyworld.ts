@@ -87,8 +87,8 @@ describe("tinyworld", () => {
     return w;
   };
 
-  // 铸身份（通用）
-  const mintIdentity = async (wallet: Keypair, name: string) => {
+  // 铸身份（通用）。feeReceiver:费率>0 时传接收账户(必须=config authority);默认传程序 ID = None
+  const mintIdentity = async (wallet: Keypair, name: string, feeReceiver?: PublicKey) => {
     const mint = Keypair.generate();
     const identity = identityPda(wallet.publicKey);
     const tx = await program.methods
@@ -104,6 +104,7 @@ describe("tinyworld", () => {
         tokenProgram: TOKEN_PROGRAM,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
+        feeReceiver: feeReceiver ?? program.programId, // Option 占位:程序 ID = None(费率=0 时)
       })
       .signers([wallet, mint])
       .rpc();
@@ -724,7 +725,7 @@ describe("tinyworld", () => {
   // ------------------------------------------------------------------
   // 10. close_identity
   // ------------------------------------------------------------------
-  it("close_identity：带装备失败；卸空后成功；名称永久占用；同钱包可铸别的名", async () => {
+  it("close_identity：带装备失败；卸空后成功；名称随之释放（可再铸同名）", async () => {
     const identity = aliceIdentityMint.identity;
     const mint = aliceIdentityMint.mint;
 
@@ -733,6 +734,7 @@ describe("tinyworld", () => {
         .closeIdentity()
         .accounts({
           identity,
+          nameRecord: nameRecordPda("Alice"),
           signer: alice.publicKey,
           identityMint: mint,
           ownerAta: ata(alice.publicKey, mint),
@@ -762,17 +764,65 @@ describe("tinyworld", () => {
 
     // Identity PDA 已关闭
     assert.isNull(await provider.connection.getAccountInfo(identity));
-    // NameRecord 永久保留
+    // NameRecord 同步关闭（租金退回 owner）——名字释放,不再永久占用
     const nr = await provider.connection.getAccountInfo(nameRecordPda("Alice"));
-    assert.isNotNull(nr);
+    assert.isNull(nr);
 
-    // 另一个钱包铸同名失败
-    await expectErr(mintIdentity(bob, "Alice"), "NameTaken");
-    // 同一钱包铸同名也失败（名称仍占用）
-    await expectErr(mintIdentity(alice, "Alice"), "NameTaken");
-    // 同一钱包铸别的名成功
+    // 其他钱包可以铸同名（名字已释放）
+    const { identity: bobIdentity } = await mintIdentity(bob, "Alice");
+    assert.isNotNull(await provider.connection.getAccountInfo(bobIdentity));
+    // 原 owner 换个名字也能再铸
     const { identity: newIdentity } = await mintIdentity(alice, "Alice2");
     assert.isNotNull(await provider.connection.getAccountInfo(newIdentity));
+  });
+
+  // ------------------------------------------------------------------
+  // 10b. 铸造费率（主网防批量抢注）
+  // ------------------------------------------------------------------
+  it("set_mint_fee：非 authority 失败；收费铸造扣款给 authority；缺/错接收账户失败；归零恢复免费", async () => {
+    const FEE = new BN(1_000_000); // 0.001 SOL
+
+    // 非 authority 设置失败
+    await expectErr(
+      program.methods
+        .setMintFee(FEE)
+        .accounts({ config: configPda, authority: bob.publicKey })
+        .signers([bob])
+        .rpc(),
+      "Unauthorized"
+    );
+
+    // authority 设置费率
+    await program.methods
+      .setMintFee(FEE)
+      .accounts({ config: configPda, authority: authority.publicKey })
+      .rpc();
+
+    // 收费铸造:owner 被扣费,authority 收到
+    const carolBefore = await provider.connection.getBalance(carol.publicKey);
+    const authBefore = await provider.connection.getBalance(authority.publicKey);
+    await mintIdentity(carol, "Carol", authority.publicKey);
+    const carolAfter = await provider.connection.getBalance(carol.publicKey);
+    const authAfter = await provider.connection.getBalance(authority.publicKey);
+    const carolSpent = carolBefore - carolAfter;
+    const authGain = authAfter - authBefore;
+    // authority 同时是 feePayer,净收入 = 费率 - 交易费,留 0.0002 SOL 容差
+    assert.isAtLeast(carolSpent, FEE.toNumber() - 200_000);
+    assert.isAtLeast(authGain, FEE.toNumber() - 200_000);
+
+    // 费率>0 但未传 fee_receiver(传程序 ID 占位) → 失败
+    await expectErr(mintIdentity(dave, "DaveNoFee"), "MintFeeReceiverRequired");
+
+    // 费率>0 时 fee_receiver 传错地址 → 失败
+    await expectErr(mintIdentity(dave, "DaveWrongFee", dave.publicKey), "InvalidFeeReceiver");
+
+    // 费率归零,恢复免费铸造
+    await program.methods
+      .setMintFee(new BN(0))
+      .accounts({ config: configPda, authority: authority.publicKey })
+      .rpc();
+    const { identity: daveId } = await mintIdentity(dave, "Dave");
+    assert.isNotNull(await provider.connection.getAccountInfo(daveId));
   });
 
   // ------------------------------------------------------------------
