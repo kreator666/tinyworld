@@ -9,7 +9,7 @@ import idl from '../src/idl/tinyworld.json'
 
 const RPC = process.env.SOLANA_RPC ?? 'https://api.testnet.solana.com'
 const AGENT = process.env.AGENT_URL ?? 'http://localhost:4111'
-const PROGRAM_ID = new PublicKey('5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp')
+const PROGRAM_ID = new PublicKey('AYPTCkaWoeEyQm4bzGqf4aLUm5JZYwFB8JGMLEwxyiBB')
 
 // 用最近一次 E2E 铸造的身份(其密钥不在这里,所以本脚本只负责写链 + 读端验证;
 // 身份密钥从 solana 部署钱包派生一个专用密钥并先铸造,见 e2e-solana-login.mts)

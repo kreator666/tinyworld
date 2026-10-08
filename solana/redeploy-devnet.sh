@@ -5,7 +5,7 @@ export PATH="/c/Users/tiger/bin:$PATH"
 KEYPAIR="/c/Users/tiger/.config/solana/id.json"
 PROG_KEY="/d/agent/tinyworld/solana/target/deploy/tinyworld-keypair.json"
 SO="/d/agent/tinyworld/solana/target/deploy/tinyworld.so"
-PROG_ID="5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp"
+PROG_ID="AYPTCkaWoeEyQm4bzGqf4aLUm5JZYwFB8JGMLEwxyiBB"
 
 need_sol=3
 for i in $(seq 1 20); do

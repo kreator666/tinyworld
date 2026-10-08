@@ -97,8 +97,8 @@ const CHAINS: Record<string, ChainConfig> = {
     // 官方域名在本机网络间歇性 TCP 超时(2026-10 实测);publicnode 为同一 testnet 的免费公共节点
     rpcFallbacks: ['https://solana-testnet-rpc.publicnode.com'],
     explorer: 'https://explorer.solana.com?cluster=testnet',
-    identityAddress: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp',
-    partsAddress: '5JEXwXv9VqiKnokZ8sRVkxM4ws6BwHcFH67rL3YKhVKp',
+    identityAddress: 'AYPTCkaWoeEyQm4bzGqf4aLUm5JZYwFB8JGMLEwxyiBB',
+    partsAddress: 'AYPTCkaWoeEyQm4bzGqf4aLUm5JZYwFB8JGMLEwxyiBB',
     nativePriceId: 'solana',
     nativeGatePair: 'SOL_USDT',
     solana: {
