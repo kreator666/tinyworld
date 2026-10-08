@@ -8,13 +8,13 @@ function env(key: string, fallback = ''): string {
 
 // ============================================================
 // 链配置:与前端 web/src/lib/contracts.ts 的 CONTRACTS_BY_CHAIN 对应
-// TARGET_CHAIN 环境变量选择:sepolia(默认) | fuji | solana-testnet
-// family 区分链家族:evm(EVM 链,defi/aave 可用)/ solana(仅身份/人格/装备读)
+// TARGET_CHAIN 环境变量选择:sepolia(默认) | fuji | solana-devnet
+// family 区分链家族:evm(EVM 链,defi/aave 可用)/ solana(身份/人格/装备读+DeFi 兑换)
 // ============================================================
 interface ChainConfig {
   family: 'evm' | 'solana'
   name: string
-  chainId: number // Solana 家族为哨兵值(101=testnet,与 solana-cli 的 cluster 约定一致)
+  chainId: number // Solana 家族为哨兵值(103=devnet,与 solana-cli 的 cluster 约定一致)
   rpc: string
   rpcFallbacks?: string[] // 备用 RPC:主端点网络故障时自动切换(Solana 官方域名间歇性不可达,必须配)
   explorer: string
@@ -87,24 +87,22 @@ const CHAINS: Record<string, ChainConfig> = {
       pool: '0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40',
     },
   },
-  // Solana testnet:Anchor 程序 tinyworld(Soulbound DID + 装备,Token-2022)
-  // 无 defi/aave 配置——DeFi 技能仅在 EVM 家族可用;兑换经 Jupiter(需配置 solana.jupiterApiUrl)
-  'solana-testnet': {
+  // Solana devnet:Anchor 程序 tinyworld(Soulbound DID + 装备,Token-2022)
+  // DeFi 技能(兑换/借贷)在 devnet 可用;Jupiter 需自托管 quote API 填入 solana.jupiterApiUrl
+  'solana-devnet': {
     family: 'solana',
-    name: 'Solana Testnet',
-    chainId: 101,
-    rpc: 'https://api.testnet.solana.com',
-    // 官方域名在本机网络间歇性 TCP 超时(2026-10 实测);publicnode 为同一 testnet 的免费公共节点
-    rpcFallbacks: ['https://solana-testnet-rpc.publicnode.com'],
-    explorer: 'https://explorer.solana.com?cluster=testnet',
+    name: 'Solana Devnet',
+    chainId: 103,
+    rpc: 'https://api.devnet.solana.com',
+    explorer: 'https://explorer.solana.com?cluster=devnet',
     identityAddress: '4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH',
     partsAddress: '4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH',
     nativePriceId: 'solana',
     nativeGatePair: 'SOL_USDT',
     solana: {
-      usdcMint: env('SOLANA_USDC_MINT', 'AQb9N6naGGRcDsz4EhBez4BkWdEyWK6HHXN4i8ZxoM74'), // 项目自建 tUSDC(Token-2022, 6 位小数)
-      usdtMint: env('SOLANA_USDT_MINT', ''), // 测试网无公认 USDT,留空 = 余额恒 0
-      jupiterApiUrl: env('JUPITER_API_URL', ''), // 官方 api.jup.ag 仅主网;测试网需自托管 jupiter-quote-api
+      usdcMint: env('SOLANA_USDC_MINT', '4zMMC9ss2BonLRFPkSPTe8t8aS5ik5ivNM5zV1NaXOmD'), // devnet 通用 USDC(faucet)
+      usdtMint: env('SOLANA_USDT_MINT', ''), // devnet 无公认 USDT 时留空 = 余额恒 0
+      jupiterApiUrl: env('JUPITER_API_URL', ''), // 官方 api.jup.ag 仅主网;devnet 需自托管 jupiter-quote-api
     },
   },
 }

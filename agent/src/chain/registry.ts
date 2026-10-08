@@ -7,7 +7,7 @@ import { config, ALL_CHAINS, type ChainConfig } from '../config'
 // ============================================================
 
 export interface ChainContext {
-  chainKey: string // chains 表主键,如 'solana-testnet' / 'fuji'
+  chainKey: string // chains 表主键,如 'solana-devnet' / 'fuji'
   family: 'evm' | 'solana'
   cfg: ChainConfig
 }

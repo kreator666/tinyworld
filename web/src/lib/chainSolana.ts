@@ -176,9 +176,7 @@ async function sendTx(tx: Transaction, extraSigners: Keypair[] = []): Promise<st
 function rpcEndpoints(): string[] {
   const primary = getActiveChain().rpc
   const list = [primary]
-  if (primary.includes('api.testnet.solana.com')) {
-    list.push('https://solana-testnet-rpc.publicnode.com')
-  }
+  // devnet 暂无稳定免费公共备用节点,先以官方 RPC 为主
   return [...new Set(list)]
 }
 

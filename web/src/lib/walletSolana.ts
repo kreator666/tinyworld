@@ -164,7 +164,7 @@ export function base58EncodeBytes(bytes: Uint8Array): string {
  *   地址: <base58>
  *   随机数: <nonce>
  *   时间: <ISO8601>
- *   链: solana-testnet
+ *   链: solana-devnet
  */
 export function buildSolanaLoginMessage(address: string, nonce: string): string {
   return [
@@ -172,6 +172,6 @@ export function buildSolanaLoginMessage(address: string, nonce: string): string 
     `地址: ${address}`,
     `随机数: ${nonce}`,
     `时间: ${new Date().toISOString()}`,
-    '链: solana-testnet',
+    '链: solana-devnet',
   ].join('\n')
 }

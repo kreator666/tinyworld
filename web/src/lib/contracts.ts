@@ -10,7 +10,7 @@ import type { ChainType } from '../types'
 // 当前激活链由 store/chainConfigStore.ts 管理(导航栏按钮切换)。
 // ============================================================
 
-export type ChainKey = 'sepolia' | 'fuji' | 'solana-testnet'
+export type ChainKey = 'sepolia' | 'fuji' | 'solana-devnet'
 
 export interface ChainContracts {
   key: ChainKey
@@ -25,13 +25,13 @@ export interface ChainContracts {
   family?: 'evm' | 'solana'
 }
 
-// Solana testnet 的 viem 链定义:仅作占位(solana 不走 viem client),
-// chain_id 101 为哨兵值,与登录态 WalletLogin.chainId 对齐
-const solanaTestnetChain = {
-  id: 101,
-  name: 'Solana Testnet',
+// Solana devnet 的 viem 链定义:仅作占位(solana 不走 viem client),
+// chain_id 103 为哨兵值,与登录态 WalletLogin.chainId 对齐
+const solanaDevnetChain = {
+  id: 103,
+  name: 'Solana Devnet',
   nativeCurrency: { name: 'Solana', symbol: 'SOL', decimals: 9 },
-  rpcUrls: { default: { http: ['https://api.testnet.solana.com'] } },
+  rpcUrls: { default: { http: ['https://api.devnet.solana.com'] } },
 } satisfies Chain
 
 // 素材(角色库/装备目录)全链共用一套,与链无关;这里只放合约地址等链上信息
@@ -58,16 +58,16 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
     explorer: 'https://testnet.snowtrace.io',
   },
-  // Solana testnet(程序 tinyworld 已部署,Token-2022;IDL 副本在 src/idl/tinyworld.json)
-  'solana-testnet': {
-    key: 'solana-testnet',
-    name: 'Solana 测试网',
-    chainId: 101,
-    chain: solanaTestnetChain,
+  // Solana devnet(程序 tinyworld 已部署,Token-2022;IDL 副本在 src/idl/tinyworld.json)
+  'solana-devnet': {
+    key: 'solana-devnet',
+    name: 'Solana Devnet',
+    chainId: 103,
+    chain: solanaDevnetChain,
     identity: '4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH' as `0x${string}`,
     parts: '4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH' as `0x${string}`,
-    rpc: 'https://api.testnet.solana.com',
-    explorer: 'https://explorer.solana.com',
+    rpc: 'https://api.devnet.solana.com',
+    explorer: 'https://explorer.solana.com?cluster=devnet',
     family: 'solana',
   },
 }

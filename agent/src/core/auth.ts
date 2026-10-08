@@ -22,8 +22,8 @@ const NONCE_TTL_MS = 5 * 60 * 1000 // nonce 5 分钟有效
 //   地址: <base58>
 //   随机数: <nonce>
 //   时间: <ISO8601>
-//   链: solana-testnet
-const SOLANA_CHAIN_KEY = 'solana-testnet'
+//   链: solana-devnet
+const SOLANA_CHAIN_KEY = 'solana-devnet'
 
 /** base58 地址校验(32~44 位 base58 且能解析为 32 字节公钥) */
 export function isBase58Address(address: string): boolean {
