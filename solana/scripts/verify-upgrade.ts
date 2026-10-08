@@ -1,4 +1,4 @@
-// 升级后链上验证(testnet):set_mint_fee 收费铸造 + close_identity 释放名字
+// 升级后链上验证(testnet):set_mint_tier 阶梯收费铸造 + close_identity 释放名字
 // 用法: CLUSTER_URL=https://api.testnet.solana.com npx ts-node scripts/verify-upgrade.ts
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN } from "@coral-xyz/anchor";
@@ -60,13 +60,17 @@ async function main() {
       programId
     )[0];
 
-  // 1. 设置费率 0.001 SOL
+  // 1. 设置阶梯费率:当前 count 收 0.001 SOL,下一档同样价格(便于缺失 fee_receiver 用例)
   const FEE = new BN(1_000_000);
+  const cfgBefore = await program.account.config.fetch(configPda);
+  const countBefore = Number(Buffer.from(cfgBefore.reserved as any).readBigUInt64LE(0));
+  const tier2Start = new BN(countBefore + 1);
+  const tier3Start = new BN(countBefore + 5);
   await program.methods
-    .setMintFee(FEE)
+    .setMintTier(FEE, FEE, FEE, tier2Start, tier3Start)
     .accounts({ authority: wallet.publicKey } as any)
     .rpc();
-  console.log("1. set_mint_fee 0.001 SOL ✓");
+  console.log(`1. set_mint_tier: count=${countBefore}, fee=0.001 SOL ✓`);
 
   // 2. 收费铸造(带 fee_receiver)。水龙头常限流,直接从部署钱包转测试费
   const testWallet = Keypair.generate();
@@ -188,12 +192,18 @@ async function main() {
   if (nr !== null) throw new Error("name_record 未释放!");
   console.log("4. close_identity 释放名字 ✓");
 
-  // 5. 费率归零,恢复免费(传程序 ID 占位即可)
+  // 5. 恢复默认阶梯费率:前 10 免费,11-99 人 0.5 SOL,100 人起 1 SOL
   await program.methods
-    .setMintFee(new BN(0))
+    .setMintTier(
+      new BN(0),
+      new BN(500_000_000),
+      new BN(1_000_000_000),
+      new BN(10),
+      new BN(100)
+    )
     .accounts({ authority: wallet.publicKey } as any)
     .rpc();
-  console.log("5. 费率归零 ✓");
+  console.log("5. 恢复默认阶梯费率 ✓");
   console.log("VERIFY_UPGRADE_OK");
 }
 

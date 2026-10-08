@@ -356,6 +356,7 @@
         },
         {
           "name": "config",
+          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -386,7 +387,7 @@
         {
           "name": "fee_receiver",
           "docs": [
-            "可选:铸造费接收账户(仅 config.mint_fee()>0 时必须传入,且必须等于 config.authority)。",
+            "可选:铸造费接收账户(仅当前阶梯费率>0 时必须传入,且必须等于 config.authority)。",
             "Option 占位约定:不需要时传程序 ID。追加在末尾保持与旧客户端前向兼容。"
           ],
           "writable": true,
@@ -886,19 +887,20 @@
       ]
     },
     {
-      "name": "set_mint_fee",
+      "name": "set_mint_tier",
       "docs": [
-        "设置铸造费率(lamports/次,authority 专属;0 = 免费铸造)"
+        "设置阶梯铸造费率(authority;0 档费 = 免费)。档位按累计铸造数(count)划分:",
+        "count < tier2_start 收 tier1_fee;tier2_start..tier3_start 收 tier2_fee;>= tier3_start 收 tier3_fee"
       ],
       "discriminator": [
-        52,
-        77,
-        178,
-        201,
-        245,
-        51,
-        250,
-        139
+        241,
+        148,
+        11,
+        226,
+        135,
+        218,
+        147,
+        29
       ],
       "accounts": [
         {
@@ -927,7 +929,23 @@
       ],
       "args": [
         {
-          "name": "fee_lamports",
+          "name": "tier1_fee",
+          "type": "u64"
+        },
+        {
+          "name": "tier2_fee",
+          "type": "u64"
+        },
+        {
+          "name": "tier3_fee",
+          "type": "u64"
+        },
+        {
+          "name": "tier2_start",
+          "type": "u64"
+        },
+        {
+          "name": "tier3_start",
           "type": "u64"
         }
       ]
@@ -1357,16 +1375,16 @@
       ]
     },
     {
-      "name": "MintFeeSet",
+      "name": "MintTierSet",
       "discriminator": [
-        19,
-        160,
-        65,
-        66,
-        12,
-        237,
-        135,
-        42
+        168,
+        39,
+        40,
+        139,
+        83,
+        8,
+        147,
+        101
       ]
     },
     {
@@ -1581,6 +1599,11 @@
       "code": 6023,
       "name": "InvalidFeeReceiver",
       "msg": "Fee receiver must equal config authority"
+    },
+    {
+      "code": 6024,
+      "name": "InvalidTier",
+      "msg": "Invalid mint tier config (require tier2_start < tier3_start)"
     }
   ],
   "types": [
@@ -1813,12 +1836,28 @@
       }
     },
     {
-      "name": "MintFeeSet",
+      "name": "MintTierSet",
       "type": {
         "kind": "struct",
         "fields": [
           {
-            "name": "fee_lamports",
+            "name": "tier1_fee",
+            "type": "u64"
+          },
+          {
+            "name": "tier2_fee",
+            "type": "u64"
+          },
+          {
+            "name": "tier3_fee",
+            "type": "u64"
+          },
+          {
+            "name": "tier2_start",
+            "type": "u64"
+          },
+          {
+            "name": "tier3_start",
             "type": "u64"
           }
         ]

@@ -33,14 +33,31 @@ pub mod tinyworld {
         config.bump = ctx.bumps.config;
         config.mint_auth_bump = ctx.bumps.mint_auth;
         config.reserved = [0u8; 64];
+        // 阶梯铸造费率默认值:前 tier2_start(10) 个免费,之后 0.5 SOL,满 tier3_start(100) 个后 1 SOL
+        config.set_tier(0, 500_000_000, 1_000_000_000, 10, 100);
         Ok(())
     }
 
-    /// 设置铸造费率(lamports/次,authority 专属;0 = 免费铸造)
-    pub fn set_mint_fee(ctx: Context<SetMintFee>, fee_lamports: u64) -> Result<()> {
+    /// 设置阶梯铸造费率(authority;0 档费 = 免费)。档位按累计铸造数(count)划分:
+    /// count < tier2_start 收 tier1_fee;tier2_start..tier3_start 收 tier2_fee;>= tier3_start 收 tier3_fee
+    pub fn set_mint_tier(
+        ctx: Context<SetMintTier>,
+        tier1_fee: u64,
+        tier2_fee: u64,
+        tier3_fee: u64,
+        tier2_start: u64,
+        tier3_start: u64,
+    ) -> Result<()> {
+        require!(tier2_start < tier3_start, TinyWorldError::InvalidTier);
         let config = &mut ctx.accounts.config;
-        config.set_mint_fee_bytes(fee_lamports);
-        emit!(MintFeeSet { fee_lamports });
+        config.set_tier(tier1_fee, tier2_fee, tier3_fee, tier2_start, tier3_start);
+        emit!(MintTierSet {
+            tier1_fee,
+            tier2_fee,
+            tier3_fee,
+            tier2_start,
+            tier3_start,
+        });
         Ok(())
     }
 
@@ -67,9 +84,10 @@ pub mod tinyworld {
             TinyWorldError::NameTaken
         );
 
-        // 铸造费:config 费率 >0 时 owner 需向 authority 支付(主网防机器人批量抢注名字)。
-        // fee_receiver 为 Option 且追加在账户列表末尾:费率=0 时旧客户端传程序 ID 占位即可,前向兼容。
-        let fee = ctx.accounts.config.mint_fee();
+        // 铸造费:按累计铸造数所处阶梯收取(owner 付给 config authority,主网防批量抢注)。
+        // fee_receiver 为 Option 且追加在账户列表末尾:当前阶梯费=0 时旧客户端传程序 ID 占位即可,前向兼容。
+        let config = &mut ctx.accounts.config;
+        let fee = config.tier_fee(config.mint_count());
         if fee > 0 {
             let receiver = ctx
                 .accounts
@@ -77,7 +95,7 @@ pub mod tinyworld {
                 .as_ref()
                 .ok_or(TinyWorldError::MintFeeReceiverRequired)?;
             require!(
-                receiver.key() == ctx.accounts.config.authority,
+                receiver.key() == config.authority,
                 TinyWorldError::InvalidFeeReceiver
             );
             transfer_lamports(
@@ -165,6 +183,9 @@ pub mod tinyworld {
                 reserved: [0u8; 64],
             },
         )?;
+
+        // 铸造计数 +1(累计口径,close_identity 不减——对齐 EVM totalMinted 语义)
+        ctx.accounts.config.inc_mint_count();
 
         emit!(Minted {
             owner: ctx.accounts.owner.key(),
@@ -527,13 +548,42 @@ pub struct Config {
 }
 
 impl Config {
-    /// 铸造费率(u64le,存 reserved[0..8])。
-    /// 刻意不新增结构体字段:账户布局/大小零变化,程序升级后已存在的 config 账户兼容(默认 0 = 免费)。
-    pub fn mint_fee(&self) -> u64 {
-        u64::from_le_bytes(self.reserved[0..8].try_into().unwrap())
+    // reserved 字节布局(u64le,刻意不新增结构体字段——账户布局/大小零变化,已存在的 config 账户兼容):
+    // [0..8]   mint_count    累计铸造身份数(收费档位与运营统计依据,只增不减)
+    // [8..16]  tier1_fee     第 1 档费率(默认 0 = 免费)
+    // [16..24] tier2_fee     第 2 档费率(默认 0.5 SOL)
+    // [24..32] tier3_fee     第 3 档费率(默认 1 SOL)
+    // [32..40] tier2_start   第 2 档起始序号(默认 10:前 10 人免费)
+    // [40..48] tier3_start   第 3 档起始序号(默认 100)
+    fn read_u64(&self, off: usize) -> u64 {
+        u64::from_le_bytes(self.reserved[off..off + 8].try_into().unwrap())
     }
-    fn set_mint_fee_bytes(&mut self, fee: u64) {
-        self.reserved[0..8].copy_from_slice(&fee.to_le_bytes());
+    fn write_u64(&mut self, off: usize, v: u64) {
+        self.reserved[off..off + 8].copy_from_slice(&v.to_le_bytes());
+    }
+    pub fn mint_count(&self) -> u64 {
+        self.read_u64(0)
+    }
+    pub fn inc_mint_count(&mut self) {
+        let n = self.mint_count();
+        self.write_u64(0, n + 1);
+    }
+    /// 按累计铸造数计算当前应收费率
+    pub fn tier_fee(&self, count: u64) -> u64 {
+        if count >= self.read_u64(40) {
+            self.read_u64(24)
+        } else if count >= self.read_u64(32) {
+            self.read_u64(16)
+        } else {
+            self.read_u64(8)
+        }
+    }
+    pub fn set_tier(&mut self, t1: u64, t2: u64, t3: u64, t2_from: u64, t3_from: u64) {
+        self.write_u64(8, t1);
+        self.write_u64(16, t2);
+        self.write_u64(24, t3);
+        self.write_u64(32, t2_from);
+        self.write_u64(40, t3_from);
     }
 }
 
@@ -656,12 +706,12 @@ pub struct MintIdentity<'info> {
     /// CHECK: PDA mint authority
     #[account(seeds = [b"mint-auth"], bump = config.mint_auth_bump)]
     pub mint_auth: UncheckedAccount<'info>,
-    #[account(seeds = [b"config"], bump = config.bump)]
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, Config>,
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
     pub system_program: Program<'info, System>,
-    /// 可选:铸造费接收账户(仅 config.mint_fee()>0 时必须传入,且必须等于 config.authority)。
+    /// 可选:铸造费接收账户(仅当前阶梯费率>0 时必须传入,且必须等于 config.authority)。
     /// Option 占位约定:不需要时传程序 ID。追加在末尾保持与旧客户端前向兼容。
     #[account(mut)]
     pub fee_receiver: Option<UncheckedAccount<'info>>,
@@ -851,7 +901,7 @@ pub struct Unequip<'info> {
 }
 
 #[derive(Accounts)]
-pub struct SetMintFee<'info> {
+pub struct SetMintTier<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, Config>,
     #[account(address = config.authority @ TinyWorldError::Unauthorized)]
@@ -888,8 +938,12 @@ pub struct Minted {
 }
 
 #[event]
-pub struct MintFeeSet {
-    pub fee_lamports: u64,
+pub struct MintTierSet {
+    pub tier1_fee: u64,
+    pub tier2_fee: u64,
+    pub tier3_fee: u64,
+    pub tier2_start: u64,
+    pub tier3_start: u64,
 }
 
 #[event]
@@ -1012,6 +1066,8 @@ pub enum TinyWorldError {
     MintFeeReceiverRequired,
     #[msg("Fee receiver must equal config authority")]
     InvalidFeeReceiver,
+    #[msg("Invalid mint tier config (require tier2_start < tier3_start)")]
+    InvalidTier,
 }
 
 // ==================================================================

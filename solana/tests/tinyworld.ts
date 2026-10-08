@@ -779,50 +779,68 @@ describe("tinyworld", () => {
   // ------------------------------------------------------------------
   // 10b. 铸造费率（主网防批量抢注）
   // ------------------------------------------------------------------
-  it("set_mint_fee：非 authority 失败；收费铸造扣款给 authority；缺/错接收账户失败；归零恢复免费", async () => {
-    const FEE = new BN(1_000_000); // 0.001 SOL
+  it("set_mint_tier：非 authority/非法档位失败；按铸造数阶梯收费(下一铸 t2、再铸 t3)；缺/错接收账户失败；全零恢复免费", async () => {
+    // 当前累计铸造数(config.reserved[0..8] u64le)
+    const cfg: any = await program.account.config.fetch(configPda);
+    const count = Number(Buffer.from(cfg.reserved as number[]).readBigUInt64LE(0));
+    const T2 = new BN(1_000_000); // 0.001 SOL
+    const T3 = new BN(2_000_000); // 0.002 SOL
 
     // 非 authority 设置失败
     await expectErr(
       program.methods
-        .setMintFee(FEE)
+        .setMintTier(new BN(0), T2, T3, new BN(count), new BN(count + 1))
         .accounts({ config: configPda, authority: bob.publicKey })
         .signers([bob])
         .rpc(),
       "Unauthorized"
     );
 
-    // authority 设置费率
+    // 非法档位(t2_start >= t3_start)失败
+    await expectErr(
+      program.methods
+        .setMintTier(new BN(0), T2, T3, new BN(count + 5), new BN(count + 2))
+        .accounts({ config: configPda, authority: authority.publicKey })
+        .rpc(),
+      "InvalidTier"
+    );
+
+    // authority 设阶梯:第 count+1 个起 t2,第 count+2 个起 t3
     await program.methods
-      .setMintFee(FEE)
+      .setMintTier(new BN(0), T2, T3, new BN(count), new BN(count + 1))
       .accounts({ config: configPda, authority: authority.publicKey })
       .rpc();
 
-    // 收费铸造:owner 被扣费,authority 收到
+    // 收费铸造(第 count+1 个):owner 被扣 t2,authority 收到
     const carolBefore = await provider.connection.getBalance(carol.publicKey);
     const authBefore = await provider.connection.getBalance(authority.publicKey);
     await mintIdentity(carol, "Carol", authority.publicKey);
-    const carolAfter = await provider.connection.getBalance(carol.publicKey);
-    const authAfter = await provider.connection.getBalance(authority.publicKey);
-    const carolSpent = carolBefore - carolAfter;
-    const authGain = authAfter - authBefore;
+    const carolSpent = carolBefore - (await provider.connection.getBalance(carol.publicKey));
+    const authGain = (await provider.connection.getBalance(authority.publicKey)) - authBefore;
     // authority 同时是 feePayer,净收入 = 费率 - 交易费,留 0.0002 SOL 容差
-    assert.isAtLeast(carolSpent, FEE.toNumber() - 200_000);
-    assert.isAtLeast(authGain, FEE.toNumber() - 200_000);
+    assert.isAtLeast(carolSpent, T2.toNumber() - 200_000);
+    assert.isAtLeast(authGain, T2.toNumber() - 200_000);
 
-    // 费率>0 但未传 fee_receiver(传程序 ID 占位) → 失败
+    // 第 count+2 个起收 t3:费率>0 但未传 fee_receiver(程序 ID 占位) → 失败
     await expectErr(mintIdentity(dave, "DaveNoFee"), "MintFeeReceiverRequired");
 
     // 费率>0 时 fee_receiver 传错地址 → 失败
     await expectErr(mintIdentity(dave, "DaveWrongFee", dave.publicKey), "InvalidFeeReceiver");
 
-    // 费率归零,恢复免费铸造
+    // dave 正常付费铸造(应扣 t3)
+    const daveBefore = await provider.connection.getBalance(dave.publicKey);
+    await mintIdentity(dave, "Dave", authority.publicKey);
+    const daveSpent = daveBefore - (await provider.connection.getBalance(dave.publicKey));
+    assert.isAtLeast(daveSpent, T3.toNumber() - 200_000);
+
+    // 档位全零,恢复免费铸造
     await program.methods
-      .setMintFee(new BN(0))
+      .setMintTier(new BN(0), new BN(0), new BN(0), new BN(1), new BN(2))
       .accounts({ config: configPda, authority: authority.publicKey })
       .rpc();
-    const { identity: daveId } = await mintIdentity(dave, "Dave");
-    assert.isNotNull(await provider.connection.getAccountInfo(daveId));
+    const eve = await newWallet();
+    const { identity: eveId } = await mintIdentity(eve, "EveFree");
+    assert.isNotNull(await provider.connection.getAccountInfo(eveId));
   });
 
   // ------------------------------------------------------------------
