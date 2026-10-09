@@ -3,6 +3,8 @@ import { socialGreeter } from './social-greeter'
 import { defiQuote } from './defi-quote'
 import { defiSwap } from './defi-swap'
 import { defiSwapSol } from './defi-swap-solana'
+import { defiSwapRaydium } from './defi-swap-raydium'
+import { defiSwapOrca } from './defi-swap-orca'
 import { defiLending } from './defi-lending'
 import { ownerTuning } from './owner-tuning'
 
@@ -11,6 +13,8 @@ registerSkill(socialGreeter)
 registerSkill(defiQuote)
 registerSkill(defiSwap)
 registerSkill(defiSwapSol)
+registerSkill(defiSwapRaydium)
+registerSkill(defiSwapOrca)
 registerSkill(defiLending)
 registerSkill(ownerTuning)
 
