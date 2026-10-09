@@ -8,6 +8,11 @@ resolver = "2"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
+# 关闭 panic 信息以减小程序体积
+panic = "abort"
+# strip symbols(已默认 stripped,显式声明)
+strip = true
+
 [profile.release.build-override]
 opt-level = 3
 incremental = false

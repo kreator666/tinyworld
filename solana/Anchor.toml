@@ -15,7 +15,7 @@ tinyworld = "4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "C:/Users/tiger/.config/solana/id.json"
 
 [scripts]
