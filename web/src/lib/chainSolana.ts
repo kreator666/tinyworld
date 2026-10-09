@@ -86,6 +86,26 @@ function programId(): PublicKey {
   return new PublicKey(getActiveChain().identity)
 }
 
+/** 把字符串地址转成 PublicKey;遇到 EVM 地址/空串时给明确中文提示 */
+function parseSolanaAddress(input: string | null | undefined): PublicKey {
+  if (!input) throw new Error('Solana 钱包未连接,请先连接 Phantom 钱包')
+  try {
+    return new PublicKey(input)
+  } catch {
+    throw new Error('钱包地址无效,当前可能是 EVM 钱包状态,请断开并重新连接 Phantom 钱包')
+  }
+}
+
+export function isValidSolanaAddress(input: string | null | undefined): boolean {
+  if (!input) return false
+  try {
+    new PublicKey(input)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function conn(): Connection {
   return new Connection(getActiveChain().rpc, 'confirmed')
 }
@@ -97,7 +117,7 @@ const pda = (seeds: (Uint8Array | PublicKey)[]): PublicKey =>
   )[0]
 
 const identityPda = (owner: PublicKey | string): PublicKey =>
-  pda([Buffer.from('identity'), typeof owner === 'string' ? new PublicKey(owner) : owner])
+  pda([Buffer.from('identity'), typeof owner === 'string' ? parseSolanaAddress(owner) : owner])
 
 const nameRecordPda = (nameHash: Uint8Array): PublicKey => pda([Buffer.from('name-record'), nameHash])
 
@@ -108,7 +128,7 @@ const configPda = (): PublicKey => pda([Buffer.from('config')])
 const mintAuthPda = (): PublicKey => pda([Buffer.from('mint-auth')])
 
 const minterPda = (wallet: PublicKey | string): PublicKey =>
-  pda([Buffer.from('minter'), typeof wallet === 'string' ? new PublicKey(wallet) : wallet])
+  pda([Buffer.from('minter'), typeof wallet === 'string' ? parseSolanaAddress(wallet) : wallet])
 
 const ata = (mint: PublicKey, owner: PublicKey, offCurve = false): PublicKey =>
   getAssociatedTokenAddressSync(mint, owner, offCurve, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
@@ -152,7 +172,7 @@ const readonlyKey = (pubkey: PublicKey) => ({ pubkey, isSigner: false, isWritabl
  * 官方节点不可达时自动切 publicnode 备用(与 agent 侧 FailoverConnection 同思路)。
  */
 async function sendTx(tx: Transaction, extraSigners: Keypair[] = []): Promise<string> {
-  const wallet = new PublicKey(getActiveSolanaAddress() ?? '')
+  const wallet = parseSolanaAddress(getActiveSolanaAddress())
   tx.feePayer = wallet
   const latest = await latestBlockhash()
   tx.recentBlockhash = latest.blockhash
@@ -406,7 +426,7 @@ function equippedToLocal(identity: IdentityAccount, mintToPartId: Map<string, nu
 
 /** 读取地址的链上身份与配件资产(Identity PDA + Token-2022 余额) */
 export async function fetchChainState(address: string): Promise<ChainIdentityState> {
-  const owner = new PublicKey(address)
+  const owner = parseSolanaAddress(address)
   const [identityInfo, configs, balances] = await Promise.all([
     conn().getAccountInfo(identityPda(owner)),
     fetchAllPartConfigs(),
@@ -436,7 +456,7 @@ export async function fetchChainState(address: string): Promise<ChainIdentitySta
 
 /** 统计任意地址持有的装备总数(Token-2022 账户余额求和;个人主页访客指标用) */
 export async function fetchOwnedPartCount(address: string): Promise<number> {
-  const balances = await fetchPartBalances(new PublicKey(address))
+  const balances = await fetchPartBalances(parseSolanaAddress(address))
   let sum = 0
   balances.forEach((n) => (sum += n))
   return sum
@@ -548,7 +568,7 @@ export async function isPartsMinter(account: string): Promise<boolean> {
  * 函数签名与 EVM 侧保持一致。
  */
 export async function mintIdentity(owner: string, name: string, _profileURI: string): Promise<string> {
-  const ownerPk = new PublicKey(owner)
+  const ownerPk = parseSolanaAddress(owner)
   const trimmed = name.trim()
   if (trimmed.length < 1 || trimmed.length > 64) throw new Error('名称不符合要求(1-64 字符)')
   const mintKp = Keypair.generate()
@@ -577,7 +597,7 @@ export async function mintIdentity(owner: string, name: string, _profileURI: str
 
 /** 穿戴:读 PartConfig 校验 slot,组装 equip(程序自动换装:退旧装新) */
 export async function equipPart(owner: string, _tokenId: number, slot: number, partChainId: number): Promise<string> {
-  const ownerPk = new PublicKey(owner)
+  const ownerPk = parseSolanaAddress(owner)
   const cfgInfo = await conn().getAccountInfo(partConfigPda(partChainId))
   if (!cfgInfo || !discEquals(cfgInfo.data, DISC.partConfig)) throw new Error('该配件尚未注册,请先注册')
   const cfg = decodePartConfig(cfgInfo.data)
@@ -618,7 +638,7 @@ export async function equipPart(owner: string, _tokenId: number, slot: number, p
 
 /** 卸下配件(从 escrow 转回持有者钱包) */
 export async function unequipPart(owner: string, _tokenId: number, slot: number): Promise<string> {
-  const ownerPk = new PublicKey(owner)
+  const ownerPk = parseSolanaAddress(owner)
   const idPda = identityPda(ownerPk)
   const identityInfo = await conn().getAccountInfo(idPda)
   if (!identityInfo) throw new Error('尚未铸造 Agent 身份')
@@ -656,7 +676,7 @@ export async function setPersonaOnChain(
   const json = decodePersonaJson(uri)
   if (keccak256(toBytes(json)) !== contentHash.toLowerCase()) throw new Error('人格配置哈希校验失败')
   await putPersonaMirror(contentHash, json)
-  const ownerPk = new PublicKey(owner)
+  const ownerPk = parseSolanaAddress(owner)
   const idPda = identityPda(ownerPk)
   const tx = new Transaction().add(
     ix(
@@ -678,7 +698,7 @@ export async function setPersonaOnChain(
 
 /** 单条注册配件(需程序 authority) */
 export async function registerPart(owner: string, chainId: number, slot: number, rarity: number, maxSupply: number): Promise<string> {
-  const ownerPk = new PublicKey(owner)
+  const ownerPk = parseSolanaAddress(owner)
   const mintKp = Keypair.generate()
   const tx = new Transaction().add(
     ix(
@@ -730,8 +750,8 @@ export async function mintPartsBatch(owner: string, to: string, ids: bigint[], a
   if (ids.length === 0 || amounts.length === 0 || ids.length !== amounts.length) {
     throw new Error('铸造参数不能为空且 ids 与 amounts 长度必须一致')
   }
-  const ownerPk = new PublicKey(owner)
-  const toPk = new PublicKey(to)
+  const ownerPk = parseSolanaAddress(owner)
+  const toPk = parseSolanaAddress(to)
   let lastSignature = ''
   for (let i = 0; i < ids.length; i++) {
     const partId = Number(ids[i])

@@ -3,9 +3,11 @@ import * as evm from './chain'
 import * as sol from './chainSolana'
 import { getActiveChain } from '../store/chainConfigStore'
 import type { UnsignedTx } from './agentApi'
+import { useAppStore } from '../store/appStore'
 import type { WalletLogin } from '../types'
 import type { ChainContracts } from './contracts'
 import type { ChainIdentityState, ChainPartAsset, ChainPartState, MintedAgent } from './chain'
+import { isValidSolanaAddress } from './chainSolana'
 
 // ============================================================
 // 链族分发层:每个 action 按当前激活链的 family 路由到
@@ -25,9 +27,12 @@ export interface RegisterProgress {
   chainId: number | null
 }
 
-/** 钱包是否已处于激活链可用状态:EVM 比对 chainId;Solana 恒 true——Phantom 的 cluster 切换是用户在钱包内手动完成的,代码无法探测 */
+/** 钱包是否已处于激活链可用状态:EVM 比对 chainId;Solana 需 walletKind='solana' 且地址合法 */
 export function isWalletOnActiveChain(login: WalletLogin | null, active: ChainContracts): boolean {
-  if ((active.family ?? 'evm') === 'solana') return true
+  if ((active.family ?? 'evm') === 'solana') {
+    const { walletKind, address } = useAppStore.getState()
+    return walletKind === 'solana' && !!login && login.address === address && isValidSolanaAddress(login.address)
+  }
   return !!login && login.chainId === active.chainId
 }
 

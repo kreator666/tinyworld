@@ -537,22 +537,30 @@ export default function ProfilePage() {
 
   const save = async () => {
     saveAIProfile(form)
-    // 已连接 Sepolia 且链上已有 DID 时,人格配置真正写链(setPersona:URI + keccak256 内容哈希)
-    if (connected && onTargetChain && address && tokenId > 0) {
-      setSaving(true)
-      try {
-        const json = JSON.stringify(form)
-        const uri = `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`
-        await setPersonaOnChain(address, tokenId, uri, keccak256(toBytes(json)))
-        showToast('✅ 人格配置已保存并同步上链,绑定 Agent 身份')
-      } catch (err) {
-        showToast(explainChainError(err))
-      } finally {
-        setSaving(false)
-      }
+    if (!connected || !address) {
+      showToast('请先连接钱包')
       return
     }
-    showToast(`✅ 人格配置已保存(本地);连接 ${active.name} 后会自动同步上链`)
+    if (!onTargetChain) {
+      showToast(`当前钱包不匹配 ${active.name},请断开并重新连接对应钱包`)
+      return
+    }
+    if (tokenId === 0) {
+      showToast('尚未铸造 Agent 身份,无法同步人格配置上链')
+      return
+    }
+    // 激活链上已有 DID 时,人格配置真正写链(setPersona:URI + keccak256 内容哈希)
+    setSaving(true)
+    try {
+      const json = JSON.stringify(form)
+      const uri = `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`
+      await setPersonaOnChain(address, tokenId, uri, keccak256(toBytes(json)))
+      showToast('✅ 人格配置已保存并同步上链,绑定 Agent 身份')
+    } catch (err) {
+      showToast(explainChainError(err))
+    } finally {
+      setSaving(false)
+    }
   }
   const reset = () => {
     resetAIProfile()
