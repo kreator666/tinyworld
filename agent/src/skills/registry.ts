@@ -5,6 +5,7 @@ import { getDb } from '../db'
 import { config } from '../config'
 import { PERMISSION_SOCIAL, getAgentPermissions } from '../chain/persona'
 import { getChainContext } from '../chain/registry'
+import { isMeteoraSwapConfigured } from '../chain/meteora'
 
 // ============================================================
 // 技能注册表(设计文档 §5):技能 = 清单 + 一组 Mastra 工具
@@ -27,8 +28,12 @@ export interface SkillManifest {
   scope?: 'social' | 'owner' | 'all'
   /** 仅 EVM 家族链可用(Solana 下从清单/默认安装/工具集里隐藏,如 defi-swap/defi-lending) */
   evmOnly?: boolean
-  /** 仅 Solana 家族链可用,且要求该链已配置 Jupiter API(如 defi-swap-sol) */
+  /** 仅 Solana 家族链可用(如 defi-swap-solana/defi-swap-meteora);后端是否就绪由 chainFeature 判断 */
   solanaOnly?: boolean
+  /** Solana 技能的后端依赖:jupiterApi = 需 cfg.solana.jupiterApiUrl;meteoraPool = 需热钱包私钥 + Meteora 池地址 */
+  chainFeature?: 'jupiterApi' | 'meteoraPool'
+  /** 清单层禁用(如协议程序未部署到当前环境):不出现在清单/安装/工具集,工具 execute 仍兜底提示 */
+  disabled?: boolean
 }
 
 export interface SkillDef {
@@ -52,11 +57,16 @@ export function registerSkill(def: SkillDef): void {
   builtins.set(def.manifest.id, def)
 }
 
-/** 技能在指定链家族是否可用(evmOnly 技能在 Solana 下不可用;solanaOnly 技能要求 Solana 链且已配置 Jupiter API) */
+/** 技能在指定链家族是否可用(evmOnly 技能在 Solana 下不可用;solanaOnly 技能要求 Solana 链,后端就绪由 chainFeature 判断;disabled 技能全链隐藏) */
 export function isSkillAvailable(chainKey: string, manifest: SkillManifest): boolean {
+  if (manifest.disabled) return false
   const ctx = getChainContext(chainKey)
   if (manifest.evmOnly && ctx.family !== 'evm') return false
-  if (manifest.solanaOnly) return ctx.family === 'solana' && Boolean(ctx.cfg.solana?.jupiterApiUrl)
+  if (manifest.solanaOnly) {
+    if (ctx.family !== 'solana') return false
+    if (manifest.chainFeature === 'jupiterApi' && !ctx.cfg.solana?.jupiterApiUrl) return false
+    if (manifest.chainFeature === 'meteoraPool' && !isMeteoraSwapConfigured()) return false
+  }
   return true
 }
 

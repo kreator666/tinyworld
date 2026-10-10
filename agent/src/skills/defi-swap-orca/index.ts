@@ -3,11 +3,16 @@ import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { parseUnits } from 'viem'
 import { getDb } from '../../db'
-import { config } from '../../config'
-import { getChainContext } from '../../chain/registry'
 import { SOL_MINT, usdcMintOf } from '../../chain/jupiter'
 import { quoteOrcaSwap } from '../../chain/orca'
 import type { SkillDef } from '../registry'
+
+// ============================================================
+// 内置技能 defi-swap-orca(当前整体禁用)
+// Orca Whirlpool 程序未部署到 devnet(devnet 定期清理已移除),清单层 disabled=true 隐藏,
+// 工具 execute 兜底返回"未部署"提示。报价函数 quoteOrcaSwap 与下方执行链路保留,
+// 日后若自托管部署 Orca 程序,撤销 disabled 并恢复 enabled 判定即可重新启用。
+// ============================================================
 
 const SLIPPAGE_BPS = 100
 const DECIMALS: Record<'SOL' | 'USDC', number> = { SOL: 9, USDC: 6 }
@@ -31,10 +36,13 @@ async function recordDefiTask(
 }
 
 function makeProposeSwap(chainKey: string, tokenId: number) {
-  const enabled = Boolean(getChainContext(chainKey).cfg.solana?.usdcMint) && Boolean(config.agentSolanaKey)
+  // Orca Whirlpool 程序未部署到 devnet(devnet 定期清理已移除),技能整体禁用;
+  // 若日后自托管部署 Orca 程序,把这里改回按 usdcMint/agentSolanaKey 判定即可重新启用
+  const enabled = false
+  const disabledReason = 'Orca Whirlpool 程序未部署到 devnet(devnet 定期清理已移除),暂不可用;devnet 兑换请使用 Meteora 技能'
   return createTool({
     id: 'propose_swap',
-    description: '发起一笔 Orca Whirlpool 兑换(SOL↔USDC)。devnet 上若找不到对应池子会提示暂不可兑换。',
+    description: '发起一笔 Orca Whirlpool 兑换(SOL↔USDC)。当前 devnet 不可用:Orca 程序已被清理。',
     inputSchema: z.object({
       tokenIn: z.enum(['SOL', 'USDC']).describe('支付币种:SOL 或 USDC'),
       tokenOut: z.enum(['SOL', 'USDC']).describe('目标币种:SOL 或 USDC'),
@@ -44,7 +52,7 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
     outputSchema: z.object({ result: z.string() }),
     execute: async ({ context }) => {
       if (!enabled) {
-        return { result: '该链未配置 Orca 兑换前置条件(USDC mint / AGENT_SOLANA_PRIVATE_KEY)' }
+        return { result: disabledReason }
       }
       try {
         if (context.tokenIn === context.tokenOut) {
@@ -85,11 +93,12 @@ export const defiSwapOrca: SkillDef = {
     id: 'defi-swap-orca',
     name: 'Orca 兑换',
     version: '1.0.0',
-    description: '经 Orca Whirlpool 在 Solana devnet 上兑换 SOL↔USDC(当前为报价/审计 stub)',
+    description: '经 Orca Whirlpool 在 Solana 上兑换 SOL↔USDC(当前不可用:Orca 程序未部署到 devnet,自托管部署后可重新启用)',
     tools: ['propose_swap'],
     permissions: [],
     scope: 'owner',
     solanaOnly: true,
+    disabled: true, // 协议程序未部署到 devnet,清单/安装/工具集隐藏(报价函数保留,便于日后重启用)
   },
   makeTools: (chainKey, tokenId) => ({
     propose_swap: makeProposeSwap(chainKey, tokenId),

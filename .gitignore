@@ -53,3 +53,5 @@ agent/local_cache/
 # 调试产物
 onchain.so
 pda.json
+.agent-sol.key
+setup-agent-liquidity.cjs

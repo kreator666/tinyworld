@@ -113,7 +113,13 @@ export function buildInstructions(
         `本链暂无理财(借代)协议;主人提到存钱吃利息时,如实回答本链不支持,不要假装执行。`,
       )
     }
-    if (!isEvm && !hasSkill('defi-swap-sol')) {
+    if (!isEvm && hasSkill('defi-swap-meteora')) {
+      ownerToolsLines.push(
+        `当主人要求兑换(如"用 0.1 SOL 换 USDC"、"把 USDC 换回 SOL")时,必须调用 propose_swap 工具;支持 SOL↔USDC,由 Meteora DLMM 路由。调用示例:propose_swap({tokenIn:"SOL",tokenOut:"USDC",amountIn:"0.1",reason:"主人主动兑换"})。`,
+        `本链暂无理财(借代)协议;主人提到存钱吃利息时,如实回答本链不支持,不要假装执行。`,
+      )
+    }
+    if (!isEvm && !hasSkill('defi-swap-sol') && !hasSkill('defi-swap-meteora')) {
       ownerToolsLines.push(`本链(${chainName})暂无 DEX 兑换与理财协议,不要向主人提议 swap 或理财;主人提到时如实说明做不到。`)
     }
     if (hasSkill('owner-tuning')) {
