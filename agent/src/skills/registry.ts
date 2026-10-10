@@ -140,10 +140,15 @@ export async function getInstalledSkills(chainKey: string, tokenId: number): Pro
   return res.rows
 }
 
-/** 已安装技能的 manifest 列表(含 description,供系统提示词生成能力摘要用;未匹配内置技能的跳过) */
+/** 已安装技能的 manifest 列表(含 description,供系统提示词生成能力摘要用;未匹配内置技能的跳过)。
+ *  只返回当前链实际可用的:DB 里有安装记录但链配置不满足的技能(如缺 AGENT_SOLANA_PRIVATE_KEY 的
+ *  defi-swap-meteora)不进能力摘要,避免提示词宣称"必须调用 propose_swap"而工具集里根本没有该工具 */
 export async function getInstalledManifests(chainKey: string, tokenId: number): Promise<SkillManifest[]> {
   const installed = await getInstalledSkills(chainKey, tokenId)
-  return installed.map((s) => builtins.get(s.id)?.manifest).filter((m): m is SkillManifest => Boolean(m))
+  return installed
+    .map((s) => builtins.get(s.id)?.manifest)
+    .filter((m): m is SkillManifest => Boolean(m))
+    .filter((m) => isSkillAvailable(chainKey, m))
 }
 
 export interface InstallResult {
@@ -221,7 +226,11 @@ export async function getToolsFor(
   for (const { skill_id } of res.rows) {
     const def = builtins.get(skill_id)
     if (!def) continue // DB 里有但代码未注册(比如版本回滚),跳过
-    if (!isSkillAvailable(chainKey, def.manifest)) continue // Solana 下 evmOnly 技能不加载工具
+    if (!isSkillAvailable(chainKey, def.manifest)) {
+      // 已安装但当前链配置不满足(如缺 AGENT_SOLANA_PRIVATE_KEY):工具不加载,打日志便于排查"装了技能却不生效"
+      console.warn(`[skills] ${chainKey}#${tokenId} 已安装技能 ${skill_id} 因链配置不满足被跳过(工具不加载)`)
+      continue
+    }
     const scope = def.manifest.scope ?? 'all'
     if (scope !== 'all' && scope !== mode) continue
     Object.assign(tools, def.makeTools(chainKey, tokenId))

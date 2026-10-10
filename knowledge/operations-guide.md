@@ -312,3 +312,23 @@ Solana 专属配置(config.ts `solana` 字段,env 可覆盖):
 - `JUPITER_API_URL`:官方 api.jup.ag 仅主网;测试网要自托管 jupiter-quote-api
   指向 testnet RPC 后填入。未配置 = Solana 链隐藏兑换技能。
 - `AGENT_SOLANA_PRIVATE_KEY`:Solana 热钱包(base58 secret),兑换执行签名用。
+  未配置 = `isMeteoraSwapConfigured()` 为 false,defi-swap-meteora 从清单/默认安装/
+  工具集里整体隐藏(已安装记录也会被跳过,getToolsFor 会打 warn 日志)。
+
+### PGlite WAL 损坏修复(agent/scripts/pglite-repair-wal.ts)
+
+进程被强杀(taskkill /F、断电)可能写坏 WAL 检查点记录,之后服务起不来:
+
+```
+PANIC: could not locate a valid checkpoint record at ...
+```
+
+wasm 版 PGlite 没有 pg_resetwal 可用,用修复脚本兜底(等价最小 resetwal):
+
+```
+cd agent && npx tsx scripts/pglite-repair-wal.ts repair <dataDir>   # 修复并自动打开验证
+```
+
+原理:从 `global/pg_control` 读检查点位置与内容副本,在 WAL 中原位重写一条合法的
+shutdown 检查点记录(CRC32C 重算)、其余补零,数据回到上次干净检查点。
+**未检查点的事务会丢失**;修复前手动备份 data 目录。
