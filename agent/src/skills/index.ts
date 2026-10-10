@@ -4,6 +4,7 @@ import { defiQuote } from './defi-quote'
 import { defiSwap } from './defi-swap'
 import { defiSwapSol } from './defi-swap-solana'
 import { defiSwapMeteora } from './defi-swap-meteora'
+import { defiPerpDrift } from './defi-perp-drift'
 import { defiSwapRaydium } from './defi-swap-raydium'
 import { defiSwapOrca } from './defi-swap-orca'
 import { defiLending } from './defi-lending'
@@ -15,6 +16,7 @@ registerSkill(defiQuote)
 registerSkill(defiSwap)
 registerSkill(defiSwapSol)
 registerSkill(defiSwapMeteora)
+registerSkill(defiPerpDrift)
 registerSkill(defiSwapRaydium)
 registerSkill(defiSwapOrca)
 registerSkill(defiLending)

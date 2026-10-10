@@ -1,0 +1,7 @@
+{
+  "name": "helius-laserstream",
+  "version": "0.1.8",
+  "description": "Local stub for helius-laserstream (win32 placeholder; real package is darwin/linux-only and unused by our Drift integration)",
+  "main": "index.js",
+  "types": "index.d.ts"
+}
