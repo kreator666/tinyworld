@@ -171,24 +171,53 @@ async function sendRawWithFailover(raw: Uint8Array, rpcs: string[]): Promise<str
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
 }
 
-async function confirmWithFailover(
-  signature: string,
-  rpcs: string[],
-  latest: { blockhash: string; lastValidBlockHeight: number },
-): Promise<void> {
+/** 链上确认超时:交易已广播但预算内未确认(仍在打包或 RPC 不可达),不视为失败 */
+class SolanaConfirmTimeoutError extends Error {
+  constructor() {
+    super('等待链上确认超时,交易可能仍在打包')
+    this.name = 'SolanaConfirmTimeoutError'
+  }
+}
+
+const CONFIRM_POLL_INTERVAL_MS = 2000
+const CONFIRM_BUDGET_MS = 60000
+
+/** 轮询 getSignatureStatuses 等待确认(纯 HTTP,不依赖 websocket 事件——公共 RPC 的 ws 常不可用)。
+ *  交易在链上失败(st.err)立即抛错;预算耗尽抛 SolanaConfirmTimeoutError */
+async function confirmWithFailover(signature: string, rpcs: string[]): Promise<void> {
+  const deadline = Date.now() + CONFIRM_BUDGET_MS
   let lastErr: unknown = null
   for (const url of rpcs) {
-    try {
-      await new Connection(url, 'confirmed').confirmTransaction(
-        { signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
-        'confirmed',
-      )
-      return
-    } catch (e) {
-      lastErr = e
+    const conn = new Connection(url, 'confirmed')
+    while (Date.now() < deadline) {
+      try {
+        const { value } = await conn.getSignatureStatuses([signature])
+        const st = value[0]
+        if (st) {
+          if (st.err) throw new Error(`交易上链失败: ${JSON.stringify(st.err)}`)
+          const cs = st.confirmationStatus as string | undefined
+          if (cs === 'confirmed' || cs === 'finalized') return
+        }
+        lastErr = null
+      } catch (e) {
+        lastErr = e
+      }
+      await new Promise((r) => setTimeout(r, CONFIRM_POLL_INTERVAL_MS))
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+  if (lastErr) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+  throw new SolanaConfirmTimeoutError()
+}
+
+/** 确认等待不阻断主流程:超时(尚未确认)直接放行,后端 sign-confirm 会再核实并记待确认;
+ *  只有链上明确失败(st.err)才抛错中断 */
+async function confirmOrDefer(signature: string, rpcs: string[]): Promise<void> {
+  try {
+    await confirmWithFailover(signature, rpcs)
+  } catch (err) {
+    if (err instanceof SolanaConfirmTimeoutError) return
+    throw err
+  }
 }
 
 /** Solana 用户钱包签名模式:Phantom 逐笔签名(base64 反序列化),经交易自带 RPC 端点发送并确认
@@ -217,14 +246,14 @@ async function sendSolanaTransactions(unsignedTxs: UnsignedTx[]): Promise<string
     } catch (err) {
       if (err instanceof SolanaWalletError && err.code === 'UNSUPPORTED') {
         const signature = await solanaSignAndSend(tx)
-        await confirmWithFailover(signature, item.rpcs, latest)
+        await confirmOrDefer(signature, item.rpcs)
         signatures.push(signature)
         continue
       }
       throw err
     }
     const signature = await sendRawWithFailover(signed.serialize(), item.rpcs)
-    await confirmWithFailover(signature, item.rpcs, latest)
+    await confirmOrDefer(signature, item.rpcs)
     signatures.push(signature)
   }
   return signatures

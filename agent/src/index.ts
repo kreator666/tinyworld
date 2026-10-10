@@ -707,6 +707,17 @@ async function parseSolanaSwapOut(
   return BigInt(post.uiTokenAmount.amount)
 }
 
+/** Promise 硬超时包装:超时整体 reject,不留下挂起的确认等待 */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`确认超时(${Math.round(ms / 1000)}s)`)), ms)
+    p.then(
+      (v) => { clearTimeout(t); resolve(v) },
+      (e) => { clearTimeout(t); reject(e) },
+    )
+  })
+}
+
 /** Solana 家族(Jupiter / Meteora)的 sign-confirm:
  * 链上确认(Meteora 主网 / Jupiter 请求链)→ 解析实际输出 → 记 tasks 审计表 → 追加 assistant 消息 */
 async function confirmSolanaSign(
@@ -737,7 +748,8 @@ async function confirmSolanaSign(
     recordDefiTask(taskChainKey, tokenId, proposal, { txHash, amountOut, usdValue: proposal.estimatedValueUsd ?? null }, status)
 
   try {
-    await conn.confirmTransaction(txHash)
+    // 硬超时兜底:确认卡住时按待确认处理,绝不无限挂起前端请求
+    await withTimeout(conn.confirmTransaction(txHash), 60_000)
   } catch (err) {
     // 确认超时/RPC 失败:不阻塞前端,记一笔待确认(金额 0),让 Agent 稍后自查
     console.warn('[sign-confirm] Solana 确认失败,按待确认处理:', err instanceof Error ? err.message : String(err))
