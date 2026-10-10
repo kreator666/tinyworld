@@ -100,7 +100,7 @@ const CHAINS: Record<string, ChainConfig> = {
     nativePriceId: 'solana',
     nativeGatePair: 'SOL_USDT',
     solana: {
-      usdcMint: env('SOLANA_USDC_MINT', '4zMMC9ss2BonLRFPkSPTe8t8aS5ik5ivNM5zV1NaXOmD'), // devnet 通用 USDC(faucet)
+      usdcMint: env('SOLANA_USDC_MINT', '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'), // Circle 官方 devnet USDC(SPL token, faucet 限量)
       usdtMint: env('SOLANA_USDT_MINT', ''), // devnet 无公认 USDT 时留空 = 余额恒 0
       jupiterApiUrl: env('JUPITER_API_URL', ''), // 官方 api.jup.ag 仅主网;devnet 需自托管 jupiter-quote-api
     },
