@@ -171,11 +171,34 @@ const readonlyKey = (pubkey: PublicKey) => ({ pubkey, isSigner: false, isWritabl
  * 这里统一 signTransaction 后由页面直连 chains 表配置的 RPC 发送,
  * 官方节点不可达时自动切 publicnode 备用(与 agent 侧 FailoverConnection 同思路)。
  */
+/** 从 web3.js SendTransactionError 提取模拟日志中的 Anchor 报错详情(定位到账户/指令) */
+function enrichSendError(err: unknown): unknown {
+  const anyErr = err as { transactionMessage?: string; transactionLogs?: string[]; message?: string }
+  const logs = anyErr?.transactionLogs
+  if (!Array.isArray(logs) || logs.length === 0) return err
+  const anchorLine = logs.find((l) => l.includes('Error Code:') || l.includes('AnchorError'))
+  const ixLine = logs.find((l) => l.includes('Instruction:'))
+  const detail = [ixLine, anchorLine].filter(Boolean).join(' | ')
+  const base = anyErr.transactionMessage ?? anyErr.message ?? '交易失败'
+  if (detail) return new Error(`${base} ⟦${detail}⟧`)
+  return new Error(`${base} ⟦logs: ${logs.slice(-5).join(' | ')}⟧`)
+}
+
 async function sendTx(tx: Transaction, extraSigners: Keypair[] = []): Promise<string> {
   const wallet = parseSolanaAddress(getActiveSolanaAddress())
   tx.feePayer = wallet
   const latest = await latestBlockhash()
   tx.recentBlockhash = latest.blockhash
+  // 调试:打印待发送交易的程序/账户/数据(排查模拟失败时定位差异)
+  console.log('[solana:sendTx]', {
+    programId: programId().toBase58(),
+    feePayer: wallet.toBase58(),
+    ixs: tx.instructions.map((i) => ({
+      programId: i.programId.toBase58(),
+      dataLen: i.data.length,
+      keys: i.keys.map((k) => `${k.pubkey.toBase58().slice(0, 8)}${k.isSigner ? '·S' : ''}${k.isWritable ? '·W' : ''}`),
+    })),
+  })
   let signed: Transaction
   if (extraSigners.length > 0) tx.partialSign(...extraSigners)
   try {
@@ -187,9 +210,14 @@ async function sendTx(tx: Transaction, extraSigners: Keypair[] = []): Promise<st
     }
     throw err
   }
-  const signature = await sendRawWithFailover(signed.serialize())
-  await confirmWithFailover(signature, latest)
-  return signature
+  try {
+    const signature = await sendRawWithFailover(signed.serialize())
+    await confirmWithFailover(signature, latest)
+    return signature
+  } catch (err) {
+    console.error('[solana:sendTx] 发送失败,完整错误:', err)
+    throw enrichSendError(err)
+  }
 }
 
 /** RPC 端点列表:主端点 + 同链备用(官方 solana.com 域名间歇不可达) */
@@ -823,5 +851,29 @@ export function explainSolanaChainError(err: unknown): string {
   if (/User rejected|rejected|denied|declined|cancel/i.test(msg)) return '你取消了钱包操作'
   if (/Blockhash not found|expired|timeout/i.test(msg)) return '交易确认超时,请重试(测试网拥堵时可能发生)'
   if (/InsufficientFunds|insufficient/i.test(msg)) return '钱包 SOL 余额不足,请先领取测试币'
+  // sendTx 注入的模拟日志详情:⟦Instruction: X | Program log: AnchorError caused by account: Y. Error Code: Z. ...⟧
+  const detailMatch = /⟦(.+)⟧/.exec(msg)
+  if (detailMatch) {
+    const detail = detailMatch[1]
+    const acctMatch = /caused by account: (\w+)/.exec(detail)
+    const builtinCode = /Error Code: (\w+)/.exec(detail)?.[1]
+    const BUILTIN: Record<string, string> = {
+      ConstraintMut: '链上账户写权限校验失败(mut 约束)',
+      ConstraintHasOne: '账户关联校验失败(has_one)',
+      ConstraintSigner: '账户签名校验失败(signer 约束)',
+      ConstraintSeeds: 'PDA 地址推导不匹配(seeds 约束)',
+      ConstraintAddress: '账户地址与预期不匹配(address 约束)',
+      ConstraintOwner: '账户归属程序不匹配(owner 约束)',
+      AccountNotInitialized: '链上账户尚未初始化',
+      AccountDiscriminatorMismatch: '账户数据类型不匹配',
+      AccountOwnedByWrongProgram: '账户归属程序错误',
+      NotAuthorized: '没有权限执行此操作',
+    }
+    const acctSuffix = acctMatch ? `(账户: ${acctMatch[1]})` : ''
+    const mapped = builtinCode ? BUILTIN[builtinCode] : undefined
+    if (mapped) return `${mapped}${acctSuffix}`
+    if (builtinCode) return `链上校验失败: ${builtinCode}${acctSuffix}`
+    return `链上操作失败: ${detail.slice(0, 150)}`
+  }
   return `链上操作失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`
 }

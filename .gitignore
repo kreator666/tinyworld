@@ -50,3 +50,6 @@ agent/data*/
 
 # fastembed 本地模型缓存
 agent/local_cache/
+# 调试产物
+onchain.so
+pda.json
