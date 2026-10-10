@@ -214,7 +214,7 @@ export const defiPerpDrift: SkillDef = {
     name: 'Drift 永续',
     version: '1.1.0',
     description:
-      '经 Drift Protocol 在 Solana 主网真实交易永续合约(默认 SOL-PERP,支持开多/开空/平仓):存入 Circle USDC 作为保证金,余额不足时先经 Meteora 兑换;单笔入金/名义额有硬顶(devnet 官方部署已损坏,不再使用)',
+      '⚠️ 暂停服务:Drift 官方部署(devnet 与主网)已事实下线(最近数百笔交易全部被程序拒绝,Drift 已迁移至 Velocity 新程序),入金/开仓/平仓会失败;仅 drift_status 市场查询可用。待接入 Velocity 或 Drift 恢复后自动恢复。原本功能:主网永续交易,Circle USDC 保证金,单笔入金/名义额有硬顶',
     tools: ['drift_deposit', 'drift_withdraw', 'drift_open', 'drift_close', 'drift_status'],
     permissions: [],
     scope: 'owner', // 资产操作,仅限主人对话
