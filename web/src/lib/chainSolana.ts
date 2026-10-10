@@ -68,6 +68,11 @@ const ANCHOR_ERRORS: Record<number, string> = {
   6017: '没有权限修改该 Agent 的人格配置',
   6018: '当前地址不是程序 authority',
   6019: 'arweave id 不合法(空串或 43 位 base64url)',
+  6020: '装备 ATA 地址推导不匹配',
+  6021: '账户序列化失败',
+  6022: '当前铸造需支付费用,但交易缺少费率接收账户(请刷新页面后重试)',
+  6023: '费率接收账户必须是程序 authority',
+  6024: '阶梯费率配置非法(需满足 tier2_start < tier3_start)',
 }
 
 const DISC = {
@@ -367,6 +372,46 @@ function decodeConfigAuthority(data: Uint8Array): PublicKey {
   return r.pubkey()
 }
 
+// 链上 Config 账户(reserved 区按 u64le 布局,见合约 Config 注释)
+interface ChainConfigData {
+  authority: PublicKey
+  mintCount: bigint
+  tier1Fee: bigint
+  tier2Fee: bigint
+  tier3Fee: bigint
+  tier2Start: bigint
+  tier3Start: bigint
+}
+
+function decodeConfig(data: Uint8Array): ChainConfigData {
+  const r = new Reader(Buffer.from(data))
+  r.bytes(8) // discriminator
+  const authority = r.pubkey()
+  r.bytes(3) // version + bump + mint_auth_bump
+  const u64 = () => {
+    const b = r.bytes(8)
+    let v = 0n
+    for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(b[i])
+    return v
+  }
+  return {
+    authority,
+    mintCount: u64(),
+    tier1Fee: u64(),
+    tier2Fee: u64(),
+    tier3Fee: u64(),
+    tier2Start: u64(),
+    tier3Start: u64(),
+  }
+}
+
+/** 按累计铸造数计算当前应收费率(与合约 Config::tier_fee 一致) */
+function tierFee(cfg: ChainConfigData, count: bigint): bigint {
+  if (count >= cfg.tier3Start) return cfg.tier3Fee
+  if (count >= cfg.tier2Start) return cfg.tier2Fee
+  return cfg.tier1Fee
+}
+
 function decodeMinter(data: Uint8Array): { wallet: PublicKey; enabled: boolean } {
   const r = new Reader(Buffer.from(data))
   r.bytes(8)
@@ -599,6 +644,14 @@ export async function mintIdentity(owner: string, name: string, _profileURI: str
   const ownerPk = parseSolanaAddress(owner)
   const trimmed = name.trim()
   if (trimmed.length < 1 || trimmed.length > 64) throw new Error('名称不符合要求(1-64 字符)')
+  // 读链上 config:决定铸造费档位(fee>0 时必须把 authority 作为可写 fee_receiver 传入)
+  const cfgInfo = await conn().getAccountInfo(configPda())
+  if (!cfgInfo || !discEquals(cfgInfo.data, DISC.config)) throw new Error('链上配置未初始化,请联系管理员')
+  const cfg = decodeConfig(cfgInfo.data)
+  const fee = tierFee(cfg, cfg.mintCount)
+  const feeReceiverKey = fee > 0n
+    ? writableKey(cfg.authority) // 付费档:接收账户=config authority,程序内转账
+    : readonlyKey(programId()) // Option None 占位(免费档)
   const mintKp = Keypair.generate()
   const tx = new Transaction().add(
     ix(
@@ -610,12 +663,11 @@ export async function mintIdentity(owner: string, name: string, _profileURI: str
         signerKey(mintKp.publicKey, true),
         writableKey(ata(mintKp.publicKey, ownerPk)),
         readonlyKey(mintAuthPda()),
-        readonlyKey(configPda()),
+        writableKey(configPda()), // mut:程序内 inc_mint_count() 写铸造计数
         readonlyKey(TOKEN_2022_PROGRAM_ID),
         readonlyKey(ASSOCIATED_TOKEN_PROGRAM_ID),
         readonlyKey(SystemProgram.programId),
-        // 可选铸造费接收账户(仅费率>0 时必须=config authority;Option 占位传程序 ID = None)
-        readonlyKey(programId()),
+        feeReceiverKey,
       ],
       borshString(trimmed),
     ),
@@ -839,6 +891,10 @@ export function explainSolanaChainError(err: unknown): string {
       SlotMismatch: '配件插槽与目标插槽不匹配',
       SlotOccupied: '旧装备账户与链上已装备配件不匹配',
       InvalidArweaveId: 'arweave id 不合法(空串或 43 位 base64url)',
+      InvalidAta: '装备 ATA 地址推导不匹配',
+      MintFeeReceiverRequired: '当前铸造需支付费用,但交易缺少费率接收账户(请刷新页面后重试)',
+      InvalidFeeReceiver: '费率接收账户必须是程序 authority',
+      InvalidTier: '阶梯费率配置非法(需满足 tier2_start < tier3_start)',
     }
     const mapped = table[codeMatch[1]]
     if (mapped) return mapped
