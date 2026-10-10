@@ -99,13 +99,23 @@ export interface AgentChatResult {
   action?: SignTxAction
 }
 
-export interface UnsignedTx {
+export interface EvmUnsignedTx {
   to: string
   data: string
   value: string // wei
   chainId: number
   description: string
 }
+
+/** Solana 未签名交易(用户钱包签名模式;agent 经 Jupiter/Meteora 组装,base64 wire format) */
+export interface SolanaUnsignedTx {
+  kind: 'solana'
+  tx: string // base64 编码的未签名交易(VersionedTransaction 或 legacy Transaction)
+  rpcs: string[] // 发送用 RPC 端点(按优先级;Meteora 主网技能给主网 RPC)
+  description: string
+}
+
+export type UnsignedTx = EvmUnsignedTx | SolanaUnsignedTx
 
 export interface SignTxAction {
   type: 'sign_tx'

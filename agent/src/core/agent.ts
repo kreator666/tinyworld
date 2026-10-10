@@ -6,6 +6,7 @@ import { config } from '../config'
 import { loadPersona, type LoadedPersona, getWalletAssets } from '../chain/persona'
 import { getChainContext, defaultChainKey } from '../chain/registry'
 import type { UnsignedTx } from '../chain/defi'
+import type { SolanaUnsignedTx } from '../chain/solanaExec'
 import type { Proposal, ProposalAction } from '../policy/engine'
 import { retrieveContext, writeEpisodic } from './memory'
 import { buildShareableProfile } from './ownerFacts'
@@ -32,7 +33,8 @@ export type ChatMessage =
 
 export interface SignTxAction {
   type: 'sign_tx'
-  unsignedTxs: UnsignedTx[]
+  /** EVM 未签名交易(0x hex)或 Solana 未签名交易(base64,kind='solana'),由前端按链族分别处理 */
+  unsignedTxs: (UnsignedTx | SolanaUnsignedTx)[]
   note?: string
   /** 用户钱包签名模式:Agent 组装交易时对应的提案,签名完成后回传后端记 tasks 表(限额/审计) */
   proposal?: {
@@ -322,7 +324,11 @@ export async function runAgentTurn(
       const result = (swapResult as { result?: Record<string, unknown> } | undefined)?.result
       console.log('[runAgentTurn] propose_swap result', result)
       if (result?.verdict === 'sign' && Array.isArray(result.unsignedTxs)) {
-        action = { type: 'sign_tx', unsignedTxs: result.unsignedTxs as UnsignedTx[], note: result.note as string | undefined }
+        action = {
+          type: 'sign_tx',
+          unsignedTxs: result.unsignedTxs as (UnsignedTx | SolanaUnsignedTx)[],
+          note: result.note as string | undefined,
+        }
       }
     }
     if (action) console.log('[runAgentTurn] sign_tx action extracted', action)

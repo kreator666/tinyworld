@@ -3,6 +3,7 @@ import { config } from '../config'
 import { getChainContext } from './registry'
 import { base58Decode } from '../core/base58'
 import { solanaConnection } from './personaSolana'
+import type { SolanaUnsignedTx } from './solanaExec'
 
 // ============================================================
 // Jupiter v6 兑换(Solana 家族,defi-swap-sol 技能用)
@@ -84,4 +85,23 @@ export async function executeSwap(chainKey: string, quoteResponse: unknown): Pro
   const signature = await conn.sendRawTransaction(tx.serialize())
   await conn.confirmTransaction(signature)
   return signature
+}
+
+/**
+ * 用户钱包签名模式:以用户 Phantom 公钥为 feePayer/签名者向 Jupiter 请求组装交易,
+ * 不签名不发送,返回 base64 未签名 VersionedTransaction 由前端钱包签名广播。
+ */
+export async function buildUnsignedSwap(
+  chainKey: string,
+  quoteResponse: unknown,
+  userPublicKey: string,
+): Promise<SolanaUnsignedTx> {
+  const swapTxBase64 = await buildSwapTransaction(chainKey, quoteResponse, userPublicKey)
+  const cfg = getChainContext(chainKey).cfg
+  return {
+    kind: 'solana',
+    tx: swapTxBase64,
+    rpcs: [cfg.rpc, ...(cfg.rpcFallbacks ?? [])],
+    description: 'Jupiter 兑换(SOL↔USDC)',
+  }
 }

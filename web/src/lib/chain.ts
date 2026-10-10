@@ -1,5 +1,5 @@
 import { createPublicClient, createWalletClient, custom, http, zeroAddress, type Address, type Hash } from 'viem'
-import type { UnsignedTx } from './agentApi'
+import type { EvmUnsignedTx } from './agentApi'
 import type { Equipped } from '../types'
 import { getActiveProvider } from './wallet'
 import { SLOT_TO_CATEGORY, chainParts, identityAbi, partByChainId, partsAbi } from './contracts'
@@ -541,7 +541,7 @@ async function ensureAccounts(provider: NonNullable<ReturnType<typeof getWindowE
 }
 
 /** 用户钱包对 unsigned tx 逐笔签名并发送(兼容不支持 eth_signTransaction 的钱包如 MetaMask) */
-export async function sendTransactions(owner: Address, unsignedTxs: UnsignedTx[]): Promise<string[]> {
+export async function sendTransactions(owner: Address, unsignedTxs: EvmUnsignedTx[]): Promise<string[]> {
   if (unsignedTxs.length === 0) throw new Error('没有待发送交易')
   const targetChainId = unsignedTxs[0].chainId
   if (unsignedTxs.some((tx) => tx.chainId !== targetChainId)) {

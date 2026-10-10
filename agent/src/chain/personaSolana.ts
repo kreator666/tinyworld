@@ -3,6 +3,7 @@ import {
   PublicKey,
   type AccountInfo,
   type GetProgramAccountsConfig,
+  type ParsedTransactionWithMeta,
   type RpcResponseAndContext,
   type TokenAccountsFilter,
 } from '@solana/web3.js'
@@ -130,6 +131,13 @@ export class FailoverConnection {
 
   confirmTransaction(signature: string): Promise<void> {
     return this.withFailover((c) => c.confirmTransaction(signature, 'confirmed')).then(() => undefined)
+  }
+
+  /** 读路径(sign-confirm 解析 swap 实际输出):只读调用,网络类错误重试安全 */
+  getParsedTransaction(signature: string): Promise<ParsedTransactionWithMeta | null> {
+    return this.withFailover((c) =>
+      c.getParsedTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 }),
+    )
   }
 }
 

@@ -19,6 +19,13 @@
 | hot_wallet | Agent 热钱包 | Agent 服务自动签名 | AVAX→USDC、USDC→AVAX | 热钱包内只放少量测试资金,限额内自动执行 |
 | user_wallet | 用户钱包 | 用户通过 MetaMask 签名 | AVAX→USDC、USDC→AVAX | Agent 只组装交易,用户签名后由前端直接发送 |
 
+Solana 家族技能(defi-swap-sol / defi-swap-meteora)遵循同一 `swap_mode` 配置(按链+tokenId 存 agent_settings,无记录默认 user_wallet):
+
+| 模式 | 出资/签名方 | 说明 |
+|---|---|---|
+| hot_wallet | Agent Solana 热钱包(AGENT_SOLANA_PRIVATE_KEY) | 保持原行为:Agent 签名发送(Jupiter 在请求链;Meteora 在主网) |
+| user_wallet(默认) | 用户 Phantom 钱包 | Agent 以主人 Phantom 公钥(= 链上人格 owner,与 EVM 侧同一机制)为 feePayer 组装未签名交易(base64),返回 sign_tx action;前端 Phantom 签名并自广播,结果经 /sign-confirm 回写 |
+
 - hot_wallet 的 USDC→AVAX 需要用户先 approve Agent 热钱包,审批中心放行时弹钱包授权。
 - user_wallet 的 USDC→AVAX 需要用户直接 approve Router,再签名 swap,两笔都在 MetaMask 逐笔确认。
 
@@ -94,6 +101,26 @@
    → 问答写入 messages 表,更新情景/语义记忆
 ```
 
+Solana 家族(user_wallet,defi-swap-sol / defi-swap-meteora)与 ②~⑤ 的区别:
+
+```
+⑥ Agent 组装未签名 Solana 交易(SignTxAction.unsignedTxs 元素为 { kind:'solana', tx:base64, rpcs, description })
+   Jupiter:POST /swap 直接传主人 Phantom 公钥,返回 VersionedTransaction(base64)
+   Meteora:SDK 以主人公钥为 user/feePayer 组 legacy Transaction,requireAllSignatures:false 序列化
+   proposal.protocol = 'jupiter' / 'meteora'(sign-confirm 据此路由确认链路)
+
+⑦ 前端交互(MyAgentPage.tsx,流程与 EVM 相同)
+   → chainDispatch.sendTransactions 的 Solana 分支:base64 反序列化(先 VersionedTransaction 后 legacy 回退)
+     → Phantom signTransaction(不支持时退回 signAndSendTransaction 中继)
+     → 经交易自带 rpcs 逐端点 sendRawTransaction + confirmTransaction
+   → 前端拿到 base58 signature 后调用 POST /agents/:tokenId/sign-confirm
+   → 后端按 proposal.protocol 分流:Meteora 走主网 FailoverConnection(落库记 solana-mainnet),
+     Jupiter 走请求链连接;confirmTransaction 后 getParsedTransaction 解析实际输出
+     (SOL 输出按 owner lamports 增量 + fee 还原;USDC 按 postTokenBalances 取原始金额),记 tasks 表
+```
+
+注意:user_wallet 模式下 tasks 落库在 sign-confirm 时完成(与 EVM 一致);hot_wallet 模式仍在技能 execute 内落库。
+
 ## 3. 超限额时的审批分支
 
 ⑤ 判定 needsApproval 时:提案写 `approvals` 表(pending)→ 前端控制台「任务审批中心」20s 轮询展示。
@@ -120,4 +147,4 @@
 
 - Fuji 测试池流动性失真,汇率不代表真实行情(链路本身真实可用)。
 - Sepolia 上 defi-swap 需另注 Sepolia ETH 且确认 Uniswap V2 池子流动性;当前 Sepolia 配置中 USDC 为零地址,实际 swap 需先替换为真实测试 USDC 地址。
-- user_wallet 模式目前记录 amountOut='0'(因为前端未解析 receipt 中的真实输出),仅用于审计和限额统计;如需精确金额,可在 sign-confirm 时补充 receipt 解析。
+- EVM 的 user_wallet 模式目前记录 amountOut='0'(因为前端未解析 receipt 中的真实输出),仅用于审计和限额统计;如需精确金额,可在 sign-confirm 时补充 receipt 解析。Solana 家族已在此路由解析实际输出(confirmTransaction + getParsedTransaction,SOL 按 lamports 增量 + fee 还原,代币按 postTokenBalances)。

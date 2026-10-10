@@ -1,13 +1,21 @@
+import { Buffer } from 'buffer'
+import { Connection, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
 import type { Address } from 'viem'
 import * as evm from './chain'
 import * as sol from './chainSolana'
 import { getActiveChain } from '../store/chainConfigStore'
-import type { UnsignedTx } from './agentApi'
+import type { EvmUnsignedTx, SolanaUnsignedTx, UnsignedTx } from './agentApi'
 import { useAppStore } from '../store/appStore'
 import type { WalletLogin } from '../types'
 import type { ChainContracts } from './contracts'
 import type { ChainIdentityState, ChainPartAsset, ChainPartState, MintedAgent } from './chain'
 import { isValidSolanaAddress } from './chainSolana'
+import {
+  SolanaWalletError,
+  getActiveSolanaAddress,
+  solanaSignAndSend,
+  solanaSignTransaction,
+} from './walletSolana'
 
 // ============================================================
 // 链族分发层:每个 action 按当前激活链的 family 路由到
@@ -125,9 +133,106 @@ export async function approveErc20(owner: string, token: string, spender: string
   return evm.approveErc20(owner as Address, token as Address, spender as Address, amount)
 }
 
+/** Solana 反序列化:优先 VersionedTransaction(Jupiter),失败退回 legacy Transaction(Meteora SDK) */
+function isSolanaUnsignedTx(item: UnsignedTx): item is SolanaUnsignedTx {
+  return 'kind' in item && item.kind === 'solana'
+}
+
+function deserializeSolanaTx(txBase64: string): Transaction | VersionedTransaction {
+  const bytes = new Uint8Array(Buffer.from(txBase64, 'base64'))
+  try {
+    return VersionedTransaction.deserialize(bytes)
+  } catch {
+    return Transaction.from(bytes)
+  }
+}
+
+async function latestBlockhashWithFailover(rpcs: string[]): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
+  let lastErr: unknown = null
+  for (const url of rpcs) {
+    try {
+      return await new Connection(url, 'confirmed').getLatestBlockhash('confirmed')
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+}
+
+async function sendRawWithFailover(raw: Uint8Array, rpcs: string[]): Promise<string> {
+  let lastErr: unknown = null
+  for (const url of rpcs) {
+    try {
+      return await new Connection(url, 'confirmed').sendRawTransaction(raw)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+}
+
+async function confirmWithFailover(
+  signature: string,
+  rpcs: string[],
+  latest: { blockhash: string; lastValidBlockHeight: number },
+): Promise<void> {
+  let lastErr: unknown = null
+  for (const url of rpcs) {
+    try {
+      await new Connection(url, 'confirmed').confirmTransaction(
+        { signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+        'confirmed',
+      )
+      return
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+}
+
+/** Solana 用户钱包签名模式:Phantom 逐笔签名(base64 反序列化),经交易自带 RPC 端点发送并确认
+ *
+ * 与 chainSolana.sendTx 同一策略:优先 signTransaction + 前端直连 RPC 发送
+ * (避开 Phantom 中继在部分网络的 403),钱包不支持 signTransaction 时退回中继发送。
+ * legacy 交易(Meteora)签名前刷新 blockhash(feePayer 即用户);
+ * VersionedTransaction(Jupiter)的 blockhash 由 Jupiter 组装时内嵌,不做改动。
+ */
+async function sendSolanaTransactions(unsignedTxs: UnsignedTx[]): Promise<string[]> {
+  const walletAddr = getActiveSolanaAddress()
+  if (!walletAddr) throw new Error('请先连接 Phantom 钱包')
+  const signatures: string[] = []
+  for (const item of unsignedTxs) {
+    if (!isSolanaUnsignedTx(item)) throw new Error('待签名交易不是 Solana 格式')
+    const tx = deserializeSolanaTx(item.tx)
+    const latest = await latestBlockhashWithFailover(item.rpcs)
+    if (tx instanceof Transaction) {
+      tx.feePayer = new PublicKey(walletAddr)
+      tx.recentBlockhash = latest.blockhash
+      tx.lastValidBlockHeight = latest.lastValidBlockHeight
+    }
+    let signed: Transaction | VersionedTransaction
+    try {
+      signed = (await solanaSignTransaction(tx)) as Transaction | VersionedTransaction
+    } catch (err) {
+      if (err instanceof SolanaWalletError && err.code === 'UNSUPPORTED') {
+        const signature = await solanaSignAndSend(tx)
+        await confirmWithFailover(signature, item.rpcs, latest)
+        signatures.push(signature)
+        continue
+      }
+      throw err
+    }
+    const signature = await sendRawWithFailover(signed.serialize(), item.rpcs)
+    await confirmWithFailover(signature, item.rpcs, latest)
+    signatures.push(signature)
+  }
+  return signatures
+}
+
 export async function sendTransactions(owner: string, unsignedTxs: UnsignedTx[]): Promise<string[]> {
-  if (isSolana()) throw new Error('Solana 链暂不支持该交易发送方式')
-  return evm.sendTransactions(owner as Address, unsignedTxs)
+  if (isSolana()) return sendSolanaTransactions(unsignedTxs)
+  return evm.sendTransactions(owner as Address, unsignedTxs as EvmUnsignedTx[])
 }
 
 export function explainChainError(err: unknown): string {

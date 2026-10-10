@@ -3,14 +3,15 @@ import { LBCLMM } from '@meteora-ag/dlmm-sdk'
 import BN from 'bn.js'
 import { config } from '../config'
 import { base58Decode } from '../core/base58'
-import { MAINNET_RPC, mainnetConnection } from './solanaExec'
+import { MAINNET_RPC, MAINNET_RPC_FALLBACKS, mainnetConnection } from './solanaExec'
+import type { SolanaUnsignedTx } from './solanaExec'
 
 // ============================================================
 // Meteora DLMM 兑换(Solana 家族,defi-swap-meteora 技能用)
 // split-brain:身份链(solana-devnet)只读;兑换统一在主网执行(小金额),见 solanaExec.ts。
 // SDK(@meteora-ag/dlmm-sdk 0.7.7)负责报价/组交易(含 wSOL wrap/unwrap、ATA 幂等创建),
-// 本模块只做:池地址解析(可用 METEORA_POOL_ADDRESS 轮换)、热钱包签名、
-// 经主网故障转移连接发送并确认。
+// 本模块做:池地址解析(可用 METEORA_POOL_ADDRESS 轮换)、交易组装(含 SDK 可选账户缺陷修复)、
+// hot_wallet(热钱包签名发送)与 user_wallet(组装未签名交易给前端 Phantom 签名)两条路径。
 // ============================================================
 
 /** Meteora DLMM 程序地址(devnet 与 mainnet 同地址,官方部署) */
@@ -28,9 +29,14 @@ export function meteoraPoolAddress(): PublicKey {
   return new PublicKey(process.env.METEORA_POOL_ADDRESS || DEFAULT_POOL_ADDRESS)
 }
 
-/** 技能可用前提:配置了热钱包私钥且池地址可解析 */
+/** 技能可用前提(hot_wallet):配置了热钱包私钥且池地址可解析 */
 export function isMeteoraSwapConfigured(): boolean {
   if (!config.agentSolanaKey) return false
+  return isMeteoraPoolConfigured()
+}
+
+/** 池地址可解析即可用(user_wallet 模式下不需要热钱包私钥) */
+export function isMeteoraPoolConfigured(): boolean {
   try {
     meteoraPoolAddress()
     return true
@@ -91,6 +97,82 @@ export async function quoteMeteoraSwap(
 }
 
 /**
+ * SDK 组装兑换交易(ATA 幂等创建 + wSOL wrap/unwrap + slippage 内 minOut),
+ * user 为交易 owner/feePayer;只填 blockhash,不签名。
+ * 同时修 SDK 0.7.7 内嵌 IDL 的可选账户缺陷(见下方注释)。
+ */
+async function assembleSwapTx(
+  pair: LBCLMM,
+  inputMint: PublicKey,
+  amountAtomic: bigint,
+  slippageBps: number,
+  user: PublicKey,
+): Promise<{ tx: Transaction; blockhash: string; lastValidBlockHeight: number }> {
+  const swapForY = inputMint.equals(pair.tokenX.publicKey)
+  if (!swapForY && !inputMint.equals(pair.tokenY.publicKey)) {
+    throw new Error(`Meteora 池不支持输入代币 ${inputMint.toBase58()}`)
+  }
+  const binArrays = await pair.getBinArrays()
+  const quote = pair.swapQuote(new BN(amountAtomic.toString()), swapForY, new BN(slippageBps), binArrays)
+
+  const tx: Transaction = await pair.swap({
+    inToken: inputMint,
+    outToken: swapForY ? pair.tokenY.publicKey : pair.tokenX.publicKey,
+    inAmount: new BN(amountAtomic.toString()),
+    minOutAmount: quote.minOutAmount,
+    lbPair: pair.pubkey,
+    user,
+    binArraysPubkey: quote.binArraysPubkey,
+  })
+
+  // SDK 0.7.7 + 内嵌 IDL 的可选账户缺陷:bin_array_bitmap_extension 被标成只读,
+  // 主网上带扩展账户的池子会触发 ConstraintMut(devnet 池无扩展账户故未暴露)。
+  // 修复:在已组好的交易里把扩展账户翻成 writable(程序 IDL 要求 isMut=true)。
+  const extension = (pair as unknown as { binArrayBitmapExtension?: { publicKey: PublicKey } | null }).binArrayBitmapExtension
+  if (extension) {
+    for (const ix of tx.instructions) {
+      if (ix.programId.toBase58() !== DLMM_PROGRAM_ID) continue
+      const key = ix.keys.find((k) => k.pubkey.equals(extension.publicKey))
+      if (key) key.isWritable = true
+    }
+  }
+
+  const { blockhash, lastValidBlockHeight } = await readConnection().getLatestBlockhash('confirmed')
+  tx.recentBlockhash = blockhash
+  tx.lastValidBlockHeight = lastValidBlockHeight
+  tx.feePayer = user
+  return { tx, blockhash, lastValidBlockHeight }
+}
+
+/**
+ * 用户钱包签名模式:以用户 Phantom 公钥为 owner/feePayer 组装未签名交易,
+ * 返回 base64 wire format(未签名 legacy Transaction 需 requireAllSignatures:false 序列化)
+ * 由前端 Phantom 签名广播。
+ */
+export async function buildMeteoraSwap(
+  chainKey: string,
+  inputMint: string,
+  outputMint: string,
+  amountAtomic: bigint,
+  slippageBps: number,
+  userPublicKey: string,
+): Promise<SolanaUnsignedTx> {
+  const pair = await loadPair(chainKey)
+  const outMint = new PublicKey(outputMint)
+  const swapForY = new PublicKey(inputMint).equals(pair.tokenX.publicKey)
+  if (swapForY && !outMint.equals(pair.tokenY.publicKey)) {
+    throw new Error(`Meteora 池不支持输出代币 ${outputMint}`)
+  }
+  const { tx } = await assembleSwapTx(pair, new PublicKey(inputMint), amountAtomic, slippageBps, new PublicKey(userPublicKey))
+  return {
+    kind: 'solana',
+    tx: Buffer.from(tx.serialize({ requireAllSignatures: false, verifySignatures: false })).toString('base64'),
+    rpcs: [MAINNET_RPC, ...MAINNET_RPC_FALLBACKS],
+    description: 'Meteora DLMM 兑换(SOL↔USDC,主网)',
+  }
+}
+
+/**
  * 执行兑换:SDK 组装交易(ATA 幂等创建 + wSOL wrap/unwrap + slippage 内 minOut),
  * 热钱包(feePayer + 唯一签名者)签名,经 FailoverConnection 发送并确认(带 fresh blockhash 重试,
  * 不 skipPreflight——模拟能拦住真实错误)。返回 base58 签名。
@@ -110,47 +192,21 @@ export async function executeMeteoraSwap(
   if (!swapForY && !inMint.equals(pair.tokenY.publicKey)) {
     throw new Error(`Meteora 池不支持输入代币 ${inputMint}`)
   }
-
-  const binArrays = await pair.getBinArrays()
-  const quote = pair.swapQuote(new BN(amountAtomic.toString()), swapForY, new BN(slippageBps), binArrays)
-
-  const tx: Transaction = await pair.swap({
-    inToken: inMint,
-    outToken: outMint,
-    inAmount: new BN(amountAtomic.toString()),
-    minOutAmount: quote.minOutAmount,
-    lbPair: pair.pubkey,
-    user: wallet.publicKey,
-    binArraysPubkey: quote.binArraysPubkey,
-  })
-
-  // SDK 0.7.7 + 内嵌 IDL 的可选账户缺陷:bin_array_bitmap_extension 被标成只读,
-  // 主网上带扩展账户的池子会触发 ConstraintMut(devnet 池无扩展账户故未暴露)。
-  // 修复:在已组好的交易里把扩展账户翻成 writable(程序 IDL 要求 isMut=true)。
-  const extension = (pair as unknown as { binArrayBitmapExtension?: { publicKey: PublicKey } | null }).binArrayBitmapExtension
-  if (extension) {
-    for (const ix of tx.instructions) {
-      if (ix.programId.toBase58() !== DLMM_PROGRAM_ID) continue
-      const key = ix.keys.find((k) => k.pubkey.equals(extension.publicKey))
-      if (key) key.isWritable = true
-    }
+  if (swapForY && !outMint.equals(pair.tokenY.publicKey)) {
+    throw new Error(`Meteora 池不支持输出代币 ${outputMint}`)
   }
 
   const conn = mainnetConnection()
   let lastErr: unknown = null
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
-      const { blockhash, lastValidBlockHeight } = await readConnection().getLatestBlockhash('confirmed')
-      tx.recentBlockhash = blockhash
-      tx.lastValidBlockHeight = lastValidBlockHeight
-      tx.feePayer = wallet.publicKey
-      tx.sign(wallet)
+      const { tx } = await assembleSwapTx(pair, inMint, amountAtomic, slippageBps, wallet.publicKey)
       const signature = await conn.sendRawTransaction(tx.serialize())
       await conn.confirmTransaction(signature)
       return signature
     } catch (e) {
       lastErr = e
-      // blockhash 过期/网络抖动:换新 blockhash 重发(同签名幂等,不会双花)
+      // blockhash 过期/网络抖动:assembleSwapTx 每轮取新 blockhash 重签重发(同指令幂等,不会双花)
       if (attempt < 4) await new Promise((r) => setTimeout(r, 2000 * attempt))
     }
   }

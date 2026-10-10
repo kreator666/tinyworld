@@ -62,3 +62,13 @@ export function mainnetConnection(): FailoverConnection {
 export function mainnetTxUrl(signature: string): string {
   return `${MAINNET_EXPLORER}/tx/${signature}`
 }
+
+/** 用户钱包签名模式:Agent 组装的 Solana 未签名交易(前端 Phantom 签名后直接广播) */
+export interface SolanaUnsignedTx {
+  kind: 'solana'
+  /** base64 编码的未签名交易(VersionedTransaction 或 legacy Transaction 的 wire format) */
+  tx: string
+  /** 发送用 RPC 端点(按优先级;主网技能给主网 RPC,devnet 技能给链 RPC) */
+  rpcs: string[]
+  description: string // human-readable,如 "Jupiter 兑换(SOL↔USDC)"
+}

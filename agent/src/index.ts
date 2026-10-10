@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server'
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
-import { keccak256, toBytes, type Hex } from 'viem'
+import { keccak256, toBytes, formatUnits, type Hex } from 'viem'
 import { config } from './config'
 import { PersonaError, loadPersona, ownerOf, resolveTokenId } from './chain/persona'
 import { resolveChainKey, getChainContext } from './chain/registry'
@@ -29,6 +29,9 @@ import { authRequired, assertAgentOwnership } from './middleware/auth'
 import { getAgentStats } from './core/stats'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
+import { SOL_MINT, usdcMintOf } from './chain/jupiter'
+import { solanaConnection, type FailoverConnection } from './chain/personaSolana'
+import { EXEC_CHAIN_KEY, MAINNET_USDC_MINT, mainnetConnection, mainnetTxUrl } from './chain/solanaExec'
 import { executeProposal, recordDefiTask, describeSwapResult } from './skills/defi-swap'
 import { executeLendingProposal } from './skills/defi-lending'
 import type { Proposal } from './policy/engine'
@@ -630,6 +633,10 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
   try {
     const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
     await assertAgentOwnership(c, chainKey, tokenId)
+    // Solana 家族(Jupiter / Meteora):前端 Phantom 已签名自广播,这里走链上确认 + 解析实际输出
+    if (proposal.protocol === 'jupiter' || proposal.protocol === 'meteora') {
+      return confirmSolanaSign(c, chainKey, tokenId, body.txHash, proposal, body.conversationId)
+    }
     const receipt = await waitForTxReceipt(chainKey, body.txHash as Hex)
     if (receipt.status !== 'success') {
       // revert:记失败任务(不计入限额),主动告知失败
@@ -666,6 +673,91 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
     return c.json({ ok: true, confirmed: false, amountOut: null, notice })
   }
 })
+
+/** Solana 请求链浏览器交易链接(solana 的 explorer 带 ?cluster= 时路径要拼在 query 之前) */
+function solanaTxUrl(chainKey: string, signature: string): string {
+  const explorer = getChainContext(chainKey).cfg.explorer
+  return explorer.includes('?')
+    ? `${explorer.split('?')[0]}/tx/${signature}?${explorer.split('?')[1]}`
+    : `${explorer}/tx/${signature}`
+}
+
+/** 从已确认交易的 parsed meta 解析主人实际收到的输出:
+ * SOL 按 lamports 增量还原(owner 即 feePayer,增量已扣手续费,加回得实收);
+ * 代币按 postTokenBalances(owner+mint 匹配)取原始金额。解析失败返回 null */
+async function parseSolanaSwapOut(
+  conn: FailoverConnection,
+  txHash: string,
+  owner: string,
+  outMint: string,
+  outIsNative: boolean,
+): Promise<bigint | null> {
+  const parsed = await conn.getParsedTransaction(txHash)
+  const meta = parsed?.meta
+  if (!meta || meta.err) return null
+  if (outIsNative) {
+    const keys = parsed.transaction.message.accountKeys
+    const idx = keys.findIndex((k) => ('pubkey' in k ? k.pubkey.toBase58() : String(k)) === owner)
+    if (idx < 0) return null
+    const delta = BigInt(meta.postBalances[idx] ?? 0) - BigInt(meta.preBalances[idx] ?? 0)
+    return delta + BigInt(meta.fee)
+  }
+  const post = (meta.postTokenBalances ?? []).find((b) => b.mint === outMint && b.owner === owner)
+  if (!post) return null
+  return BigInt(post.uiTokenAmount.amount)
+}
+
+/** Solana 家族(Jupiter / Meteora)的 sign-confirm:
+ * 链上确认(Meteora 主网 / Jupiter 请求链)→ 解析实际输出 → 记 tasks 审计表 → 追加 assistant 消息 */
+async function confirmSolanaSign(
+  c: Context,
+  chainKey: string,
+  tokenId: number,
+  txHash: string,
+  proposal: Proposal,
+  conversationId?: string,
+) {
+  const isMeteora = proposal.protocol === 'meteora'
+  // Meteora 在主网执行(与热钱包路径同记 EXEC_CHAIN_KEY);Jupiter 在请求链执行
+  const taskChainKey = isMeteora ? EXEC_CHAIN_KEY : chainKey
+  const conn = isMeteora ? mainnetConnection() : solanaConnection(chainKey)
+  const params = proposal.params
+  const owner = params.owner ?? ''
+  const outMint = params.tokenOut === 'SOL' ? SOL_MINT : isMeteora ? MAINNET_USDC_MINT : usdcMintOf(chainKey)
+  const amountInHuman = formatUnits(BigInt(params.amountIn), params.tokenIn === 'SOL' ? 9 : 6)
+  const txUrl = isMeteora ? mainnetTxUrl(txHash) : solanaTxUrl(chainKey, txHash)
+  const noticeOf = (amountOut: bigint | null, confirmed: boolean): string => {
+    if (!confirmed) return `你的签名交易已广播,但链上还没确认到账,我把签名记下了,稍后帮你盯一下。`
+    if (amountOut == null) {
+      return `已确认你的兑换成交(${amountInHuman} ${params.tokenIn} → ${params.tokenOut}),但实际输出解析失败,明细以浏览器为准:${txUrl}`
+    }
+    return `已确认你的兑换成交:${amountInHuman} ${params.tokenIn} 换得 ${formatUnits(amountOut, params.tokenOut === 'SOL' ? 9 : 6)} ${params.tokenOut}。交易签名 ${txHash},浏览器明细:${txUrl}`
+  }
+  const record = (amountOut: string, status: 'done' | 'failed' = 'done') =>
+    recordDefiTask(taskChainKey, tokenId, proposal, { txHash, amountOut, usdValue: proposal.estimatedValueUsd ?? null }, status)
+
+  try {
+    await conn.confirmTransaction(txHash)
+  } catch (err) {
+    // 确认超时/RPC 失败:不阻塞前端,记一笔待确认(金额 0),让 Agent 稍后自查
+    console.warn('[sign-confirm] Solana 确认失败,按待确认处理:', err instanceof Error ? err.message : String(err))
+    await record('0')
+    const notice = noticeOf(null, false)
+    if (conversationId) await appendAssistantMessage(chainKey, conversationId, notice)
+    return c.json({ ok: true, confirmed: false, amountOut: null, notice })
+  }
+  // 确认后解析失败不影响审计主流程:金额记 0,文案提示以浏览器为准
+  let amountOut: bigint | null = null
+  try {
+    amountOut = await parseSolanaSwapOut(conn, txHash, owner, outMint, params.tokenOut === 'SOL')
+  } catch (err) {
+    console.warn('[sign-confirm] Solana 输出解析失败:', err instanceof Error ? err.message : String(err))
+  }
+  await record(amountOut?.toString() ?? '0')
+  const notice = noticeOf(amountOut, true)
+  if (conversationId) await appendAssistantMessage(chainKey, conversationId, notice)
+  return c.json({ ok: true, confirmed: true, amountOut: amountOut?.toString() ?? null, notice, explorer: txUrl })
+}
 
 /** 统一错误出口:人格完整性问题 422,技能问题按其 status,LLM 网关异常 502,其余 500 */
 function handleErr(c: Context, err: unknown) {

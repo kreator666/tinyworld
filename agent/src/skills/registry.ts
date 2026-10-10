@@ -5,7 +5,7 @@ import { getDb } from '../db'
 import { config } from '../config'
 import { PERMISSION_SOCIAL, getAgentPermissions } from '../chain/persona'
 import { getChainContext } from '../chain/registry'
-import { isMeteoraSwapConfigured } from '../chain/meteora'
+import { isMeteoraPoolConfigured } from '../chain/meteora'
 
 // ============================================================
 // 技能注册表(设计文档 §5):技能 = 清单 + 一组 Mastra 工具
@@ -65,7 +65,7 @@ export function isSkillAvailable(chainKey: string, manifest: SkillManifest): boo
   if (manifest.solanaOnly) {
     if (ctx.family !== 'solana') return false
     if (manifest.chainFeature === 'jupiterApi' && !ctx.cfg.solana?.jupiterApiUrl) return false
-    if (manifest.chainFeature === 'meteoraPool' && !isMeteoraSwapConfigured()) return false
+    if (manifest.chainFeature === 'meteoraPool' && !isMeteoraPoolConfigured()) return false
   }
   return true
 }
