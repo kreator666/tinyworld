@@ -124,6 +124,18 @@ export async function executeMeteoraSwap(
     binArraysPubkey: quote.binArraysPubkey,
   })
 
+  // SDK 0.7.7 + 内嵌 IDL 的可选账户缺陷:bin_array_bitmap_extension 被标成只读,
+  // 主网上带扩展账户的池子会触发 ConstraintMut(devnet 池无扩展账户故未暴露)。
+  // 修复:在已组好的交易里把扩展账户翻成 writable(程序 IDL 要求 isMut=true)。
+  const extension = (pair as unknown as { binArrayBitmapExtension?: { publicKey: PublicKey } | null }).binArrayBitmapExtension
+  if (extension) {
+    for (const ix of tx.instructions) {
+      if (ix.programId.toBase58() !== DLMM_PROGRAM_ID) continue
+      const key = ix.keys.find((k) => k.pubkey.equals(extension.publicKey))
+      if (key) key.isWritable = true
+    }
+  }
+
   const conn = mainnetConnection()
   let lastErr: unknown = null
   for (let attempt = 1; attempt <= 4; attempt++) {
