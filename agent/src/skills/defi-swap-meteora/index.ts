@@ -3,33 +3,42 @@ import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { formatUnits, parseUnits } from 'viem'
 import { getDb } from '../../db'
-import { getChainContext } from '../../chain/registry'
-import { SOL_MINT, usdcMintOf } from '../../chain/jupiter'
+import { SOL_MINT } from '../../chain/jupiter'
 import { executeMeteoraSwap, isMeteoraSwapConfigured, quoteMeteoraSwap } from '../../chain/meteora'
+import { EXEC_CHAIN_KEY, MAINNET_USDC_MINT, MAX_SWAP_SOL_IN, MAX_SWAP_USDC_IN, mainnetTxUrl } from '../../chain/solanaExec'
 import type { SkillDef } from '../registry'
 
 // ============================================================
-// 内置技能 defi-swap-meteora:Solana 家族真实兑换(SOL↔USDC),经 Meteora DLMM 执行。
-// devnet 定期清理后 Raydium/Orca/Jupiter 程序均不存在,Meteora DLMM 是 devnet 上唯一真实 DEX;
-// 本技能是 devnet 上真正能成交的兑换技能(agent 热钱包直接执行,池见 chain/meteora.ts)。
-// 可用前提:配置 AGENT_SOLANA_PRIVATE_KEY + 池地址(chain/meteora.ts 默认值或 METEORA_POOL_ADDRESS);
-// 不满足时 isSkillAvailable 隐藏本技能,工具 execute 兜底返回提示。每笔成交落 tasks 表审计。
+// 内置技能 defi-swap-meteora:Solana 主网真实兑换(SOL↔USDC),经 Meteora DLMM 执行。
+// split-brain:身份链(solana-devnet)只读,兑换在主网执行(小金额,见 chain/solanaExec.ts)。
+// 可用前提:配置 AGENT_SOLANA_PRIVATE_KEY(主网热钱包)+ 池地址(chain/meteora.ts 默认值
+// 或 METEORA_POOL_ADDRESS);不满足时工具 execute 兜底返回提示。每笔成交落 tasks 表审计。
 // ============================================================
 
-const SLIPPAGE_BPS = 100 // 滑点 1%(测试网流动性浅,给宽一点)
+const SLIPPAGE_BPS = 100 // 滑点 1%
 // SOL 9 位小数(lamports),USDC 6 位小数
 const DECIMALS: Record<'SOL' | 'USDC', number> = { SOL: 9, USDC: 6 }
 
 type TokenSymbol = keyof typeof DECIMALS
 
-/** 代币符号 → mint(USDC 取链配置;未配置会抛,被 execute 的 catch 兜成"执行失败:…") */
-function mintOf(chainKey: string, symbol: TokenSymbol): string {
-  return symbol === 'SOL' ? SOL_MINT : usdcMintOf(chainKey)
+/** 代币符号 → mint(USDC 固定主网 Circle USDC,与执行层一致) */
+function mintOf(symbol: TokenSymbol): string {
+  return symbol === 'SOL' ? SOL_MINT : MAINNET_USDC_MINT
 }
 
-/** 已执行的 defi 交易落 tasks 表(审计;字段约定与 EVM 侧 recordDefiTask 一致) */
+/** 金额硬顶校验(真钱护栏):按输入币种限制单笔规模 */
+function checkCap(tokenIn: TokenSymbol, amountHuman: number): string | null {
+  if (tokenIn === 'SOL' && amountHuman > MAX_SWAP_SOL_IN) {
+    return `单笔兑换输入上限 ${MAX_SWAP_SOL_IN} SOL(SOLANA_MAX_SWAP_SOL_IN 可调),请拆小金额`
+  }
+  if (tokenIn === 'USDC' && amountHuman > MAX_SWAP_USDC_IN) {
+    return `单笔兑换输入上限 ${MAX_SWAP_USDC_IN} USDC(SOLANA_MAX_SWAP_USDC_IN 可调),请拆小金额`
+  }
+  return null
+}
+
+/** 已执行的 defi 交易落 tasks 表(审计;执行链记 solana-mainnet,与身份链区分) */
 async function recordDefiTask(
-  chainKey: string,
   tokenId: number,
   payload: { action: string; params: Record<string, string>; reason: string },
   result: { txHash: string; amountOut: string },
@@ -37,7 +46,7 @@ async function recordDefiTask(
   const db = await getDb()
   await db.query('INSERT INTO tasks (id, chain_key, token_id, type, status, payload, result) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
     randomUUID(),
-    chainKey,
+    EXEC_CHAIN_KEY,
     tokenId,
     'defi',
     'done',
@@ -52,7 +61,7 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
   return createTool({
     id: 'propose_swap',
     description:
-      '发起一笔 Solana 兑换(SOL↔USDC),由 Meteora DLMM 路由、Agent 热钱包自动执行。兑换完成后会返回交易签名与浏览器链接。',
+      '发起一笔 Solana 主网兑换(SOL↔USDC),由 Meteora DLMM 路由、Agent 热钱包自动执行。兑换完成后会返回交易签名与浏览器链接。',
     inputSchema: z.object({
       tokenIn: z.enum(['SOL', 'USDC']).describe('支付币种:SOL 或 USDC'),
       tokenOut: z.enum(['SOL', 'USDC']).describe('目标币种:SOL 或 USDC'),
@@ -70,15 +79,17 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
         }
         const tokenIn = context.tokenIn as TokenSymbol
         const tokenOut = context.tokenOut as TokenSymbol
+        const amountHuman = Number(context.amountIn)
+        if (!Number.isFinite(amountHuman) || amountHuman <= 0) return { result: '执行失败:amountIn 必须大于 0' }
+        const capErr = checkCap(tokenIn, amountHuman)
+        if (capErr) return { result: `执行失败:${capErr}` }
         const amountIn = parseUnits(context.amountIn, DECIMALS[tokenIn])
-        if (amountIn <= 0n) return { result: '执行失败:amountIn 必须大于 0' }
 
-        const quote = await quoteMeteoraSwap(chainKey, mintOf(chainKey, tokenIn), mintOf(chainKey, tokenOut), amountIn, SLIPPAGE_BPS)
+        const quote = await quoteMeteoraSwap(chainKey, mintOf(tokenIn), mintOf(tokenOut), amountIn, SLIPPAGE_BPS)
         const amountOut = formatUnits(BigInt(quote.outAmount), DECIMALS[tokenOut])
 
-        const signature = await executeMeteoraSwap(chainKey, mintOf(chainKey, tokenIn), mintOf(chainKey, tokenOut), amountIn, SLIPPAGE_BPS)
+        const signature = await executeMeteoraSwap(chainKey, mintOf(tokenIn), mintOf(tokenOut), amountIn, SLIPPAGE_BPS)
         await recordDefiTask(
-          chainKey,
           tokenId,
           {
             action: 'swap',
@@ -87,13 +98,8 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
           },
           { txHash: signature, amountOut },
         )
-        const explorer = getChainContext(chainKey).cfg.explorer
-        // solana 的 explorer 带 query(?cluster=devnet),路径要拼在 query 之前
-        const txUrl = explorer.includes('?')
-          ? `${explorer.split('?')[0]}/tx/${signature}?${explorer.split('?')[1]}`
-          : `${explorer}/tx/${signature}`
         return {
-          result: `已确认兑换成交:${context.amountIn} ${tokenIn} 经 Meteora DLMM 换得约 ${amountOut} ${tokenOut}。交易签名 ${signature},浏览器明细:${txUrl}`,
+          result: `已确认兑换成交:${context.amountIn} ${tokenIn} 经 Meteora DLMM(主网)换得约 ${amountOut} ${tokenOut}。交易签名 ${signature},浏览器明细:${mainnetTxUrl(signature)}`,
         }
       } catch (e) {
         return { result: `执行失败:${e instanceof Error ? e.message : String(e)}` }
@@ -106,8 +112,8 @@ export const defiSwapMeteora: SkillDef = {
   manifest: {
     id: 'defi-swap-meteora',
     name: 'Meteora 兑换',
-    version: '1.0.0',
-    description: '经 Meteora DLMM 在 Solana devnet 上真实兑换 SOL↔USDC(agent 热钱包执行,devnet 上唯一可用的兑换)',
+    version: '1.1.0',
+    description: '经 Meteora DLMM 在 Solana 主网真实兑换 SOL↔USDC(agent 主网热钱包执行,小金额)',
     tools: ['propose_swap'],
     permissions: [],
     scope: 'owner', // 资产操作,仅限主人对话

@@ -55,3 +55,4 @@ onchain.so
 pda.json
 .agent-sol.key
 setup-agent-liquidity.cjs
+.mainnet-hot.key

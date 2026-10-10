@@ -1,29 +1,27 @@
-import { Connection, Keypair, PublicKey, Transaction, type Cluster } from '@solana/web3.js'
-import { LBCLMM, LBCLMM_PROGRAM_IDS } from '@meteora-ag/dlmm-sdk'
+import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js'
+import { LBCLMM } from '@meteora-ag/dlmm-sdk'
 import BN from 'bn.js'
 import { config } from '../config'
-import { getChainContext } from './registry'
 import { base58Decode } from '../core/base58'
-import { solanaConnection } from './personaSolana'
+import { MAINNET_RPC, mainnetConnection } from './solanaExec'
 
 // ============================================================
 // Meteora DLMM 兑换(Solana 家族,defi-swap-meteora 技能用)
-// devnet 上唯一真实可用的 DEX 程序(DLMM program LBUZKhRx...);
+// split-brain:身份链(solana-devnet)只读;兑换统一在主网执行(小金额),见 solanaExec.ts。
 // SDK(@meteora-ag/dlmm-sdk 0.7.7)负责报价/组交易(含 wSOL wrap/unwrap、ATA 幂等创建),
 // 本模块只做:池地址解析(可用 METEORA_POOL_ADDRESS 轮换)、热钱包签名、
-// 经 FailoverConnection 发送并确认。
-// 池创建/加流动性见 scripts/meteora-create-pool.cjs(devnet 预置池,见 DEFAULT_POOL_ADDRESS)。
+// 经主网故障转移连接发送并确认。
 // ============================================================
 
 /** Meteora DLMM 程序地址(devnet 与 mainnet 同地址,官方部署) */
 export const DLMM_PROGRAM_ID = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo'
 
 /**
- * 我们已注入流动性的 devnet 池(WSOL/tUSDC,binStep=100,activeBinId=-162 ≈ 199.5 USDC/SOL)。
- * devnet 定期重置后须重建并用 METEORA_POOL_ADDRESS 指向新池(重建方法:scripts/meteora-create-pool.cjs);
- * 主网应通过环境变量覆盖为本方自有池。
+ * 主网 SOL/USDC DLMM 池(扫描自链上流动性排序:USDC ~4.2万 / WSOL ~1.6k,binStep=100)。
+ * 生产应通过 METEORA_POOL_ADDRESS 指向本方自有池;devnet 池(CFqdEF2...)仅供 devnet 演示,
+ * devnet 重置后重建方法见 scripts/meteora-create-pool.cjs。
  */
-const DEFAULT_POOL_ADDRESS = 'CFqdEF2HGnXTbKyeUAX7oDUQojus9JHegfhj8y1T4gua'
+const DEFAULT_POOL_ADDRESS = '6WTbcDmtqDNwxxLe9YzHzpSSBKQ7AduZG7SmYWpRwjZZ'
 
 /** 池地址(env METEORA_POOL_ADDRESS 优先;非法地址直接抛) */
 export function meteoraPoolAddress(): PublicKey {
@@ -41,28 +39,17 @@ export function isMeteoraSwapConfigured(): boolean {
   }
 }
 
-/** SDK 读路径用连接(主 RPC;发送/确认走 solanaConnection 故障转移) */
-const readConns = new Map<string, Connection>()
-function readConnection(chainKey: string): Connection {
-  let conn = readConns.get(chainKey)
-  if (!conn) {
-    conn = new Connection(getChainContext(chainKey).cfg.rpc, 'confirmed')
-    readConns.set(chainKey, conn)
-  }
-  return conn
+/** SDK 读路径用主网连接(发送/确认走主网故障转移连接) */
+let readConn: Connection | null = null
+function readConnection(): Connection {
+  if (!readConn) readConn = new Connection(MAINNET_RPC, 'confirmed')
+  return readConn
 }
 
-function clusterOf(chainKey: string): Cluster {
-  // 目前只服务 devnet;solana-devnet 的 chainId 103 为 devnet 哨兵
-  const chainId = getChainContext(chainKey).cfg.chainId
-  if (chainId === 103) return 'devnet'
-  return 'mainnet-beta'
-}
-
-async function loadPair(chainKey: string): Promise<LBCLMM> {
-  const conn = readConnection(chainKey)
-  const [pair] = await LBCLMM.createMultiple(conn, [meteoraPoolAddress()], { cluster: clusterOf(chainKey) })
-  if (!pair) throw new Error(`[${chainKey}] 无法加载 Meteora 池 ${meteoraPoolAddress().toBase58()}`)
+async function loadPair(_chainKey: string): Promise<LBCLMM> {
+  const conn = readConnection()
+  const [pair] = await LBCLMM.createMultiple(conn, [meteoraPoolAddress()], { cluster: 'mainnet-beta' })
+  if (!pair) throw new Error(`无法加载 Meteora 池 ${meteoraPoolAddress().toBase58()}`)
   return pair
 }
 
@@ -137,11 +124,11 @@ export async function executeMeteoraSwap(
     binArraysPubkey: quote.binArraysPubkey,
   })
 
-  const conn = solanaConnection(chainKey)
+  const conn = mainnetConnection()
   let lastErr: unknown = null
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
-      const { blockhash, lastValidBlockHeight } = await readConnection(chainKey).getLatestBlockhash('confirmed')
+      const { blockhash, lastValidBlockHeight } = await readConnection().getLatestBlockhash('confirmed')
       tx.recentBlockhash = blockhash
       tx.lastValidBlockHeight = lastValidBlockHeight
       tx.feePayer = wallet.publicKey
@@ -151,7 +138,7 @@ export async function executeMeteoraSwap(
       return signature
     } catch (e) {
       lastErr = e
-      // blockhash 过期/网络抖动:devnet 常见,换新 blockhash 重发(同签名幂等,不会双花)
+      // blockhash 过期/网络抖动:换新 blockhash 重发(同签名幂等,不会双花)
       if (attempt < 4) await new Promise((r) => setTimeout(r, 2000 * attempt))
     }
   }
