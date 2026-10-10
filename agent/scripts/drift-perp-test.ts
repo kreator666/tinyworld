@@ -15,6 +15,11 @@
 //      DRIFT_RUN_WRITES=1 npx tsx scripts/drift-perp-test.ts  # 完整流程(需先充值)
 // 私钥从 ../solana/.mainnet-hot.key 注入环境变量(先读后导,绝不打印)。
 // split-brain:身份链仍是 solana-devnet,资产操作全在主网(见 chain/solanaExec.ts)。
+// ⚠ 链侧现状(2026-10 实测):dRiftyHA39... 主网部署已事实下线——自 2026-09-25 起
+// 拒绝所有用户交易(101 InstructionFallbackNotFound),Drift 已迁移至闭源 Velocity
+// 程序(vELoC1audYbSYVRXn1vPaV8Axoa9oU6BYmNGZZBDZ1P)。只读预备照常工作;
+// 写阶段当前会在第 1 步(initialize_user)以 101 失败,属链侧问题,待 Velocity
+// 接入或链侧恢复后本脚本可直接复用。
 // ============================================================
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -70,12 +75,12 @@ async function main() {
   const { initialized, signature } = await drift.ensureDriftUser()
   console.log(initialized ? `   已初始化用户账户,tx: ${signature}` : '   用户账户已存在,跳过初始化')
 
-  console.log('\n[2] 存入 5 USDC 作为保证金 …')
-  const depSig = await drift.driftDeposit(5n * ONE_USDC)
+  console.log('\n[2] 存入 4 USDC 作为保证金 …')
+  const depSig = await drift.driftDeposit(4n * ONE_USDC)
   console.log(`   deposit tx: ${depSig}`)
 
-  console.log('\n[3] 市价开多 SOL-PERP(名义额 ~15 USD)…')
-  const baseAmount = await drift.driftCalcBaseAmount(solPerp.marketIndex, 15)
+  console.log('\n[3] 市价开多 SOL-PERP(名义额 ~12 USD)…')
+  const baseAmount = await drift.driftCalcBaseAmount(solPerp.marketIndex, 12)
   console.log(`   换算 base 数量: ${baseAmount}(原子单位)`)
   const openSig = await drift.driftOpenPosition(solPerp.marketIndex, 'long', baseAmount)
   console.log(`   open tx: ${openSig}`)
@@ -94,8 +99,8 @@ async function main() {
   console.log(`   平仓后持仓: ${JSON.stringify(status.positions)}`)
   if (status.positions.some((p) => p.marketIndex === solPerp.marketIndex)) throw new Error('平仓后仍有持仓残留')
 
-  console.log('\n[6] 提取 5 USDC 回热钱包 …')
-  const wdSig = await drift.driftWithdraw(5n * ONE_USDC)
+  console.log('\n[6] 提取 4 USDC 回热钱包 …')
+  const wdSig = await drift.driftWithdraw(4n * ONE_USDC)
   console.log(`   withdraw tx: ${wdSig}`)
 
   const finalBal = await drift.driftQuoteTokenBalance()

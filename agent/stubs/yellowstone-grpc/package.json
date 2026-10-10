@@ -1,0 +1,7 @@
+{
+  "name": "@triton-one/yellowstone-grpc",
+  "version": "5.0.5",
+  "description": "Local stub for @triton-one/yellowstone-grpc (win32 placeholder; napi bindings are darwin/linux-only and the gRPC path is unused by our Drift integration)",
+  "main": "index.js",
+  "types": "index.d.ts"
+}

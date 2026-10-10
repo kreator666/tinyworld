@@ -2,6 +2,7 @@ import { Connection, Keypair, PublicKey, Transaction, type ConfirmOptions } from
 import {
   BN,
   BulkAccountLoader,
+  DelistedMarketSetting,
   DriftClient,
   FastSingleTxSender,
   MarketType,
@@ -23,15 +24,21 @@ import { MAINNET_RPC, MAINNET_USDC_MINT, MAX_PERP_DEPOSIT_USDC, mainnetConnectio
 // ============================================================
 // Drift Protocol 永续合约(Solana 家族,defi-perp-drift 技能用)
 // split-brain(见 chain/solanaExec.ts):身份/人格从请求链(solana-devnet)读取,
-// 永续交易统一在 Solana 主网执行,小金额。SDK @drift-labs/sdk 2.151.0:
+// 永续交易统一在 Solana 主网执行,小金额。SDK @drift-labs/sdk 2.156.0:
 // DriftClient 负责组交易 + 热钱包签名,发送/确认经 FailoverTxSender 路由
 // mainnetConnection()(主 RPC → 备用,重试同签名幂等)。
 // 保证金 = SDK SpotMarkets['mainnet-beta'] 的 USDC 现货市场(= 主网 Circle
 // USDC EPjFWdd...,启动时校验);主网没有水龙头,入金前检查热钱包真实余额,
 // 不足时提示先经 Meteora 兑换。单笔入金硬顶 MAX_PERP_DEPOSIT_USDC。
 // Drift 程序 devnet 与 mainnet 同地址(dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH)。
-// 历史备注:devnet 官方部署已损坏(程序拒绝解析自己的市场账户,官方 devnet
-// 应用已下线),因此执行层不切回 devnet;DRIFT_ENV 保留为模块级常量以便将来重指。
+// ⚠ 链侧现状(2026-10 实测):dRiftyHA39... 主网部署已事实下线——自 2026-09-25 起
+// 该程序拒绝【所有】用户交易(InstructionFallbackNotFound 101,非本仓库问题,
+// 公共 SDK 2.151/2.156/2.163 均如此),10-07 后无任何交易;Drift 已迁移至
+// Velocity(新程序 vELoC1audYbSYVRXn1vPaV8Axoa9oU6BYmNGZZBDZ1P,闭源,
+// 见 docs.velocity.exchange)。本模块读路径(行情/状态)仍可用,写路径在链侧
+// 重新可用(或接入 Velocity)后无需改动即可工作。
+// 历史备注:devnet 官方部署更早损坏(程序拒绝解析自己的市场账户,官方 devnet
+// 应用已下线);DRIFT_ENV 保留为模块级常量以便将来重指。
 // ============================================================
 
 /** Drift 程序地址(devnet 与 mainnet 官方部署同地址) */
@@ -136,6 +143,14 @@ async function buildDriftHandle(): Promise<DriftHandle> {
     console.warn(`[drift] 警告:SDK ${env} 保证金 mint ${quote.mint} ≠ 执行层 MAINNET_USDC_MINT ${MAINNET_USDC_MINT}`)
   }
 
+  // 显式声明市场索引:新 SDK 在缺省时会对全量市场做 gPA 扫描(findAllMarketAndOracles),
+  // 主网上有旧版 fulfillment/market 账户会让 IDL union 解码崩掉;而全量静态索引又会在
+  // 公共 RPC 上触发 429 且踩 SDK 已下架市场退订 bug。只订阅我们交易的保证金市场(0)与
+  // SOL-PERP(0):足够 deposit/open/close/status 全链路,也最省 RPC 配额。
+  // 若要开其他市场,把对应索引加进这里(或改服务器 env 用私有 RPC 后再扩成全量)。
+  const perpMarketIndexes = [DRIFT_SOL_PERP_MARKET_INDEX]
+  const spotMarketIndexes = [DRIFT_QUOTE_SPOT_MARKET_INDEX]
+
   // 先尝试 websocket 订阅;公共主网 RPC 的 wss 不可达时回落到轮询加载器
   try {
     const client = new DriftClient({
@@ -143,7 +158,10 @@ async function buildDriftHandle(): Promise<DriftHandle> {
       wallet,
       env,
       programID: new PublicKey(DRIFT_PROGRAM_ID),
+      perpMarketIndexes,
+      spotMarketIndexes,
       accountSubscription: { type: 'websocket' },
+      delistedMarketSetting: DelistedMarketSetting.Subscribe, // 缺省 Unsubscribe 会对静态配置里链上不存在/已下架的市场调 .get().unsubscribe() 崩掉(SDK bug),我们不交易那些市场,保持订阅即可
       txSender: new FailoverTxSender(readConn, wallet, opts),
       opts,
     })
@@ -157,7 +175,10 @@ async function buildDriftHandle(): Promise<DriftHandle> {
       wallet,
       env,
       programID: new PublicKey(DRIFT_PROGRAM_ID),
+      perpMarketIndexes,
+      spotMarketIndexes,
       accountSubscription: { type: 'polling', accountLoader: loader },
+      delistedMarketSetting: DelistedMarketSetting.Subscribe,
       txSender: new FailoverTxSender(readConn, wallet, opts),
       opts,
     })

@@ -27,6 +27,9 @@ import type { SkillDef } from '../registry'
 // MAX_PERP_DEPOSIT_USDC、单笔名义额 ≤ MAX_PERP_NOTIONAL_USD(env 可调)。
 // 仅限主人对话(scope=owner),每笔成交落 tasks 表审计(执行链 = solana-mainnet)。
 // 可用前提:配置 AGENT_SOLANA_PRIVATE_KEY(主网热钱包)。
+// ⚠ 链侧现状(2026-10):dRiftyHA39... 主网部署已事实下线(自 2026-09-25 起拒绝
+// 所有用户交易,Drift 已迁移至闭源的 Velocity 新程序),写操作会稳定报
+// InstructionFallbackNotFound(101);读操作(drift_status)仍可用。详见 chain/drift.ts。
 // ============================================================
 
 // USDC 6 位小数;名义额换算(USD→base)用 Drift 预言机价格在 chain/drift.ts 内完成
