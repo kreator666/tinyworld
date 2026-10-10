@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { useAppStore } from './store/appStore'
 import { useChainStore } from './store/chainStore'
 import { getActiveProvider, setActiveProvider } from './lib/wallet'
+import { clearActiveSolana, getSolanaProvider } from './lib/walletSolana'
 import NavBar from './components/NavBar'
 import OnboardingWizard from './components/OnboardingWizard'
 import LandingPage from './pages/LandingPage'
@@ -72,6 +73,29 @@ function WalletEvents() {
     return () => {
       provider.removeListener?.('accountsChanged', onAccountsChanged)
       provider.removeListener?.('chainChanged', onChainChanged)
+    }
+  }, [connected, address, disconnect, clear, nav, walletKind])
+
+  // Phantom 账户切换(accountChanged):与登录身份不一致时强制断开,避免用旧身份组交易、新账户签名导致Phantom拒签
+  useEffect(() => {
+    if (walletKind !== 'solana') return
+    const provider = getSolanaProvider()
+    if (!provider?.on) return
+    const onAccountChanged = (pubkey: unknown) => {
+      const now =
+        pubkey && typeof pubkey === 'object' && 'toBase58' in pubkey
+          ? (pubkey as { toBase58(): string }).toBase58()
+          : ''
+      if (!now || now !== address) {
+        clearActiveSolana()
+        disconnect()
+        clear()
+        nav('/')
+      }
+    }
+    provider.on('accountChanged', onAccountChanged)
+    return () => {
+      provider.removeListener?.('accountChanged', onAccountChanged)
     }
   }, [connected, address, disconnect, clear, nav, walletKind])
 

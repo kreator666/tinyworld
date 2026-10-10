@@ -14,6 +14,7 @@ import { isValidSolanaAddress } from './chainSolana'
 import {
   SolanaWalletError,
   getActiveSolanaAddress,
+  getActiveSolanaProvider,
   solanaSignAndSend,
   solanaSignTransaction,
 } from './walletSolana'
@@ -148,6 +149,12 @@ function deserializeSolanaTx(txBase64: string): Transaction | VersionedTransacti
   }
 }
 
+/** 交易的 feePayer(= 必须签名的账户):legacy 取 tx.feePayer,v0 取 staticAccountKeys[0] */
+function feePayerOf(tx: Transaction | VersionedTransaction): PublicKey | null {
+  if (tx instanceof Transaction) return tx.feePayer ?? null
+  return tx.message.staticAccountKeys[0] ?? null
+}
+
 /** Solana 用户钱包签名模式:
  *
  * 浏览器直连公共 Solana RPC(取 blockhash/发交易/等确认)会被 403 拦截,因此:
@@ -159,10 +166,22 @@ function deserializeSolanaTx(txBase64: string): Transaction | VersionedTransacti
 async function sendSolanaTransactions(unsignedTxs: UnsignedTx[], tokenId: number, protocol?: string): Promise<string[]> {
   const walletAddr = getActiveSolanaAddress()
   if (!walletAddr) throw new Error('请先连接 Phantom 钱包')
+  // 本地缓存的地址可能已滞后:Phantom 里切换账户不会自动同步,以钱包当前账户为准拦截
+  const liveAddr = getActiveSolanaProvider()?.publicKey?.toBase58()
+  if (liveAddr && liveAddr !== walletAddr) {
+    throw new Error('Phantom 当前账户已切换,与登录身份不一致,请重新连接钱包后再试')
+  }
   const signedTxs: string[] = []
   for (const item of unsignedTxs) {
     if (!isSolanaUnsignedTx(item)) throw new Error('待签名交易不是 Solana 格式')
     const tx = deserializeSolanaTx(item.tx)
+    // 交易由 Agent 按链上人格 owner 组装;签名账户必须与当前连接钱包一致,否则 Phantom 会拒签(报"Unexpected error")
+    const payer = feePayerOf(tx)
+    if (payer && payer.toBase58() !== walletAddr) {
+      throw new Error(
+        `这笔交易属于账户 ${payer.toBase58().slice(0, 8)}…,与当前连接的钱包不一致,请在 Phantom 切回该账户,或用该账户登录后再兑换`,
+      )
+    }
     if (tx instanceof Transaction) {
       const latest = await fetchSolanaBlockhash(tokenId, protocol)
       tx.feePayer = new PublicKey(walletAddr)

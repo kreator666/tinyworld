@@ -130,6 +130,12 @@ function normalizeSignError(err: unknown): Error {
   if (/reject|denied|declined|cancel/i.test(msg)) {
     return new SolanaWalletError('SIGN_REJECTED', '你取消了钱包操作')
   }
+  if (/unexpected error|internal error/i.test(msg)) {
+    return new SolanaWalletError(
+      'SIGN_FAILED',
+      'Phantom 签名失败:通常是钱包当前账户与交易签名人不一致,或钱包网络(cluster)与交易网络不匹配。请检查 Phantom 当前账户与网络设置后重试',
+    )
+  }
   return err instanceof Error ? err : new Error(msg)
 }
 
