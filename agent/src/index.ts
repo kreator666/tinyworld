@@ -1,7 +1,6 @@
 import { serve } from '@hono/node-server'
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
-import fs from 'node:fs'
 import { keccak256, toBytes, formatUnits, type Hex } from 'viem'
 import { config } from './config'
 import { PersonaError, loadPersona, ownerOf, resolveTokenId } from './chain/persona'
@@ -697,7 +696,6 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
     // 回执超时/链上查询失败:不阻塞前端,记一笔待确认(金额 0),让 Agent 稍后自查
     const msg = err instanceof Error ? err.message : String(err)
     console.warn('[sign-confirm] 回执核实失败,按待确认处理:', msg)
-    debugLog(`[sign-confirm] route catch: ${err instanceof Error ? (err.stack ?? msg) : msg}`)
     try {
       const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
       await recordDefiTask(chainKey, tokenId, proposal, { txHash: body.txHash, amountOut: '0', usdValue: proposal.estimatedValueUsd ?? null })
@@ -706,20 +704,11 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
       return c.json({ ok: true, confirmed: false, amountOut: null, notice })
     } catch (err2) {
       // 兜底中的兜底:审计/消息追加再失败也不返回 500,绝不让前端拿到裸错误
-      debugLog(`[sign-confirm] route catch inner: ${err2 instanceof Error ? (err2.stack ?? String(err2)) : String(err2)}`)
       return c.json({ ok: true, confirmed: false, amountOut: null, notice: '交易已广播,结果核实遇到故障,签名已记录,稍后帮你确认' })
     }
   }
 })
 
-/** 临时排查日志(pm2 cluster 下 stdout 捕获不可靠,写文件最稳);定位后移除 */
-function debugLog(line: string): void {
-  try {
-    fs.appendFileSync('/tmp/sign-confirm-debug.log', `${new Date().toISOString()} ${line}\n`)
-  } catch {
-    /* 调试日志失败不影响主流程 */
-  }
-}
 
 /** Solana 请求链浏览器交易链接(solana 的 explorer 带 ?cluster= 时路径要拼在 query 之前) */
 function solanaTxUrl(chainKey: string, signature: string): string {
@@ -800,14 +789,12 @@ async function confirmSolanaSign(
   } catch (err) {
     // 确认超时/RPC 失败:不阻塞前端,记一笔待确认(金额 0),让 Agent 稍后自查
     console.warn('[sign-confirm] Solana 确认失败,按待确认处理:', err instanceof Error ? err.message : String(err))
-    debugLog(`[sign-confirm] solana confirm catch: ${err instanceof Error ? (err.stack ?? '') : String(err)}`)
     try {
       await record('0')
       const notice = noticeOf(null, false)
       if (conversationId) await appendAssistantMessage(chainKey, conversationId, notice)
       return c.json({ ok: true, confirmed: false, amountOut: null, notice })
     } catch (err2) {
-      debugLog(`[sign-confirm] solana confirm catch inner: ${err2 instanceof Error ? (err2.stack ?? String(err2)) : String(err2)}`)
       return c.json({ ok: true, confirmed: false, amountOut: null, notice: noticeOf(null, false) })
     }
   }
@@ -825,7 +812,6 @@ async function confirmSolanaSign(
     return c.json({ ok: true, confirmed: true, amountOut: amountOut?.toString() ?? null, notice, explorer: txUrl })
   } catch (err) {
     // 落库/追加消息失败不掩盖已确认事实
-    debugLog(`[sign-confirm] solana record catch: ${err instanceof Error ? (err.stack ?? String(err)) : String(err)}`)
     return c.json({ ok: true, confirmed: true, amountOut: amountOut?.toString() ?? null, notice: noticeOf(amountOut, true), explorer: txUrl })
   }
 }

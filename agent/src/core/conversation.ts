@@ -102,7 +102,7 @@ export async function appendAssistantMessage(chainKey: string, conversationId: s
     'assistant',
     content,
   ])
-  await db.query('UPDATE conversations SET updated_at = now WHERE chain_key = $1 AND id = $2', [chainKey, conversationId])
+  await db.query('UPDATE conversations SET updated_at = now() WHERE chain_key = $1 AND id = $2', [chainKey, conversationId])
 }
 
 /** 用 LLM 给会话起标题(≤15 字);失败/超时就用首条消息截断兜底 */
