@@ -134,7 +134,10 @@ export default function MyAgentPage() {
     if (!pendingSignTx || !address || tokenId === 0) return
     setSigning(true)
     try {
-      const txHashes = await sendTransactions(address, pendingSignTx.unsignedTxs)
+      const txHashes = await sendTransactions(address, pendingSignTx.unsignedTxs, {
+        tokenId,
+        protocol: pendingSignTx.proposal?.protocol as string | undefined,
+      })
       const swapTxHash = txHashes[txHashes.length - 1]
       setConfirming(true)
       showToast('交易已上链,正在等链上确认结果…')

@@ -123,6 +123,11 @@ export class FailoverConnection {
     return this.withFailover((c) => c.getBalance(publicKey))
   }
 
+  /** 读路径(用户钱包签名模式:前端从浏览器直连公共 RPC 会被 403,由后端代取 blockhash) */
+  getLatestBlockhash(): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
+    return this.withFailover((c) => c.getLatestBlockhash('confirmed'))
+  }
+
   // 写路径(Jupiter 兑换发送交易):网络类错误重试是安全的——
   // 同一笔已签名交易按签名去重,重复提交不会产生第二笔扣款
   sendRawTransaction(raw: Uint8Array): Promise<string> {

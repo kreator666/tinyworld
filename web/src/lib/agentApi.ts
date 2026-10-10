@@ -312,12 +312,20 @@ export const setSwapMode = (tokenId: number, swapMode: SwapMode) =>
     body: JSON.stringify({ swapMode }),
   })
 
-export const broadcastSignedTxs = (tokenId: number, signedTxs: string[]) =>
+export const broadcastSignedTxs = (tokenId: number, signedTxs: string[], protocol?: string) =>
   apiCall<{ ok: boolean; txHashes: string[]; explorer: string }>(`/agents/${tokenId}/broadcast`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ signedTxs }),
+    body: JSON.stringify({ signedTxs, protocol }),
   })
+
+/** legacy Solana 交易签名前刷新 blockhash:浏览器直连公共 RPC 会被 403,由后端代取 */
+export const fetchSolanaBlockhash = (tokenId: number, protocol?: string) =>
+  apiCall<{ ok: boolean; blockhash: string; lastValidBlockHeight: number }>(`/agents/${tokenId}/solana-blockhash`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ protocol }),
+  }).then((r) => ({ blockhash: r.blockhash, lastValidBlockHeight: r.lastValidBlockHeight }))
 
 /** 用户钱包签名模式:交易已由钱包发出;后端核实回执、记审计,并在会话里主动告知结果 */
 export const confirmSign = (tokenId: number, txHash: string, proposal: Record<string, unknown>, conversationId?: string) =>

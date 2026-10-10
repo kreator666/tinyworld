@@ -1,10 +1,11 @@
 import { Buffer } from 'buffer'
-import { Connection, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
+import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
 import type { Address } from 'viem'
 import * as evm from './chain'
 import * as sol from './chainSolana'
 import { getActiveChain } from '../store/chainConfigStore'
 import type { EvmUnsignedTx, SolanaUnsignedTx, UnsignedTx } from './agentApi'
+import { broadcastSignedTxs, fetchSolanaBlockhash } from './agentApi'
 import { useAppStore } from '../store/appStore'
 import type { WalletLogin } from '../types'
 import type { ChainContracts } from './contracts'
@@ -147,120 +148,51 @@ function deserializeSolanaTx(txBase64: string): Transaction | VersionedTransacti
   }
 }
 
-async function latestBlockhashWithFailover(rpcs: string[]): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
-  let lastErr: unknown = null
-  for (const url of rpcs) {
-    try {
-      return await new Connection(url, 'confirmed').getLatestBlockhash('confirmed')
-    } catch (e) {
-      lastErr = e
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
-}
-
-async function sendRawWithFailover(raw: Uint8Array, rpcs: string[]): Promise<string> {
-  let lastErr: unknown = null
-  for (const url of rpcs) {
-    try {
-      return await new Connection(url, 'confirmed').sendRawTransaction(raw)
-    } catch (e) {
-      lastErr = e
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
-}
-
-/** 链上确认超时:交易已广播但预算内未确认(仍在打包或 RPC 不可达),不视为失败 */
-class SolanaConfirmTimeoutError extends Error {
-  constructor() {
-    super('等待链上确认超时,交易可能仍在打包')
-    this.name = 'SolanaConfirmTimeoutError'
-  }
-}
-
-const CONFIRM_POLL_INTERVAL_MS = 2000
-const CONFIRM_BUDGET_MS = 60000
-
-/** 轮询 getSignatureStatuses 等待确认(纯 HTTP,不依赖 websocket 事件——公共 RPC 的 ws 常不可用)。
- *  交易在链上失败(st.err)立即抛错;预算耗尽抛 SolanaConfirmTimeoutError */
-async function confirmWithFailover(signature: string, rpcs: string[]): Promise<void> {
-  const deadline = Date.now() + CONFIRM_BUDGET_MS
-  let lastErr: unknown = null
-  for (const url of rpcs) {
-    const conn = new Connection(url, 'confirmed')
-    while (Date.now() < deadline) {
-      try {
-        const { value } = await conn.getSignatureStatuses([signature])
-        const st = value[0]
-        if (st) {
-          if (st.err) throw new Error(`交易上链失败: ${JSON.stringify(st.err)}`)
-          const cs = st.confirmationStatus as string | undefined
-          if (cs === 'confirmed' || cs === 'finalized') return
-        }
-        lastErr = null
-      } catch (e) {
-        lastErr = e
-      }
-      await new Promise((r) => setTimeout(r, CONFIRM_POLL_INTERVAL_MS))
-    }
-  }
-  if (lastErr) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
-  throw new SolanaConfirmTimeoutError()
-}
-
-/** 确认等待不阻断主流程:超时(尚未确认)直接放行,后端 sign-confirm 会再核实并记待确认;
- *  只有链上明确失败(st.err)才抛错中断 */
-async function confirmOrDefer(signature: string, rpcs: string[]): Promise<void> {
-  try {
-    await confirmWithFailover(signature, rpcs)
-  } catch (err) {
-    if (err instanceof SolanaConfirmTimeoutError) return
-    throw err
-  }
-}
-
-/** Solana 用户钱包签名模式:Phantom 逐笔签名(base64 反序列化),经交易自带 RPC 端点发送并确认
+/** Solana 用户钱包签名模式:
  *
- * 与 chainSolana.sendTx 同一策略:优先 signTransaction + 前端直连 RPC 发送
- * (避开 Phantom 中继在部分网络的 403),钱包不支持 signTransaction 时退回中继发送。
- * legacy 交易(Meteora)签名前刷新 blockhash(feePayer 即用户);
- * VersionedTransaction(Jupiter)的 blockhash 由 Jupiter 组装时内嵌,不做改动。
+ * 浏览器直连公共 Solana RPC(取 blockhash/发交易/等确认)会被 403 拦截,因此:
+ * 1. legacy 交易(Meteora)签名前经后端 /solana-blockhash 刷新 blockhash;
+ * 2. Phantom 只负责签名(signTransaction;不支持的钱包退回 Phantom 中继发送);
+ * 3. 签名后的 raw tx 交后端 /broadcast 经故障转移连接发送;
+ * 4. 上链确认与输出解析由 sign-confirm 一并完成(后端 60s 硬超时兜底)。
  */
-async function sendSolanaTransactions(unsignedTxs: UnsignedTx[]): Promise<string[]> {
+async function sendSolanaTransactions(unsignedTxs: UnsignedTx[], tokenId: number, protocol?: string): Promise<string[]> {
   const walletAddr = getActiveSolanaAddress()
   if (!walletAddr) throw new Error('请先连接 Phantom 钱包')
-  const signatures: string[] = []
+  const signedTxs: string[] = []
   for (const item of unsignedTxs) {
     if (!isSolanaUnsignedTx(item)) throw new Error('待签名交易不是 Solana 格式')
     const tx = deserializeSolanaTx(item.tx)
-    const latest = await latestBlockhashWithFailover(item.rpcs)
     if (tx instanceof Transaction) {
+      const latest = await fetchSolanaBlockhash(tokenId, protocol)
       tx.feePayer = new PublicKey(walletAddr)
       tx.recentBlockhash = latest.blockhash
-      tx.lastValidBlockHeight = latest.lastValidBlockHeight
     }
     let signed: Transaction | VersionedTransaction
     try {
       signed = (await solanaSignTransaction(tx)) as Transaction | VersionedTransaction
     } catch (err) {
+      // 钱包不支持 signTransaction:退回 Phantom 中继发送(走 Phantom 自有 RPC,不受公共 RPC 403 影响)
       if (err instanceof SolanaWalletError && err.code === 'UNSUPPORTED') {
-        const signature = await solanaSignAndSend(tx)
-        await confirmOrDefer(signature, item.rpcs)
-        signatures.push(signature)
-        continue
+        return [await solanaSignAndSend(tx)]
       }
       throw err
     }
-    const signature = await sendRawWithFailover(signed.serialize(), item.rpcs)
-    await confirmOrDefer(signature, item.rpcs)
-    signatures.push(signature)
+    signedTxs.push(Buffer.from(signed.serialize()).toString('base64'))
   }
-  return signatures
+  const r = await broadcastSignedTxs(tokenId, signedTxs, protocol)
+  return r.txHashes
 }
 
-export async function sendTransactions(owner: string, unsignedTxs: UnsignedTx[]): Promise<string[]> {
-  if (isSolana()) return sendSolanaTransactions(unsignedTxs)
+export async function sendTransactions(
+  owner: string,
+  unsignedTxs: UnsignedTx[],
+  opts?: { tokenId?: number; protocol?: string },
+): Promise<string[]> {
+  if (isSolana()) {
+    if (!opts?.tokenId) throw new Error('Solana 交易发送缺少 tokenId')
+    return sendSolanaTransactions(unsignedTxs, opts.tokenId, opts.protocol)
+  }
   return evm.sendTransactions(owner as Address, unsignedTxs as EvmUnsignedTx[])
 }
 

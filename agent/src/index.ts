@@ -31,7 +31,7 @@ import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
 import { SOL_MINT, usdcMintOf } from './chain/jupiter'
 import { solanaConnection, type FailoverConnection } from './chain/personaSolana'
-import { EXEC_CHAIN_KEY, MAINNET_USDC_MINT, mainnetConnection, mainnetTxUrl } from './chain/solanaExec'
+import { EXEC_CHAIN_KEY, MAINNET_EXPLORER, MAINNET_USDC_MINT, mainnetConnection, mainnetTxUrl } from './chain/solanaExec'
 import { executeProposal, recordDefiTask, describeSwapResult } from './skills/defi-swap'
 import { executeLendingProposal } from './skills/defi-lending'
 import type { Proposal } from './policy/engine'
@@ -588,17 +588,29 @@ app.post('/agents/:tokenId/settings', authRequired, async (c) => {
   }
 })
 
-// 用户钱包签名模式:后端广播签名后的 raw transaction;仅主人
+// 用户钱包签名模式:后端广播签名后的 raw transaction;仅主人。
+// Solana 交易(protocol=jupiter/meteora)前端浏览器直连公共 RPC 会被 403,
+// 签名后交这里由后端经故障转移连接发送;EVM 维持原行为
 app.post('/agents/:tokenId/broadcast', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
-  const body = await c.req.json<{ signedTxs?: string[] }>().catch(() => null)
+  const body = await c.req.json<{ signedTxs?: string[]; protocol?: string }>().catch(() => null)
   if (!body?.signedTxs || !Array.isArray(body.signedTxs) || body.signedTxs.length === 0) {
     return c.json({ error: 'signedTxs 不能为空数组' }, 400)
   }
   try {
     const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
     await assertAgentOwnership(c, chainKey, tokenId)
+    if (body.protocol === 'jupiter' || body.protocol === 'meteora') {
+      const conn = body.protocol === 'meteora' ? mainnetConnection() : solanaConnection(chainKey)
+      const txHashes: string[] = []
+      for (const signedTx of body.signedTxs) {
+        const raw = new Uint8Array(Buffer.from(signedTx, 'base64'))
+        txHashes.push(await conn.sendRawTransaction(raw))
+      }
+      const explorer = body.protocol === 'meteora' ? MAINNET_EXPLORER : getChainContext(chainKey).cfg.explorer
+      return c.json({ ok: true, txHashes, explorer })
+    }
     const txHashes: Hex[] = []
     for (const signedTx of body.signedTxs) {
       const hash = await broadcastSignedTx(chainKey, signedTx as Hex)
@@ -609,6 +621,23 @@ app.post('/agents/:tokenId/broadcast', authRequired, async (c) => {
       txHashes,
       explorer: getChainContext(chainKey).cfg.explorer,
     })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 用户钱包签名模式:legacy Solana 交易(Meteora)签名前需刷新 blockhash,
+// 浏览器直连公共 RPC 会被 403,改由后端代取;仅主人
+app.post('/agents/:tokenId/solana-blockhash', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  const body = await c.req.json<{ protocol?: string }>().catch(() => null)
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const conn = body?.protocol === 'meteora' ? mainnetConnection() : solanaConnection(chainKey)
+    const latest = await conn.getLatestBlockhash()
+    return c.json({ ok: true, ...latest })
   } catch (err) {
     return handleErr(c, err)
   }
