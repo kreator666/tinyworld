@@ -75,8 +75,9 @@ export function listSkills(chainKey: string): SkillManifest[] {
   return [...builtins.values()].map((d) => d.manifest).filter((m) => isSkillAvailable(chainKey, m))
 }
 
-/** 随 Agent 运行时默认启用的一组内置技能(新 Agent 首次装载时自动安装,无需主人手动装) */
-export const DEFAULT_SKILL_IDS = ['social-greeter', 'defi-quote', 'defi-swap', 'defi-lending', 'owner-tuning']
+/** 随 Agent 运行时默认启用的一组内置技能(新 Agent 首次装载时自动安装,无需主人手动装)。
+ *  注意:defi-swap-meteora 是 solanaOnly——ensureDefaultSkills 会按链家族自动跳过不可用项。 */
+export const DEFAULT_SKILL_IDS = ['social-greeter', 'defi-quote', 'defi-swap', 'defi-lending', 'defi-swap-meteora', 'owner-tuning']
 
 /**
  * 确保默认技能已安装(幂等):比对 DB 里现有安装记录,只补缺口。
