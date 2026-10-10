@@ -25,12 +25,17 @@ const SLOT_MAP = { head: 0, body: 1, accessory: 2, pet: 3 }
 export default function BackpackPage() {
   const active = useChainConfig((s) => s.active)
   const { connected, address, login } = useAppStore()
-  const { tokenId, didName, equipped, parts, loading, error, refresh, equip, unequip, isAdmin, checkAdmin, mintParts } = useChainStore()
+  const { tokenId, didName, equipped, parts, loading, error, refresh, equip, unequip, isAdmin, checkAdmin, mintParts, clear } = useChainStore()
   const [tab, setTab] = useState<(typeof tabs)[number]['key']>('did')
   const [acting, setActing] = useState<string | null>(null)
   const [lastTx, setLastTx] = useState<string | null>(null)
   const showToast = useAppStore((s) => s.showToast)
   const onTargetChain = isWalletOnActiveChain(login, active)
+
+  // 切链先清空旧链的 DID/装备数据,避免展示上一链的背包内容
+  useEffect(() => {
+    clear()
+  }, [active.key, clear])
 
   useEffect(() => {
     if (connected && onTargetChain && address) {
@@ -38,7 +43,7 @@ export default function BackpackPage() {
       checkAdmin(address)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, onTargetChain, address])
+  }, [connected, onTargetChain, address, active.key])
 
   const doEquip = async (localId: string, category: NFTCategory) => {
     const part = chainParts.find((p) => p.localId === localId)

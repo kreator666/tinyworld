@@ -27,6 +27,11 @@ export default function PlazaPage() {
 
   const onTargetChain = isWalletOnActiveChain(login, active)
 
+  // 切换激活链时先清空旧链数据,避免短暂展示上一链的 Agent 列表
+  useEffect(() => {
+    setAgents([])
+  }, [active.key])
+
   useEffect(() => {
     if (!connected || !onTargetChain) return
     setLoading(true)
@@ -47,7 +52,7 @@ export default function PlazaPage() {
       .catch((e) => console.warn('读取链上 Agent 列表失败:', e))
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, onTargetChain])
+  }, [connected, onTargetChain, active.key])
 
   const users = useMemo(() => {
     const list = [...agents]

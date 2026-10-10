@@ -90,7 +90,7 @@ export default function MintWorkshop() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [name, connected, onTargetChain])
+  }, [name, connected, onTargetChain, active.key])
 
   useEffect(() => {
     const on = isWalletOnActiveChain(login, active)

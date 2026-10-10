@@ -28,6 +28,13 @@ export default function ChatPage() {
   const onTargetChain = isWalletOnActiveChain(login, activeChain)
   const active = chats.find((c) => c.id === activeChatId) ?? chats[0]
 
+  // 切链时清空跨链缓存:Agent 映射、已见消息、收件箱游标都属于具体某条链
+  useEffect(() => {
+    agentsRef.current = new Map()
+    seenMsgRef.current = new Set()
+    inboxSinceRef.current = null
+  }, [activeChain.key])
+
   // 会话列表从链上读取:只列别人的 Agent(自己的 Agent 有专属助手页,不进社交列表)
   useEffect(() => {
     if (!connected || !onTargetChain) return
@@ -40,7 +47,7 @@ export default function ChatPage() {
       .catch((e) => console.warn('读取链上 Agent 列表失败:', e))
       .finally(() => setLoadingAgents(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, onTargetChain, myTokenId])
+  }, [connected, onTargetChain, myTokenId, activeChain.key])
 
   // 收件箱轮询:其他 Agent 主动发来/回复的消息,按发送方落进对应会话
   useEffect(() => {
@@ -70,7 +77,7 @@ export default function ChatPage() {
     const timer = setInterval(tick, 15000)
     return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, onTargetChain, myTokenId])
+  }, [connected, onTargetChain, myTokenId, activeChain.key])
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
