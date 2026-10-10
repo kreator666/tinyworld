@@ -15,6 +15,20 @@ import {
 } from '../lib/agentApi'
 import { sendTransactions } from '../lib/chainDispatch'
 
+/** 消息文本渲染:把 URL 变成可点击链接(链上确认消息里的浏览器明细等) */
+function renderMessageContent(content: string) {
+  const parts = content.split(/(https?:\/\/[^\s]+)/g)
+  return parts.map((p, i) =>
+    /^https?:\/\//.test(p) ? (
+      <a key={i} href={p} target="_blank" rel="noreferrer" className="underline text-cyan-300 break-all">
+        {p}
+      </a>
+    ) : (
+      <span key={i}>{p}</span>
+    ),
+  )
+}
+
 // 我的 Agent 助手(豆包式):只属于自己的 Agent 对话,支持多个会话,历史存后端
 export default function MyAgentPage() {
   const showToast = useAppStore((s) => s.showToast)
@@ -139,19 +153,24 @@ export default function MyAgentPage() {
         protocol: pendingSignTx.proposal?.protocol as string | undefined,
       })
       const swapTxHash = txHashes[txHashes.length - 1]
+      setSigning(false)
       setConfirming(true)
-      showToast('交易已上链,正在等链上确认结果…')
+      showToast('交易已广播,正在等链上确认结果…')
       if (pendingSignTx.proposal) {
         try {
           // 后端会等回执、解析 Swap 实际输出,并在会话里追加一条确认消息
-          await confirmSign(tokenId, swapTxHash, pendingSignTx.proposal, activeId ?? undefined)
+          const r = await confirmSign(tokenId, swapTxHash, pendingSignTx.proposal, activeId ?? undefined)
+          showToast(r.confirmed ? '兑换已确认,结果已发到对话里' : '交易已广播,确认结果稍后由 Agent 告知')
           if (activeId) {
             const msgs = await listMessages(activeId)
             setMessages(msgs)
           }
         } catch (e) {
           console.warn('上报签名结果到 Agent 服务失败', e)
+          showToast('链上结果核实失败,交易可能已成功;刷新页面查看最新对话')
         }
+      } else {
+        showToast(`交易已广播:${swapTxHash.slice(0, 12)}…`)
       }
       setPendingSignTx(null)
       setConfirming(false)
@@ -159,6 +178,7 @@ export default function MyAgentPage() {
       showToast(err instanceof Error ? err.message : '签名或发送失败')
     } finally {
       setSigning(false)
+      setConfirming(false)
     }
   }
 
@@ -226,7 +246,7 @@ export default function MyAgentPage() {
                     m.role === 'user' ? 'bg-neon-grad text-white rounded-br-sm' : 'glass rounded-bl-sm'
                   }`}
                 >
-                  {m.content}
+                  {renderMessageContent(m.content)}
                 </div>
               </div>
             ))}
