@@ -9,7 +9,6 @@ import {
   PositionDirection,
   QUOTE_PRECISION,
   SpotMarkets,
-  TokenFaucet,
   Wallet,
   getMarketOrderParams,
   getUserAccountPublicKey,
@@ -18,33 +17,30 @@ import {
 } from '@drift-labs/sdk'
 import { getAccount, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from '@solana/spl-token'
 import { config } from '../config'
-import { getChainContext } from './registry'
 import { base58Decode } from '../core/base58'
-import { solanaConnection } from './personaSolana'
+import { MAINNET_RPC, MAINNET_USDC_MINT, MAX_PERP_DEPOSIT_USDC, mainnetConnection } from './solanaExec'
 
 // ============================================================
 // Drift Protocol 永续合约(Solana 家族,defi-perp-drift 技能用)
-// SDK @drift-labs/sdk 2.151.0:DriftClient 负责组交易 + 热钱包签名,
-// 发送/确认经 FailoverTxSender 路由到 solanaConnection(devnet RPC 慢/抖,
-// 发送失败重试同签名幂等)。devnet 保证金 = SDK SpotMarkets['devnet'] 的
-// USDC 现货市场(mint 8zGuJQ...,与链配置里的 Circle devnet USDC 不同);
-// 该 mint 的 mint authority 是 Drift 官方 token faucet 程序的 PDA
-// (程序 V4v1mQiAdLz4qwckEb45WqHYceYizoib39cDBHSWfaB,经 SDK TokenFaucet 领取)。
+// split-brain(见 chain/solanaExec.ts):身份/人格从请求链(solana-devnet)读取,
+// 永续交易统一在 Solana 主网执行,小金额。SDK @drift-labs/sdk 2.151.0:
+// DriftClient 负责组交易 + 热钱包签名,发送/确认经 FailoverTxSender 路由
+// mainnetConnection()(主 RPC → 备用,重试同签名幂等)。
+// 保证金 = SDK SpotMarkets['mainnet-beta'] 的 USDC 现货市场(= 主网 Circle
+// USDC EPjFWdd...,启动时校验);主网没有水龙头,入金前检查热钱包真实余额,
+// 不足时提示先经 Meteora 兑换。单笔入金硬顶 MAX_PERP_DEPOSIT_USDC。
 // Drift 程序 devnet 与 mainnet 同地址(dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH)。
-// ⚠ 已知链侧问题(2026-10 实测):devnet 该程序为未发布分支构建(user.rs:694 /
-// orders.rs:158,与任何 tag/master/devnet 分支均不符),无法解析链上现货/永续
-// 市场账户(任意市场 deposit 报 SpotMarketNotFound 6087、下单报
-// PerpMarketNotFound 6078,手工构造 ix 亦复现),官方 devnet 应用
-// drift-devnet.vercel.app 已下线。faucet 铸币与用户账户初始化不受影响。
+// 历史备注:devnet 官方部署已损坏(程序拒绝解析自己的市场账户,官方 devnet
+// 应用已下线),因此执行层不切回 devnet;DRIFT_ENV 保留为模块级常量以便将来重指。
 // ============================================================
 
 /** Drift 程序地址(devnet 与 mainnet 官方部署同地址) */
 export const DRIFT_PROGRAM_ID = 'dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH'
 
-/** Drift devnet token faucet 程序(SDK idl/token_faucet 对应的官方部署,mint authority 已核实) */
-export const DRIFT_FAUCET_PROGRAM_ID = 'V4v1mQiAdLz4qwckEb45WqHYceYizoib39cDBHSWfaB'
+/** Drift SDK 环境:执行层固定主网(改动此处即可整体重指,如链侧恢复后回 devnet) */
+const DRIFT_ENV: DriftEnv = 'mainnet-beta'
 
-/** 默认使用的永续/现货市场索引(SOL-PERP / USDC 保证金) */
+/** 默认使用的永续/现货市场索引(SOL-PERP / USDC 保证金,主网实测索引 0) */
 export const DRIFT_QUOTE_SPOT_MARKET_INDEX = 0
 export const DRIFT_SOL_PERP_MARKET_INDEX = 0
 
@@ -59,22 +55,17 @@ function describeDriftError(e: unknown): string {
 }
 
 /**
- * 把 SDK 交易发送路由到 solanaConnection 故障转移连接:
+ * 把 SDK 交易发送路由到主网故障转移连接:
  * 继承 FastSingleTxSender 的组交易/签名逻辑,只重写 sendRawTransaction,
- * 发送 + 确认走 FailoverConnection,失败退避重发(同签名幂等,不会双花)。
+ * 发送 + 确认走 mainnetConnection,失败退避重发(同签名幂等,不会双花)。
  */
 class FailoverTxSender extends FastSingleTxSender {
-  constructor(
-    private readonly chainKey: string,
-    connection: Connection,
-    wallet: Wallet,
-    opts: ConfirmOptions,
-  ) {
+  constructor(connection: Connection, wallet: Wallet, opts: ConfirmOptions) {
     super({ connection, wallet, opts, blockhashRefreshInterval: 0 })
   }
 
   override async sendRawTransaction(rawTransaction: Buffer | Uint8Array, _opts?: ConfirmOptions): Promise<TxSigAndSlot> {
-    const conn = solanaConnection(this.chainKey)
+    const conn = mainnetConnection()
     const raw = rawTransaction instanceof Buffer ? rawTransaction : Buffer.from(rawTransaction)
     let lastErr: unknown = null
     for (let attempt = 1; attempt <= 4; attempt++) {
@@ -98,7 +89,7 @@ export interface DriftHandle {
   env: DriftEnv
 }
 
-const handles = new Map<string, Promise<DriftHandle>>()
+let handlePromise: Promise<DriftHandle> | null = null
 
 function hotWallet(): Keypair {
   const secret = config.agentSolanaKey
@@ -106,7 +97,7 @@ function hotWallet(): Keypair {
   return Keypair.fromSecretKey(base58Decode(secret))
 }
 
-/** 技能可用前提:配置了热钱包私钥 */
+/** 技能可用前提:配置了热钱包私钥(主网热钱包) */
 export function isDriftConfigured(): boolean {
   return Boolean(config.agentSolanaKey)
 }
@@ -123,26 +114,29 @@ export function driftPerpMarkets(env: DriftEnv): { symbol: string; marketIndex: 
   return (PerpMarkets[env] ?? []).map((m) => ({ symbol: m.symbol, marketIndex: m.marketIndex }))
 }
 
-/** 惰性构建并按 chainKey 缓存的 DriftClient(websocket 订阅;失败回落轮询) */
-export function driftHandle(chainKey: string): Promise<DriftHandle> {
-  let h = handles.get(chainKey)
-  if (!h) {
-    h = buildDriftHandle(chainKey)
-    handles.set(chainKey, h)
-    h.catch(() => handles.delete(chainKey)) // 构建失败不缓存,下次重试
+/** 惰性构建并缓存的 DriftClient(固定主网;websocket 订阅,失败回落轮询) */
+export function driftHandle(): Promise<DriftHandle> {
+  if (!handlePromise) {
+    handlePromise = buildDriftHandle()
+    handlePromise.catch(() => (handlePromise = null)) // 构建失败不缓存,下次重试
   }
-  return h
+  return handlePromise
 }
 
-async function buildDriftHandle(chainKey: string): Promise<DriftHandle> {
-  const ctx = getChainContext(chainKey)
-  const env: DriftEnv = ctx.cfg.chainId === 103 ? 'devnet' : 'mainnet-beta'
-  const readConn = new Connection(ctx.cfg.rpc, 'confirmed')
+async function buildDriftHandle(): Promise<DriftHandle> {
+  const env = DRIFT_ENV
+  const readConn = new Connection(MAINNET_RPC, 'confirmed')
   const keypair = hotWallet()
   const wallet = new Wallet(keypair)
   const opts: ConfirmOptions = { commitment: 'confirmed' }
 
-  // 先尝试 websocket 订阅;devnet 官方 wss 不可达时回落到轮询加载器
+  // 保证金 mint 与执行层主网 USDC 一致性校验(漂移时告警,不阻断)
+  const quote = driftQuoteSpotMarket(env)
+  if (quote.mint !== MAINNET_USDC_MINT) {
+    console.warn(`[drift] 警告:SDK ${env} 保证金 mint ${quote.mint} ≠ 执行层 MAINNET_USDC_MINT ${MAINNET_USDC_MINT}`)
+  }
+
+  // 先尝试 websocket 订阅;公共主网 RPC 的 wss 不可达时回落到轮询加载器
   try {
     const client = new DriftClient({
       connection: readConn,
@@ -150,12 +144,12 @@ async function buildDriftHandle(chainKey: string): Promise<DriftHandle> {
       env,
       programID: new PublicKey(DRIFT_PROGRAM_ID),
       accountSubscription: { type: 'websocket' },
-      txSender: new FailoverTxSender(chainKey, readConn, wallet, opts),
+      txSender: new FailoverTxSender(readConn, wallet, opts),
       opts,
     })
     await client.subscribe()
     return { client, wallet: keypair, readConn, env }
-  } catch (e) {
+  } catch {
     const loader = new BulkAccountLoader(readConn, 'confirmed', 2000)
     loader.startPolling()
     const client = new DriftClient({
@@ -164,7 +158,7 @@ async function buildDriftHandle(chainKey: string): Promise<DriftHandle> {
       env,
       programID: new PublicKey(DRIFT_PROGRAM_ID),
       accountSubscription: { type: 'polling', accountLoader: loader },
-      txSender: new FailoverTxSender(chainKey, readConn, wallet, opts),
+      txSender: new FailoverTxSender(readConn, wallet, opts),
       opts,
     })
     await client.subscribe()
@@ -196,8 +190,8 @@ async function driftUserAccountExists(handle: DriftHandle): Promise<boolean> {
  * 确保 Drift 用户账户(subAccount 0)存在:不存在则 initializeUserAccount 并确认,
  * 随后把 User 挂进 client。其余写操作都必须先调本函数。
  */
-export async function ensureDriftUser(chainKey: string): Promise<{ initialized: boolean; signature?: string }> {
-  const handle = await driftHandle(chainKey)
+export async function ensureDriftUser(): Promise<{ initialized: boolean; signature?: string }> {
+  const handle = await driftHandle()
   if (await driftUserAccountExists(handle)) {
     if (!handle.client.hasUser(0, handle.wallet.publicKey)) await handle.client.addUser(0)
     return { initialized: false }
@@ -207,9 +201,9 @@ export async function ensureDriftUser(chainKey: string): Promise<{ initialized: 
   return { initialized: true, signature }
 }
 
-/** 发送一笔手工组的热钱包交易,经 FailoverConnection 发送 + 确认,带重试 */
-async function sendManualTx(chainKey: string, readConn: Connection, tx: Transaction, wallet: Keypair): Promise<string> {
-  const conn = solanaConnection(chainKey)
+/** 发送一笔手工组的热钱包交易,经主网 FailoverConnection 发送 + 确认,带重试 */
+async function sendManualTx(readConn: Connection, tx: Transaction, wallet: Keypair): Promise<string> {
+  const conn = mainnetConnection()
   let lastErr: unknown = null
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
@@ -229,26 +223,44 @@ async function sendManualTx(chainKey: string, readConn: Connection, tx: Transact
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
 }
 
-/** 存入保证金(USDC 原子单位):确保 ATA 存在后 DriftClient.deposit */
-export async function driftDeposit(chainKey: string, usdcAtomic: bigint): Promise<string> {
-  if (usdcAtomic <= 0n) throw new Error('存入金额必须大于 0')
-  const handle = await driftHandle(chainKey)
-  await ensureDriftUser(chainKey)
+/** 保证金 USDC ATA(按现货市场的 token program 计算) */
+async function quoteTokenAccount(handle: DriftHandle): Promise<PublicKey> {
   const { marketIndex, mint } = driftQuoteSpotMarket(handle.env)
   const market = handle.client.getSpotMarketAccount(marketIndex)
   const tokenProgram = market ? handle.client.getTokenProgramForSpotMarket(market) : new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-  const ata = getAssociatedTokenAddressSync(new PublicKey(mint), handle.wallet.publicKey, true, tokenProgram)
-  if (!(await handle.readConn.getAccountInfo(ata))) {
-    const tx = new Transaction().add(
-      createAssociatedTokenAccountIdempotentInstruction(
-        handle.wallet.publicKey,
-        ata,
-        handle.wallet.publicKey,
-        new PublicKey(mint),
-        tokenProgram,
-      ),
+  return getAssociatedTokenAddressSync(new PublicKey(mint), handle.wallet.publicKey, true, tokenProgram)
+}
+
+/**
+ * 存入保证金(USDC 原子单位,主网真钱):硬顶 MAX_PERP_DEPOSIT_USDC/笔;
+ * 主网无水龙头——热钱包余额不足时明确报错,提示先经 Meteora 兑换或人工充值;
+ * ATA 不存在则幂等创建后 DriftClient.deposit。
+ */
+export async function driftDeposit(usdcAtomic: bigint): Promise<string> {
+  if (usdcAtomic <= 0n) throw new Error('存入金额必须大于 0')
+  const handle = await driftHandle()
+  const capAtomic = BigInt(Math.round(MAX_PERP_DEPOSIT_USDC * 1e6))
+  if (usdcAtomic > capAtomic) {
+    throw new Error(`单笔入金上限 ${MAX_PERP_DEPOSIT_USDC} USDC(SOLANA_MAX_PERP_DEPOSIT_USDC 可调),请拆小金额`)
+  }
+  const balance = await driftQuoteTokenBalance()
+  if (balance < usdcAtomic) {
+    throw new Error(
+      `主网热钱包 Drift 保证金 USDC 余额不足(需 ${Number(usdcAtomic) / 1e6}、有 ${Number(balance) / 1e6} USDC)。` +
+        '主网没有水龙头:请先经 Meteora 兑换技能(SOL→USDC)或人工充值到热钱包后再入金。',
     )
-    await sendManualTx(chainKey, handle.readConn, tx, handle.wallet)
+  }
+  await ensureDriftUser()
+  const { marketIndex } = driftQuoteSpotMarket(handle.env)
+  const ata = await quoteTokenAccount(handle)
+  if (!(await handle.readConn.getAccountInfo(ata))) {
+    const { mint } = driftQuoteSpotMarket(handle.env)
+    const market = handle.client.getSpotMarketAccount(marketIndex)
+    const tokenProgram = market ? handle.client.getTokenProgramForSpotMarket(market) : new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+    const tx = new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(handle.wallet.publicKey, ata, handle.wallet.publicKey, new PublicKey(mint), tokenProgram),
+    )
+    await sendManualTx(handle.readConn, tx, handle.wallet)
   }
   try {
     return await handle.client.deposit(new BN(usdcAtomic.toString()), marketIndex, ata, 0)
@@ -257,15 +269,13 @@ export async function driftDeposit(chainKey: string, usdcAtomic: bigint): Promis
   }
 }
 
-/** 提取保证金(USDC 原子单位)到热钱包 ATA */
-export async function driftWithdraw(chainKey: string, usdcAtomic: bigint): Promise<string> {
+/** 提取保证金(USDC 原子单位)到热钱包 ATA(主网真钱) */
+export async function driftWithdraw(usdcAtomic: bigint): Promise<string> {
   if (usdcAtomic <= 0n) throw new Error('提取金额必须大于 0')
-  const handle = await driftHandle(chainKey)
-  await ensureDriftUser(chainKey)
-  const { marketIndex, mint } = driftQuoteSpotMarket(handle.env)
-  const market = handle.client.getSpotMarketAccount(marketIndex)
-  const tokenProgram = market ? handle.client.getTokenProgramForSpotMarket(market) : new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-  const ata = getAssociatedTokenAddressSync(new PublicKey(mint), handle.wallet.publicKey, true, tokenProgram)
+  const handle = await driftHandle()
+  await ensureDriftUser()
+  const { marketIndex } = driftQuoteSpotMarket(handle.env)
+  const ata = await quoteTokenAccount(handle)
   try {
     return await handle.client.withdraw(new BN(usdcAtomic.toString()), marketIndex, ata, false, 0)
   } catch (e) {
@@ -274,31 +284,26 @@ export async function driftWithdraw(chainKey: string, usdcAtomic: bigint): Promi
 }
 
 /** 指定永续市场的预言机价格(美元,PRICE_PRECISION=1e6 定点),用于 USD 名义额 → base 数量换算 */
-export async function driftOraclePriceUsd(chainKey: string, marketIndex: number): Promise<number> {
-  const handle = await driftHandle(chainKey)
+export async function driftOraclePriceUsd(marketIndex: number): Promise<number> {
+  const handle = await driftHandle()
   const oracle = handle.client.getOracleDataForPerpMarket(marketIndex)
   if (!oracle) throw new Error(`[drift] 拿不到市场 ${marketIndex} 的预言机价格`)
   return oracle.price.toNumber() / 1e6
 }
 
 /** USD 名义额 → base 原子数量(BASE_PRECISION=1e9),按市场预言机价格 */
-export async function driftCalcBaseAmount(chainKey: string, marketIndex: number, usdNotional: number): Promise<bigint> {
+export async function driftCalcBaseAmount(marketIndex: number, usdNotional: number): Promise<bigint> {
   if (usdNotional <= 0) throw new Error('名义额必须大于 0')
-  const priceUsd = await driftOraclePriceUsd(chainKey, marketIndex)
+  const priceUsd = await driftOraclePriceUsd(marketIndex)
   if (priceUsd <= 0) throw new Error(`[drift] 市场 ${marketIndex} 预言机价格异常: ${priceUsd}`)
   return BigInt(Math.round((usdNotional / priceUsd) * 1e9))
 }
 
-/** 市价开多/开空(只开仓;已有反向持仓时 Drift 会按净头寸成交) */
-export async function driftOpenPosition(
-  chainKey: string,
-  marketIndex: number,
-  side: 'long' | 'short',
-  sizeBaseAtomic: bigint,
-): Promise<string> {
+/** 市价开多/开空(只开仓;已有反向持仓时 Drift 会按净头寸成交)。名义额硬顶在技能层校验 */
+export async function driftOpenPosition(marketIndex: number, side: 'long' | 'short', sizeBaseAtomic: bigint): Promise<string> {
   if (sizeBaseAtomic <= 0n) throw new Error('仓位数量必须大于 0')
-  const handle = await driftHandle(chainKey)
-  await ensureDriftUser(chainKey)
+  const handle = await driftHandle()
+  await ensureDriftUser()
   const orderParams = getMarketOrderParams({
     marketIndex,
     marketType: MarketType.PERP,
@@ -313,9 +318,9 @@ export async function driftOpenPosition(
 }
 
 /** 市价平仓(reduce-only):按当前持仓数量反向成交到归零 */
-export async function driftClosePosition(chainKey: string, marketIndex: number): Promise<string> {
-  const handle = await driftHandle(chainKey)
-  await ensureDriftUser(chainKey)
+export async function driftClosePosition(marketIndex: number): Promise<string> {
+  const handle = await driftHandle()
+  await ensureDriftUser()
   const user = handle.client.getUser(0, handle.wallet.publicKey)
   const position = user.getPerpPosition(marketIndex)
   const base = position?.baseAssetAmount
@@ -351,9 +356,9 @@ export interface DriftStatus {
 }
 
 /** 账户状态:保证金/可用保证金/购买力 + 未平永续持仓 */
-export async function driftStatus(chainKey: string): Promise<DriftStatus> {
-  const handle = await driftHandle(chainKey)
-  await ensureDriftUser(chainKey)
+export async function driftStatus(): Promise<DriftStatus> {
+  const handle = await driftHandle()
+  await ensureDriftUser()
   const user = handle.client.getUser(0, handle.wallet.publicKey)
   const collateral = user.getTotalCollateral().toNumber() / QUOTE_PRECISION.toNumber()
   const freeCollateral = user.getFreeCollateral().toNumber() / QUOTE_PRECISION.toNumber()
@@ -387,40 +392,10 @@ export async function driftStatus(chainKey: string): Promise<DriftStatus> {
   return { collateral: collateral.toFixed(4), freeCollateral: freeCollateral.toFixed(4), buyingPower: buyingPower.toFixed(4), positions }
 }
 
-/**
- * 经 Drift 官方 devnet token faucet 铸造保证金 USDC 到热钱包
- * (程序 V4v1mQiAdLz4qwckEb45WqHYceYizoib39cDBHSWfaB,SDK TokenFaucet 组 ix,
- * 热钱包签名,发送/确认走 FailoverConnection)。仅 devnet 有意义。
- */
-export async function driftFaucetUsdc(chainKey: string, usdcAtomic: bigint): Promise<{ signature: string; ata: string }> {
-  if (usdcAtomic <= 0n) throw new Error('铸造金额必须大于 0')
-  const handle = await driftHandle(chainKey)
-  if (handle.env !== 'devnet') throw new Error('faucet 只在 devnet 可用')
-  const { mint } = driftQuoteSpotMarket(handle.env)
-  const faucet = new TokenFaucet(
-    handle.readConn,
-    new Wallet(handle.wallet),
-    new PublicKey(DRIFT_FAUCET_PROGRAM_ID),
-    new PublicKey(mint),
-  )
-  const [ata, createIx, mintIx] = await faucet.createAssociatedTokenAccountAndMintToInstructions(
-    handle.wallet.publicKey,
-    new BN(usdcAtomic.toString()),
-  )
-  const tx = new Transaction()
-  if (!(await handle.readConn.getAccountInfo(ata))) tx.add(createIx)
-  tx.add(mintIx)
-  const signature = await sendManualTx(chainKey, handle.readConn, tx, handle.wallet)
-  return { signature, ata: ata.toBase58() }
-}
-
-/** 热钱包当前保证金 USDC 余额(原子单位;ATA 不存在返回 0) */
-export async function driftQuoteTokenBalance(chainKey: string): Promise<bigint> {
-  const handle = await driftHandle(chainKey)
-  const { marketIndex, mint } = driftQuoteSpotMarket(handle.env)
-  const market = handle.client.getSpotMarketAccount(marketIndex)
-  const tokenProgram = market ? handle.client.getTokenProgramForSpotMarket(market) : new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-  const ata = getAssociatedTokenAddressSync(new PublicKey(mint), handle.wallet.publicKey, true, tokenProgram)
+/** 主网热钱包当前保证金 USDC 余额(原子单位;ATA 不存在返回 0) */
+export async function driftQuoteTokenBalance(): Promise<bigint> {
+  const handle = await driftHandle()
+  const ata = await quoteTokenAccount(handle)
   const acc = await handle.readConn.getAccountInfo(ata)
   if (!acc) return 0n
   const token = await getAccount(handle.readConn, ata)
