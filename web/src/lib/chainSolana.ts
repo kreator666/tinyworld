@@ -571,6 +571,30 @@ export async function fetchAgentPublic(tokenId: number): Promise<{
   return { tokenId, name: identity.name, owner: identity.owner.toBase58(), bio: '', equipped: equippedToLocal(identity, mintToPartId) }
 }
 
+/** 批量读取多个 Agent 的公开信息(社交广场用):共一次 Identity 扫描 + 一次部件配置扫描,
+ *  避免逐 Agent 重复 GPA(public RPC 限流下逐 Agent 扫描是大面积失败的根因);只返回找到的 Agent */
+export async function fetchAgentsPublic(tokenIds: number[]): Promise<{
+  tokenId: number
+  name: string
+  owner: string
+  bio: string
+  equipped: Equipped
+}[]> {
+  const [identities, configs] = await Promise.all([fetchAllIdentities(), fetchAllPartConfigs()])
+  const mintToPartId = new Map<string, number>()
+  configs.forEach((cfg, partId) => mintToPartId.set(cfg.mint.toBase58(), partId))
+  const wanted = new Set(tokenIds)
+  return identities
+    .filter(({ identity }) => wanted.has(tokenIdFromMint(identity.mint)))
+    .map(({ identity }) => ({
+      tokenId: tokenIdFromMint(identity.mint),
+      name: identity.name,
+      owner: identity.owner.toBase58(),
+      bio: '',
+      equipped: equippedToLocal(identity, mintToPartId),
+    }))
+}
+
 const PERSONA_DATA_PREFIX = 'data:application/json;base64,'
 
 const decodePersonaJson = (uri: string): string => {

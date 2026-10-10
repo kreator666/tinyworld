@@ -78,6 +78,17 @@ export async function fetchAgentPublic(tokenId: number): Promise<{
   return isSolana() ? sol.fetchAgentPublic(tokenId) : evm.fetchAgentPublic(tokenId)
 }
 
+/** 批量读取多个 Agent 的公开信息(社交广场用);跳过单个失败,不拖垮整列 */
+export async function fetchAgentsPublic(tokenIds: number[]): Promise<{
+  tokenId: number
+  name: string
+  owner: string
+  bio: string
+  equipped: import('../types').Equipped
+}[]> {
+  return isSolana() ? sol.fetchAgentsPublic(tokenIds) : evm.fetchAgentsPublic(tokenIds)
+}
+
 export async function fetchPersona(tokenId: number): Promise<{ uri: string; contentHash: `0x${string}` }> {
   return isSolana() ? sol.fetchPersona(tokenId) : evm.fetchPersona(tokenId)
 }

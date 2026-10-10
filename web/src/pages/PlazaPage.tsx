@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import DIDCard, { type PlazaAgent } from '../components/DIDCard'
-import { fetchAgentPublic, fetchMintedAgents, isWalletOnActiveChain } from '../lib/chainDispatch'
+import { fetchAgentsPublic, fetchMintedAgents, isWalletOnActiveChain } from '../lib/chainDispatch'
 import { useChainConfig } from '../store/chainConfigStore'
 import { getPartByLocalId } from '../data/equipmentCatalog'
 import type { Rarity } from '../types'
@@ -36,7 +36,7 @@ export default function PlazaPage() {
     if (!connected || !onTargetChain) return
     setLoading(true)
     fetchMintedAgents()
-      .then((list) => Promise.all(list.map((a) => fetchAgentPublic(a.tokenId))))
+      .then((list) => fetchAgentsPublic(list.map((a) => a.tokenId)))
       .then((list) =>
         setAgents(
           list.map((a) => {

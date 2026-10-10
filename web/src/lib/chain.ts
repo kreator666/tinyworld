@@ -280,6 +280,18 @@ export async function fetchAgentPublic(tokenId: number): Promise<{
   return { tokenId, name, owner, bio, equipped }
 }
 
+/** 批量读取多个 Agent 的公开信息(社交广场用);单个失败(已销毁等)只跳过该 Agent,不影响整列 */
+export async function fetchAgentsPublic(tokenIds: number[]): Promise<{
+  tokenId: number
+  name: string
+  owner: Address
+  bio: string
+  equipped: Equipped
+}[]> {
+  const list = await Promise.all(tokenIds.map((id) => fetchAgentPublic(id).catch(() => null)))
+  return list.filter((a): a is NonNullable<typeof a> => a !== null)
+}
+
 /** 把 AI 人格配置写链:URI + keccak256 内容哈希(JSON 本体存链下,链上保证完整性) */
 export async function setPersonaOnChain(
   owner: Address,
