@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as PIXI from 'pixi.js'
 import type { Equipped } from '../types'
-import { getCharacterById } from '../data/characterCatalog'
+import { getCharacterById, characterIdFromLocalId } from '../data/characterCatalog'
 import { getPartByLocalId } from '../data/equipmentCatalog'
 
 // v4 素材实时预览:head/body 可分别来自不同角色,accessory/pet 沿用装备切片
@@ -20,14 +20,6 @@ interface StageRef {
 
 const ACC_DEFAULT_URL = '/assets/equipment/acc/1.png'
 const PET_DEFAULT_URL = '/assets/equipment/pet/1.png'
-const DEFAULT_CHARACTER_ID = 'character-1'
-
-function localIdToCharacterId(localId: string | null): string {
-  const index = localId?.split('-')[1]
-  if (!index) return DEFAULT_CHARACTER_ID
-  const id = `character-${index}`
-  return getCharacterById(id) ? id : DEFAULT_CHARACTER_ID
-}
 
 export default function PaperDoll({
   equipped,
@@ -142,8 +134,8 @@ export default function PaperDoll({
         }
       }
 
-      const headChar = getCharacterById(localIdToCharacterId(equipped.head))
-      const bodyChar = getCharacterById(localIdToCharacterId(equipped.body))
+      const headChar = getCharacterById(characterIdFromLocalId(equipped.head))
+      const bodyChar = getCharacterById(characterIdFromLocalId(equipped.body))
       if (!headChar || !bodyChar) return
 
       const [bodyTex, headTex] = await Promise.all([load(bodyChar.bodyUrl), load(headChar.headUrl)])

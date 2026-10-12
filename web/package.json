@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
-    "build:assets": "node scripts/build-avatar-assets.mjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.15",

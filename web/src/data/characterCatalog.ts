@@ -186,3 +186,12 @@ export const CHARACTERS: CharacterItem[] = [
 export function getCharacterById(id: string): CharacterItem | undefined {
   return CHARACTERS.find((c) => c.id === id)
 }
+
+// head/body 装备编号(如 head-3) -> 角色 id,与 PaperDoll 立绘同一套映射;
+// 空/无效编号回退 character-1(PaperDoll.tsx 的 localIdToCharacterId 同源逻辑)
+export function characterIdFromLocalId(localId: string | null): string {
+  const index = localId?.split('-')[1]
+  if (!index) return 'character-1'
+  const id = `character-${index}`
+  return getCharacterById(id) ? id : 'character-1'
+}

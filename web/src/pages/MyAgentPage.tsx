@@ -14,6 +14,7 @@ import {
   type UnsignedTx,
 } from '../lib/agentApi'
 import { sendTransactions } from '../lib/chainDispatch'
+import PixelRoom, { type AgentStatus } from '../components/PixelRoom'
 
 /** 消息文本渲染:把 URL 变成可点击链接(链上确认消息里的浏览器明细等) */
 function renderMessageContent(content: string) {
@@ -32,7 +33,7 @@ function renderMessageContent(content: string) {
 // 我的 Agent 助手(豆包式):只属于自己的 Agent 对话,支持多个会话,历史存后端
 export default function MyAgentPage() {
   const showToast = useAppStore((s) => s.showToast)
-  const { tokenId, didName } = useChainStore()
+  const { tokenId, didName, equipped: chainEquipped } = useChainStore()
   const address = useAppStore((s) => s.address)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -44,7 +45,27 @@ export default function MyAgentPage() {
   const [pendingSignTx, setPendingSignTx] = useState<{ unsignedTxs: UnsignedTx[]; note?: string; proposal?: Record<string, unknown> } | null>(null)
   const [signing, setSigning] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  // 小屋状态:基础状态由流程推导,收到回复后短暂 happy 再回落
+  const [happyUntil, setHappyUntil] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
+
+  // happy 3 秒倒计时(到点回落推导状态)
+  useEffect(() => {
+    if (happyUntil <= 0) return
+    const timer = setInterval(() => {
+      if (Date.now() >= happyUntil) setHappyUntil(0)
+    }, 400)
+    return () => clearInterval(timer)
+  }, [happyUntil])
+
+  // 小屋状态映射:confirming > signing > happy > waiting-sign > thinking > idle
+  const roomStatus: AgentStatus =
+    confirming ? 'confirming'
+    : signing ? 'signing'
+    : Date.now() < happyUntil ? 'happy'
+    : pendingSignTx && !signing ? 'waiting-sign'
+    : sending ? 'thinking'
+    : 'idle'
 
   const reloadConversations = useCallback(
     (keepActive = true) => {
@@ -131,6 +152,7 @@ export default function MyAgentPage() {
       // 从后端重拉,保证与落库一致(含自动生成的标题)
       const msgs = await listMessages(cid)
       setMessages(msgs)
+      setHappyUntil(Date.now() + 3000) // 收到回复,小屋撒花庆祝一下
       if (r.refused) showToast('人格开关拦截了这次回复')
       if (r.action?.type === 'sign_tx') {
         setPendingSignTx({ unsignedTxs: r.action.unsignedTxs, note: r.action.note, proposal: r.action.proposal })
@@ -231,8 +253,19 @@ export default function MyAgentPage() {
           </div>
         </div>
 
-        {/* 右:聊天区 */}
-        <div className="glass flex flex-col overflow-hidden">
+        {/* 右:像素小屋(Agent 状态呈现区)+ 聊天区 */}
+        <div className="flex flex-col gap-2 min-h-0">
+          {address && tokenId > 0 && (
+            <PixelRoom
+              className="shrink-0"
+              heightClass="h-28 md:h-32"
+              dollHeight={80}
+              status={roomStatus}
+              ownerAddress={address}
+              inhabitants={[{ id: address, equipped: chainEquipped }]}
+            />
+          )}
+          <div className="glass flex flex-col flex-1 overflow-hidden">
           <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-4">
             {!activeId && (
               <div className="h-full grid place-items-center text-slate-500 text-sm">
@@ -288,6 +321,7 @@ export default function MyAgentPage() {
             <button className="btn-primary !py-2" onClick={send} disabled={sending}>
               {sending ? '发送中…' : '发送'}
             </button>
+          </div>
           </div>
         </div>
       </div>
