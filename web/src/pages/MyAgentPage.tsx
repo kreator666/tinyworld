@@ -197,7 +197,9 @@ export default function MyAgentPage() {
       setPendingSignTx(null)
       setConfirming(false)
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '签名或发送失败')
+      // MetaMask 等 provider 拒绝时抛的是 {code,message} 普通对象而非 Error,兜底文案会吞掉真实原因
+      const msg = err instanceof Error ? err.message : (err as { message?: unknown } | null)?.message
+      showToast(typeof msg === 'string' && msg ? `签名或发送失败:${msg}` : '签名或发送失败')
     } finally {
       setSigning(false)
       setConfirming(false)

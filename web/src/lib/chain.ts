@@ -555,6 +555,11 @@ async function ensureAccounts(provider: NonNullable<ReturnType<typeof getWindowE
 /** 用户钱包对 unsigned tx 逐笔签名并发送(兼容不支持 eth_signTransaction 的钱包如 MetaMask) */
 export async function sendTransactions(owner: Address, unsignedTxs: EvmUnsignedTx[]): Promise<string[]> {
   if (unsignedTxs.length === 0) throw new Error('没有待发送交易')
+  // Solana 登录态(base58 地址)切到 EVM 链时,MetaMask 只会报笼统的 "must provide an Ethereum address";
+  // 这里前置拦截,给出可操作的提示
+  if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) {
+    throw new Error(`当前登录身份(${String(owner).slice(0, 10)}…)不是 EVM 地址,无法发送 Fuji 交易;请用 EVM 钱包(MetaMask 等)重新登录后再兑换`)
+  }
   const targetChainId = unsignedTxs[0].chainId
   if (unsignedTxs.some((tx) => tx.chainId !== targetChainId)) {
     throw new Error('待发送交易必须属于同一条链')
