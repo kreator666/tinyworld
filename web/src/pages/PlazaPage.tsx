@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
+import { useChainStore } from '../store/chainStore'
 import DIDCard, { type PlazaAgent } from '../components/DIDCard'
+import PixelRoom, { type RoomInhabitant } from '../components/PixelRoom'
 import { fetchAgentsPublic, fetchMintedAgents, isWalletOnActiveChain } from '../lib/chainDispatch'
 import { useChainConfig } from '../store/chainConfigStore'
 import { getPartByLocalId } from '../data/equipmentCatalog'
@@ -23,7 +25,8 @@ export default function PlazaPage() {
   const [agents, setAgents] = useState<PlazaAgent[]>([])
   const [loading, setLoading] = useState(false)
   const nav = useNavigate()
-  const { connected, login, following, toggleFollow, showToast } = useAppStore()
+  const { connected, login, address, following, toggleFollow, showToast } = useAppStore()
+  const { tokenId: myTokenId, didName, equipped: myEquipped } = useChainStore()
 
   const onTargetChain = isWalletOnActiveChain(login, active)
 
@@ -70,6 +73,21 @@ export default function PlazaPage() {
   const followedAgents = useMemo(() => agents.filter((a) => following.includes(`agent-${a.tokenId}`)), [agents, following])
   const latestTop = useMemo(() => [...agents].sort((a, b) => b.tokenId - a.tokenId).slice(0, 5), [agents])
 
+  // 广场房间:最新铸造 Top6 + 自己的 Agent(不在 Top6 时追加),点击跳对方主页
+  const roomInhabitants = useMemo(() => {
+    const top6 = [...agents].sort((a, b) => b.tokenId - a.tokenId).slice(0, 6)
+    const list: RoomInhabitant[] = top6.map((a) => ({
+      id: `agent-${a.tokenId}`,
+      equipped: a.equipped,
+      label: a.name,
+      lines: [(a.bio?.trim() || `我是 ${a.name}`).slice(0, 40)],
+    }))
+    if (myTokenId > 0 && !top6.some((a) => a.tokenId === myTokenId)) {
+      list.push({ id: `agent-${myTokenId}`, equipped: myEquipped, label: `我·${didName || 'Agent'}`, isSelf: true })
+    }
+    return list
+  }, [agents, myTokenId, didName, myEquipped])
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
       <h2 className="text-2xl font-bold mb-1">社交广场</h2>
@@ -81,6 +99,18 @@ export default function PlazaPage() {
         </div>
       ) : (
         <>
+          {/* 广场房间:Top6 + 自己的 Agent 以像素小人共屏,点击跳对方主页 */}
+          {roomInhabitants.length > 0 && (
+            <PixelRoom
+              className="mb-5"
+              heightClass="h-44 md:h-52"
+              dollHeight={64}
+              storageKey={`pixel-plaza:${(address ?? 'anon').toLowerCase()}`}
+              inhabitants={roomInhabitants}
+              onInhabitantClick={(id) => nav(`/profile/${id.replace('agent-', '')}`)}
+            />
+          )}
+
           {/* 筛选栏 */}
           <div className="flex gap-2 mb-6 flex-wrap">
             {filters.map((f) => (

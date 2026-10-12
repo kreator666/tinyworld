@@ -9,9 +9,11 @@ import { getPixelDoll, drawPixelDoll, PIXEL_SIZE } from '../game/pixelate'
 // signing 紧张小碎步、confirming 原地踮脚张望、happy 连跳两下 + 撒花;不传则为 idle 现状
 
 export interface RoomInhabitant {
-  id: string // 唯一 id(多人形态用 owner 地址)
+  id: string // 唯一 id(B 形态用 agent-tokenId / owner 地址)
   equipped: Equipped
   lines?: string[] // 人设气泡台词;缺省用默认台词池
+  label?: string // 头顶常驻小名牌(气泡出现时短暂让位)
+  isSelf?: boolean // 自己的 Agent 高亮:名牌加 ⭐、脚下光环换霓虹青
 }
 
 export type AgentStatus = 'idle' | 'thinking' | 'waiting-sign' | 'signing' | 'confirming' | 'happy'
@@ -19,10 +21,12 @@ export type AgentStatus = 'idle' | 'thinking' | 'waiting-sign' | 'signing' | 'co
 interface PixelRoomProps {
   inhabitants: RoomInhabitant[]
   ownerAddress?: string // 位置持久化 key
+  storageKey?: string // 持久化 key 完整覆盖(默认 pixel-room:{ownerAddress}),用于区分不同场景
   className?: string
   status?: AgentStatus // 整个房间的状态(反映 Agent);缺省 idle
   dollHeight?: number // 小人显示高度 px(默认 128 = 64x2 整数倍,像素最锐利)
   heightClass?: string // 容器高度 Tailwind 类,默认 h-80 md:h-96
+  onInhabitantClick?: (id: string) => void // 点击小人时,在默认弹跳+气泡之后触发(如跳转主页)
 }
 
 const WALK_SPEED = 55 // css px/s,idle 基准
@@ -49,6 +53,8 @@ interface Walker {
   id: string
   equippedKey: string
   lines: string[]
+  label: string
+  isSelf: boolean
   x: number // 比例坐标 0~1(持久化用)
   y: number
   tx: number
@@ -90,10 +96,12 @@ function clamp(v: number, min: number, max: number): number {
 export default function PixelRoom({
   inhabitants,
   ownerAddress,
+  storageKey: storageKeyProp,
   className = '',
   status = 'idle',
   dollHeight = PIXEL_SIZE * 2,
   heightClass = 'h-80 md:h-96',
+  onInhabitantClick,
 }: PixelRoomProps) {
   const boxRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -105,7 +113,13 @@ export default function PixelRoom({
   const statusRef = useRef<AgentStatus>('idle') // 初始视为 idle,挂载即为 happy 时也能触发庆祝
   const happyStartRef = useRef(-1)
 
-  const storageKey = `pixel-room:${(ownerAddress ?? 'anon').toLowerCase()}`
+  const storageKey = storageKeyProp ?? `pixel-room:${(ownerAddress ?? 'anon').toLowerCase()}`
+
+  // 点击回调 ref 化,避免 pointer handler 闭包过期
+  const onClickRef = useRef(onInhabitantClick)
+  useEffect(() => {
+    onClickRef.current = onInhabitantClick
+  })
 
   // 小人显示尺寸联动(默认 128px;改 dollHeight 全部内部尺寸跟着变)
   useEffect(() => {
@@ -164,6 +178,8 @@ export default function PixelRoom({
           id: inh.id,
           equippedKey: '',
           lines: inh.lines ?? [],
+          label: inh.label ?? '',
+          isSelf: !!inh.isSelf,
           x: pos?.x ?? rand(0.15, 0.85),
           y: pos?.y ?? rand(0.55, 0.9),
           tx: 0,
@@ -182,6 +198,8 @@ export default function PixelRoom({
         walkersRef.current.set(inh.id, w)
       }
       w.lines = inh.lines ?? []
+      w.label = inh.label ?? ''
+      w.isSelf = !!inh.isSelf
       if (w.equippedKey !== ek) {
         w.equippedKey = ek
         w.sprite = null // 换装:先隐去,像素化完成后恢复(缓存命中则即时)
@@ -239,6 +257,7 @@ export default function PixelRoom({
         wk.hop = HOP_TIME
         const pool = wk.lines.length > 0 ? wk.lines : DEFAULT_LINES
         wk.bubble = { text: pool[Math.floor(Math.random() * pool.length)], born: clockRef.current, ttl: BUBBLE_TIME }
+        onClickRef.current?.(wk.id) // 默认弹跳+气泡之后,交给调用方(如跳转主页)
         break // 只响应最上层一个
       }
     }
@@ -506,11 +525,19 @@ export default function PixelRoom({
         } else {
           offY += Math.sin(t * 2 + wk.phase) * D * 0.012 // 待机呼吸
         }
-        // 脚下阴影
-        ctx.fillStyle = 'rgba(0,0,0,0.35)'
-        ctx.beginPath()
-        ctx.ellipse(px, feet + 3, D * 0.32, Math.max(D * 0.04, 3), 0, 0, Math.PI * 2)
-        ctx.fill()
+        // 脚下:自己的 Agent 用霓虹青光环,其他人用暗色阴影
+        if (wk.isSelf) {
+          ctx.strokeStyle = 'rgba(34,211,238,0.6)'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.ellipse(px, feet + 2, D * 0.36, Math.max(D * 0.05, 3), 0, 0, Math.PI * 2)
+          ctx.stroke()
+        } else {
+          ctx.fillStyle = 'rgba(0,0,0,0.35)'
+          ctx.beginPath()
+          ctx.ellipse(px, feet + 3, D * 0.32, Math.max(D * 0.04, 3), 0, 0, Math.PI * 2)
+          ctx.fill()
+        }
         if (wk.sprite) {
           drawPixelDoll(ctx, wk.sprite, px - D / 2, feet + offY - D, D, D, wk.face < 0)
         } else {
@@ -519,6 +546,27 @@ export default function PixelRoom({
           ctx.fillRect(px - D * 0.09, feet + offY - D * 0.18, D * 0.18, D * 0.18)
         }
         drawBubble(ctx, wk, px, feet + offY - D, t)
+        // 常驻小名牌(气泡出现时短暂让位);自己的 Agent 加 ⭐ 前缀 + 青色底
+        if (wk.label && !wk.bubble) {
+          ctx.font = '10px sans-serif'
+          const text = (wk.isSelf ? '⭐ ' : '') + wk.label
+          const pw = ctx.measureText(text).width + 10
+          const ph = 14
+          const nx = clamp(px, pw / 2 + 4, w - pw / 2 - 4)
+          const ny = Math.max(4, feet + offY - D - ph - 4)
+          ctx.fillStyle = wk.isSelf ? 'rgba(8,51,68,0.85)' : 'rgba(15,17,35,0.75)'
+          ctx.strokeStyle = wk.isSelf ? 'rgba(34,211,238,0.6)' : 'rgba(148,163,184,0.35)'
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.roundRect(nx - pw / 2, ny, pw, ph, 7)
+          ctx.fill()
+          ctx.stroke()
+          ctx.fillStyle = wk.isSelf ? '#a5f3fc' : '#cbd5e1'
+          ctx.font = '10px sans-serif'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(text, nx, ny + ph / 2 + 0.5)
+        }
       }
       // 撒花粒子(画在最上层)
       for (const p of confettiRef.current) {
