@@ -16,7 +16,7 @@ import {
   supplyNative,
   withdrawErc20,
   withdrawNative,
-  NATIVE_GATEWAY,
+  nativeGateway,
   type ReserveInfo,
 } from '../../chain/aave'
 import { buildUnsignedErc20Approve } from '../../chain/defi'
@@ -367,9 +367,9 @@ function makeProposeWithdraw(chainKey: string, tokenId: number) {
         const unsignedTxs: UnsignedTx[] = []
         if (isNative) {
           // 网关 withdrawETH 会 transferFrom 用户的 aToken,需先 approve aToken→网关
-          const allowance = await getTokenAllowance(chainKey, reserve.aToken, actor, NATIVE_GATEWAY)
+          const allowance = await getTokenAllowance(chainKey, reserve.aToken, actor, nativeGateway(chainKey))
           if (allowance < amount) {
-            unsignedTxs.push(buildUnsignedErc20Approve(chainKey, reserve.aToken, NATIVE_GATEWAY, amount))
+            unsignedTxs.push(buildUnsignedErc20Approve(chainKey, reserve.aToken, nativeGateway(chainKey), amount))
           }
           unsignedTxs.push(buildUnsignedNativeWithdraw(chainKey, amount, actor))
         } else {

@@ -1,4 +1,4 @@
-import { sepolia, avalancheFuji, type Chain } from 'viem/chains'
+import { sepolia, avalancheFuji, avalanche, type Chain } from 'viem/chains'
 import DIDIdentityJson from '../abi/DIDIdentity.json'
 import DIDPartsJson from '../abi/DIDParts.json'
 import { toChainParts, type ChainPart } from '../data/equipmentCatalog'
@@ -10,7 +10,7 @@ import type { ChainType } from '../types'
 // 当前激活链由 store/chainConfigStore.ts 管理(导航栏按钮切换)。
 // ============================================================
 
-export type ChainKey = 'sepolia' | 'fuji' | 'solana-devnet'
+export type ChainKey = 'sepolia' | 'fuji' | 'solana-devnet' | 'avalanche'
 
 export interface ChainContracts {
   key: ChainKey
@@ -57,6 +57,17 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     parts: '0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267',
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
     explorer: 'https://testnet.snowtrace.io',
+  },
+  // Avalanche C-Chain 主网(2026-10 部署,chainId 43114)
+  avalanche: {
+    key: 'avalanche',
+    name: 'Avalanche',
+    chainId: 43114,
+    chain: avalanche,
+    identity: '0xf9111CbC5562671050910858BBA702db8C44f3fE',
+    parts: '0xa3fB106DD25c02bf18170d6657EdF4804bf5D924',
+    rpc: 'https://avalanche-c-chain-rpc.publicnode.com',
+    explorer: 'https://subnets.avax.network/c-chain',
   },
   // Solana devnet(程序 tinyworld 已部署,Token-2022;IDL 副本在 src/idl/tinyworld.json)
   'solana-devnet': {

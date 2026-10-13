@@ -18,6 +18,39 @@ for (const [chainKey, cfg] of Object.entries(ALL_CHAINS)) {
   registry.set(chainKey, { chainKey, family: cfg.family, cfg })
 }
 
+// ============================================================
+// DB 配置覆盖层(链配置下沉):chains 表 config 列是权威。
+// 启动时 index.ts 调 applyDbChainConfigs 注入;DB 不可达/无行时覆盖层为空,
+// getChainContext 回落到 config.ts 的 ALL_CHAINS,行为与改造前一致。
+// 注意:覆盖层只认识代码里已登记的链(需要 family/chainId 静态元数据);DB-only 的链请先加进 config.ts。
+// ============================================================
+const dbOverlay = new Map<string, Record<string, unknown>>()
+const mergedCache = new Map<string, ChainContext>()
+
+function mergeChainConfig(chainKey: string): ChainContext {
+  const base = registry.get(chainKey)!
+  const overlay = dbOverlay.get(chainKey)
+  if (!overlay || Object.keys(overlay).length === 0) return base
+  const deep = <T>(a: T, b: unknown): T => (a && b && typeof a === 'object' && typeof b === 'object' ? ({ ...(a as object), ...(b as object) } as T) : ((b as T) ?? a))
+  const cfg: ChainConfig = {
+    ...base.cfg,
+    ...(overlay as Partial<ChainConfig>),
+    defi: deep(base.cfg.defi, overlay.defi),
+    aave: deep(base.cfg.aave, overlay.aave),
+    solana: deep(base.cfg.solana, overlay.solana),
+  }
+  return { chainKey, family: cfg.family, cfg }
+}
+
+/** 启动时(chains 表种子写入后)注入/刷新 DB 配置覆盖层 */
+export function applyDbChainConfigs(rows: Record<string, Record<string, unknown>>): void {
+  dbOverlay.clear()
+  mergedCache.clear()
+  for (const [key, cfg] of Object.entries(rows)) {
+    if (registry.has(key)) dbOverlay.set(key, cfg)
+  }
+}
+
 /** 已知链(ALL_CHAINS 的键) */
 export function knownChainKeys(): string[] {
   return [...registry.keys()]
@@ -28,8 +61,15 @@ export function isKnownChainKey(chainKey: string): boolean {
 }
 
 export function getChainContext(chainKey: string): ChainContext {
-  const ctx = registry.get(chainKey)
-  if (!ctx) throw new Error(`未知链: ${chainKey}(可选: ${knownChainKeys().join('/')})`)
+  if (!registry.has(chainKey)) {
+    throw new Error(`未知链: ${chainKey}(可选: ${knownChainKeys().join('/')})`)
+  }
+  // DB 优先:有覆盖层时用合并后的配置,否则原样返回(缓存避免每次调用重新合并)
+  let ctx = mergedCache.get(chainKey)
+  if (!ctx) {
+    ctx = dbOverlay.has(chainKey) ? mergeChainConfig(chainKey) : registry.get(chainKey)!
+    mergedCache.set(chainKey, ctx)
+  }
   return ctx
 }
 

@@ -108,6 +108,9 @@ export async function initSchema(): Promise<void> {
     );
     -- 链家族(evm/solana);老库升级补列,缺省按 evm 处理
     ALTER TABLE chains ADD COLUMN IF NOT EXISTS family TEXT NOT NULL DEFAULT 'evm';
+    -- 链扩展配置(defi/aave/行情源/solana 等,见 seedChains);老库升级补列,缺省空对象
+    -- DB 是权威:client 工厂优先读这里,行缺失/DB 不可达时回落 config.ts
+    ALTER TABLE chains ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb;
 
     -- 多对话管理(我的 Agent 助手页):对话历史按会话隔离,事实记忆跨会话共享
     CREATE TABLE IF NOT EXISTS conversations (
@@ -286,20 +289,22 @@ export interface ChainRow {
   explorer: string
   enabled: boolean
   family: string // 'evm' | 'solana',前端 hydrateFromApi 用
+  config?: Record<string, unknown> // 链扩展配置(defi/aave/行情源/solana),seedChains 写入
 }
 
-/** 启动时把 config 里的链配置 upsert 进 chains 表(种子数据) */
+/** 启动时把 config 里的链配置 upsert 进 chains 表(种子数据)。
+ *  注意:config 列只在 INSERT 时写入,ON CONFLICT 不覆盖——DB 里手工改过的链配置是权威,重启不被代码冲掉 */
 export async function seedChains(rows: (Omit<ChainRow, 'enabled'> & { family: string })[]): Promise<void> {
   const db = await getDb()
   for (const r of rows) {
     await db.query(
-      `INSERT INTO chains (chain_key, chain_id, name, identity_address, parts_address, rpc, explorer, family)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO chains (chain_key, chain_id, name, identity_address, parts_address, rpc, explorer, family, config)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (chain_key) DO UPDATE SET
          chain_id = EXCLUDED.chain_id, name = EXCLUDED.name,
          identity_address = EXCLUDED.identity_address, parts_address = EXCLUDED.parts_address,
          rpc = EXCLUDED.rpc, explorer = EXCLUDED.explorer, family = EXCLUDED.family`,
-      [r.chain_key, r.chain_id, r.name, r.identity_address, r.parts_address, r.rpc, r.explorer, r.family],
+      [r.chain_key, r.chain_id, r.name, r.identity_address, r.parts_address, r.rpc, r.explorer, r.family, JSON.stringify(r.config ?? {})],
     )
   }
 }
@@ -308,6 +313,35 @@ export async function seedChains(rows: (Omit<ChainRow, 'enabled'> & { family: st
 export async function listChains(): Promise<ChainRow[]> {
   const db = await getDb()
   const res = await db.query<ChainRow>('SELECT * FROM chains WHERE enabled ORDER BY chain_id')
+  return res.rows
+}
+
+/** 启动时把 chains 表的 config 列整表读出,交给链注册表做 DB 优先覆盖(DB 不可达返回空对象,调用方回落 config.ts) */
+export async function loadChainConfigsFromDb(): Promise<Record<string, Record<string, unknown>>> {
+  const db = await getDb()
+  const res = await db.query<{ chain_key: string; config: Record<string, unknown> }>('SELECT chain_key, config FROM chains')
+  const out: Record<string, Record<string, unknown>> = {}
+  for (const row of res.rows) out[row.chain_key] = row.config ?? {}
+  return out
+}
+
+/** 管理接口用:把 body 的顶层键合并进某链的 config 列(jsonb || 语义,body 里给的键覆盖同名字段);调用方负责鉴权 */
+export async function updateChainConfig(chainKey: string, configJson: Record<string, unknown>): Promise<boolean> {
+  const db = await getDb()
+  const res = await db.query('UPDATE chains SET config = config || $1::jsonb WHERE chain_key = $2', [
+    JSON.stringify(configJson),
+    chainKey,
+  ])
+  return (res.affectedRows ?? 0) > 0
+}
+
+/** 跨链统一身份映射:某地址在所有链上的身份镜像(chain_identities 按 owner 查) */
+export async function listIdentitiesOf(owner: string): Promise<{ chain_key: string; token_id: string; name: string }[]> {
+  const db = await getDb()
+  const res = await db.query<{ chain_key: string; token_id: string; name: string }>(
+    'SELECT chain_key, token_id, name FROM chain_identities WHERE owner = $1 ORDER BY chain_key, token_id',
+    [owner],
+  )
   return res.rows
 }
 

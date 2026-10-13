@@ -1,6 +1,6 @@
 import { createPublicClient, createWalletClient, http, isHex, type Account, type Chain, type Hex, type PublicClient, type Transport, type WalletClient } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { sepolia, avalancheFuji } from 'viem/chains'
+import { sepolia, avalancheFuji, avalanche } from 'viem/chains'
 import type { ChainConfig } from '../config'
 import { getChainContext } from './registry'
 
@@ -20,6 +20,7 @@ export type CachedWalletClient = WalletClient<Transport, Chain, Account>
 const VIEM_CHAIN_DEFS: Record<number, Chain> = {
   [sepolia.id]: sepolia,
   [avalancheFuji.id]: avalancheFuji,
+  [avalanche.id]: avalanche,
 }
 
 /** 取链配置(env 覆盖已按 config.ts 规则应用);未知 chainKey 抛错 */

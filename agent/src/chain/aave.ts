@@ -135,8 +135,12 @@ const erc20Abi = [
 /** RAY 精度:Aave 利率用 ray(1e27 = 100%)表示 */
 const RAY = 10n ** 27n
 
-/** 链上原生 AVAX 存取网关(Aave 官方 address book: WETH_GATEWAY) */
-export const NATIVE_GATEWAY: Address = '0x3d2ee1AB8C3a597cDf80273C684dE0036481bE3a'
+/** 链上原生币存取网关(Aave 官方 address book: WETH_GATEWAY,按链配置,缺省抛错) */
+export function nativeGateway(chainKey: string): Address {
+  const gateway = getChainContext(chainKey).cfg.aave?.gateway
+  if (!gateway) throw new Error(`链 ${chainKey} 未配置 Aave WrappedTokenGateway(aave.gateway)`)
+  return gateway
+}
 
 function agentAccount() {
   const key = config.agentPrivateKey
@@ -249,7 +253,7 @@ export async function supplyNative(chainKey: string, amount: bigint): Promise<Le
   const before = await getATokenBalance(chainKey, info.aToken, account.address)
 
   const tx = await wallet.writeContract({
-    address: NATIVE_GATEWAY,
+    address: nativeGateway(chainKey),
     abi: gatewayAbi,
     functionName: 'depositETH',
     args: [cfg.aave!.pool, account.address, 0],
@@ -305,12 +309,12 @@ export async function withdrawNative(chainKey: string, amount: bigint): Promise<
 
   // 网关 withdrawETH 会 transferFrom 用户的 aToken,必须先授权 aToken 给网关
   const info = await getReserveInfo(chainKey, cfg.defi!.wNative)
-  if ((await getTokenAllowance(chainKey, info.aToken, account.address, NATIVE_GATEWAY)) < amount) {
+  if ((await getTokenAllowance(chainKey, info.aToken, account.address, nativeGateway(chainKey))) < amount) {
     const t0 = await wallet.writeContract({
       address: info.aToken,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [NATIVE_GATEWAY, amount],
+      args: [nativeGateway(chainKey), amount],
     })
     const r0 = await clientFor(chainKey).waitForTransactionReceipt({ hash: t0, timeout: 120_000 })
     if (r0.status !== 'success') throw new Error(`approve(aToken→Gateway) 失败: ${t0}`)
@@ -318,7 +322,7 @@ export async function withdrawNative(chainKey: string, amount: bigint): Promise<
 
   const before = await clientFor(chainKey).getBalance({ address: account.address })
   const tx = await wallet.writeContract({
-    address: NATIVE_GATEWAY,
+    address: nativeGateway(chainKey),
     abi: gatewayAbi,
     functionName: 'withdrawETH',
     args: [cfg.aave!.pool, amount, account.address],
@@ -374,7 +378,7 @@ export function buildUnsignedNativeSupply(chainKey: string, amount: bigint, onBe
     args: [cfg.aave!.pool, onBehalfOf, 0],
   })
   return {
-    to: NATIVE_GATEWAY,
+    to: nativeGateway(chainKey),
     data,
     value: amount.toString(),
     chainId: cfg.chainId,
@@ -408,7 +412,7 @@ export function buildUnsignedNativeWithdraw(chainKey: string, amount: bigint, to
     args: [cfg.aave!.pool, amount, to],
   })
   return {
-    to: NATIVE_GATEWAY,
+    to: nativeGateway(chainKey),
     data,
     value: '0',
     chainId: cfg.chainId,

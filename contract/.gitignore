@@ -20,3 +20,4 @@ lib/
 # Dotenv file
 .env
 .migration-wallets.json
+.keys/

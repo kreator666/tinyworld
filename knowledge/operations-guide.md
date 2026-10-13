@@ -332,3 +332,24 @@ cd agent && npx tsx scripts/pglite-repair-wal.ts repair <dataDir>   # 修复并�
 原理:从 `global/pg_control` 读检查点位置与内容副本,在 WAL 中原位重写一条合法的
 shutdown 检查点记录(CRC32C 重算)、其余补零,数据回到上次干净检查点。
 **未检查点的事务会丢失**;修复前手动备份 data 目录。
+
+## 11. Avalanche C-Chain 主网部署记录(2026-10-13)
+
+四个合约由 owner 热钱包 `0x784D68dB62448cDeBC5599ba7f8b2FbB59174018` 部署(chainId 43114):
+
+| 合约 | 地址 |
+|------|------|
+| DIDParts | 0xa3fB106DD25c02bf18170d6657EdF4804bf5D924 |
+| DIDIdentity | 0xf9111CbC5562671050910858BBA702db8C44f3fE |
+| DIDReputation | 0x319202A6B09A39d6E6E04f7b6B2571358d105f6B |
+| DIDValidation | 0xfAEb8174BA2dD8eEb35A6FA9DC31E89E1317c048 |
+
+- 11 笔交易(4 部署 + 白名单 + registerPartBatch(120) + 演示铸造 + 4 笔创世铸造)均可在浏览器查:
+  `https://subnets.avax.network/c-chain/tx/<txHash>`(owner 地址页可看到全部)
+- 创世铸造:每槽 普通12×200 + 稀有9×50 + 史诗6×20 + 传说3×5 = 2985 份,全部在 owner 钱包
+- 主网 owner 私钥在 `contract/.keys/mainnet-owner.key`(已 gitignore,严禁入库/打印)
+- defi 配置(LFJ V1 Router / WAVAX / USDC / USDT / Aave Pool+Gateway)来源:
+  LFJ 官方文档 developers.lfj.gg、Aave address book(bgd-labs)、Circle 官网;注意 USDC 正确地址是
+  `0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E`(尾号易记错,以 address book 为准)
+- 链配置已下沉 chains 表(DB 权威);主网条目随代码 config.ts 种子写入,也可用
+  `PUT /admin/chains/avalanche/config`(X-Admin-Token)在线修改

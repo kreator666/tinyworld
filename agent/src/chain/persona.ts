@@ -1,5 +1,6 @@
 import { formatEther, formatUnits, keccak256, toBytes, isAddress, type Address } from 'viem'
 import type { AIProfile } from '../types'
+import { upsertChainIdentities } from '../db'
 import * as solana from './personaSolana'
 import { getChainContext } from './registry'
 import { getPublicClient } from './clients'
@@ -248,7 +249,7 @@ export async function getAgentPermissions(chainKey: string, tokenId: number, age
   })) as bigint
 }
 
-/** 列出全部已铸造的 Agent(心跳调度器每轮枚举用) */
+/** 列出全部已铸造的 Agent(心跳调度器每轮枚举用);顺带把镜像落 chain_identities(失败不影响读取) */
 export async function listMintedAgents(chainKey: string): Promise<AgentSummary[]> {
   if (isSolana(chainKey)) return solana.listMintedAgents(chainKey)
   const client = clientFor(chainKey)
@@ -262,7 +263,7 @@ export async function listMintedAgents(chainKey: string): Promise<AgentSummary[]
   )
   const tokenIds: number[] = []
   for (let i = 1; i <= total; i++) tokenIds.push(i)
-  return Promise.all(
+  const agents = await Promise.all(
     tokenIds.map(async (tokenId) => {
       const [name, owner] = await Promise.all([
         client.readContract({
@@ -281,6 +282,20 @@ export async function listMintedAgents(chainKey: string): Promise<AgentSummary[]
       return { tokenId, name, owner, bio: '' }
     }),
   )
+  // 身份镜像(GPA 扫描成功的批量写入时机):支撑 /identities/of 跨链映射;失败只警告
+  upsertChainIdentities(
+    agents.map((a) => ({
+      token_id: String(a.tokenId),
+      owner: a.owner,
+      name: a.name,
+      mint: '',
+      persona_hash: '',
+      persona_arweave_id: '',
+      minted_at: 0,
+      chain_key: chainKey,
+    })),
+  ).catch((e) => console.warn('[persona] 身份镜像写入失败(不影响读取):', e))
+  return agents
 }
 
 /** 列出最新铸造的 N 个 Agent(social-greeter 的 list_new_agents 用) */

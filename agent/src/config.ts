@@ -32,6 +32,7 @@ interface ChainConfig {
   }
   aave?: {
     pool: `0x${string}` // Aave v3 Pool(地址来自 Aave 官方 address book)
+    gateway?: `0x${string}` // WrappedTokenGateway(原生币存取;Aave address book WETH_GATEWAY,按链不同)
   }
   // Solana 家族专属:稳定币 mint 与 Jupiter 兑换 API(测试网需自托管 quote API,见运维手册)
   solana?: {
@@ -60,8 +61,9 @@ const CHAINS: Record<string, ChainConfig> = {
       nativePriceId: 'avax', // 占位:Sepolia 上 swap 只做流程验证
     },
     aave: {
-      // Sepolia 也部署了 Aave v3 测试池(Aave 官方 address book AaveV3Sepolia.POOL)
+      // Sepolia 也部署了 Aave v3 测试池(Aave 官方 address book AaveV3Sepolia.POOL / WETH_GATEWAY)
       pool: '0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951',
+      gateway: '0x387d311e47e80b498169e6fb51d3193167d89F7D',
     },
   },
   fuji: {
@@ -85,6 +87,34 @@ const CHAINS: Record<string, ChainConfig> = {
     aave: {
       // Aave 官方 address book: https://github.com/bgd-labs/aave-address-book/blob/main/src/AaveV3Fuji.sol
       pool: '0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40',
+      gateway: '0x3d2ee1AB8C3a597cDf80273C684dE0036481bE3a',
+    },
+  },
+  // Avalanche C-Chain 主网(2026-10 部署,chainId 43114;defi/aave 地址均经官方来源+主网 RPC 自证)
+  avalanche: {
+    family: 'evm',
+    name: 'Avalanche',
+    chainId: 43114,
+    rpc: 'https://avalanche-c-chain-rpc.publicnode.com',
+    rpcFallbacks: ['https://1rpc.io/avax/c'],
+    explorer: 'https://subnets.avax.network/c-chain',
+    identityAddress: '0xf9111CbC5562671050910858BBA702db8C44f3fE',
+    partsAddress: '0xa3fB106DD25c02bf18170d6657EdF4804bf5D924',
+    nativePriceId: 'avalanche-2',
+    nativeGatePair: 'AVAX_USDT',
+    defi: {
+      // LFJ(TraderJoe) V1 Router(官方文档 developers.lfj.gg 核实的 Avalanche 部署地址)
+      router: '0x60aE616a2155Ee3d9A68541Ba4544862310933d4',
+      wNative: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7',
+      usdc: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', // Circle 原生 USDC(曾记错过尾号,以 Aave address book 为准)
+      usdt: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7',
+      nativeSymbol: 'AVAX',
+      nativePriceId: 'avax',
+    },
+    aave: {
+      // Aave 官方 address book AaveV3Avalanche:POOL / WETH_GATEWAY
+      pool: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
+      gateway: '0x2825cE5921538d17cc15Ae00a8B24fF759C6CDaE',
     },
   },
   // Solana devnet:Anchor 程序 tinyworld(Soulbound DID + 装备,Token-2022)

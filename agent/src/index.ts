@@ -15,7 +15,8 @@ import {
   listConversations,
   listMessages,
 } from './core/conversation'
-import { initSchema, closeDb, listChains, seedChains } from './db'
+import { initSchema, closeDb, listChains, seedChains, loadChainConfigsFromDb, updateChainConfig, listIdentitiesOf } from './db'
+import { applyDbChainConfigs } from './chain/registry'
 import { appendAssistantMessage } from './core/conversation'
 import { waitForTxReceipt, parseSwapAmountOut } from './chain/defi'
 import { ALL_CHAINS } from './config'
@@ -56,6 +57,46 @@ app.get('/chains', async (c) => {
   try {
     const chains = await listChains()
     return c.json({ chains })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 跨链统一身份映射(只读):同一地址在各链上的身份列表。
+// 数据底座是 chain_identities 镜像;也是将来 ERC-8004 注册文件 registrations 数组(多链互相引用)的数据源。
+// 当前对 EVM 地址(0x)生效;Solana base58 地址镜像里若存在同样能查。
+app.get('/identities/of/:address', async (c) => {
+  const address = c.req.param('address')
+  try {
+    const rows = await listIdentitiesOf(address)
+    return c.json({
+      address,
+      identities: rows.map((r) => ({ chainKey: r.chain_key, tokenId: Number(r.token_id), name: r.name })),
+    })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 链配置管理:把 body 顶层键合并进某链 chains.config 列(jsonb ||,body 同名字段覆盖;defi/aave/solana 这类
+// 子对象需给完整对象),改完立即刷新内存覆盖层。
+// 鉴权:请求头 X-Admin-Token 必须等于环境变量 CHAIN_ADMIN_TOKEN;未配置该变量时接口关闭(503)。
+// 以后"加链/改 router"只改数据库,例如:
+//   curl -X PUT /admin/chains/fuji/config -H 'X-Admin-Token: ***' -d '{"defi":{"router":"0x..."}}'
+// SQL 等价:UPDATE chains SET config = config || '{"defi":{"router":"0x..."}}'::jsonb WHERE chain_key='fuji';
+app.put('/admin/chains/:key/config', async (c) => {
+  const adminToken = process.env.CHAIN_ADMIN_TOKEN
+  if (!adminToken) return c.json({ error: '链配置管理接口未启用(设置 CHAIN_ADMIN_TOKEN 环境变量开启)' }, 503)
+  if (c.req.header('X-Admin-Token') !== adminToken) return c.json({ error: '管理员令牌无效' }, 403)
+  try {
+    const key = c.req.param('key')
+    getChainContext(key) // 校验链已登记(覆盖层只认识代码里有的链)
+    const body = await c.req.json<Record<string, unknown>>().catch(() => null)
+    if (!body || typeof body !== 'object') return c.json({ error: '请求体必须是 JSON 对象(如 {"defi":{"router":"0x..."}})' }, 400)
+    const ok = await updateChainConfig(key, body)
+    if (!ok) return c.json({ error: `链不存在: ${key}` }, 404)
+    applyDbChainConfigs(await loadChainConfigsFromDb()) // 立即生效
+    return c.json({ ok: true, chainKey: key, config: body })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -856,8 +897,19 @@ async function main() {
       rpc: c.rpc,
       explorer: c.explorer,
       family: c.family,
+      // 扩展配置(defi/aave/行情源/solana)落 chains.config 列;只在新行插入时写入,不重载手工改动
+      config: {
+        ...(c.defi ? { defi: c.defi } : {}),
+        ...(c.aave ? { aave: c.aave } : {}),
+        ...(c.nativePriceId ? { nativePriceId: c.nativePriceId } : {}),
+        ...(c.nativeGatePair ? { nativeGatePair: c.nativeGatePair } : {}),
+        ...(c.rpcFallbacks ? { rpcFallbacks: c.rpcFallbacks } : {}),
+        ...(c.solana ? { solana: c.solana } : {}),
+      },
     })),
   )
+  // 链配置下沉:chains 表 config 列是权威,注入注册表覆盖层(DB 不可达时回落 config.ts)
+  applyDbChainConfigs(await loadChainConfigsFromDb())
   await syncSkillsToDb()
   startScheduler() // M3:心跳驱动自主社交
   serve({ fetch: app.fetch, port: config.port }, (info) => {
