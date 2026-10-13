@@ -7,10 +7,13 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {IDIDIdentity} from "./interfaces/IDIDIdentity.sol";
 import {IDIDParts} from "./interfaces/IDIDParts.sol";
 import {IERC5192} from "./interfaces/IERC5192.sol";
 import {IERC4906} from "./interfaces/IERC4906.sol";
+import {IERC8004Identity} from "./interfaces/IERC8004Identity.sol";
 import {Slots} from "./libraries/Slots.sol";
 
 /// @title DIDIdentity
@@ -21,7 +24,17 @@ import {Slots} from "./libraries/Slots.sol";
 ///   换装自动退回旧件，一笔交易完成；转账/销毁前必须清空插槽
 /// - AI Agent 扩展点：操作员授权（权限位）、人格配置链上指针（URI + 内容哈希）、模块注册表；
 ///   未来 AI 模块以独立合约经注册表接入，核心合约零改动（ERC-6551 TBA 对 ERC-721 天然可用）
-contract DIDIdentity is ERC721, Ownable, ReentrancyGuard, IERC1155Receiver, IERC4906, IDIDIdentity, IERC5192 {
+contract DIDIdentity is
+    ERC721,
+    Ownable,
+    ReentrancyGuard,
+    IERC1155Receiver,
+    IERC4906,
+    IDIDIdentity,
+    IERC5192,
+    IERC8004Identity,
+    EIP712
+{
     /// @dev AI 操作员权限位：更新人格配置
     uint256 public constant PERMISSION_PERSONA = 1 << 0;
     /// @dev AI 操作员权限位：社交行为（预留给未来模块使用）
@@ -54,6 +67,14 @@ contract DIDIdentity is ERC721, Ownable, ReentrancyGuard, IERC1155Receiver, IERC
     /// @dev 模块注册表（未来 AI 模块接入点）
     mapping(bytes32 => address) public getModule;
 
+    /// @dev ERC-8004：agentId => metadataKey => value（"agentWallet" 为保留键，不经过此存储）
+    mapping(uint256 => mapping(string => bytes)) private _metadata;
+    /// @dev ERC-8004：agentId => agent 钱包地址（转账时自动清零）
+    mapping(uint256 => address) private _agentWallet;
+
+    /// @dev ERC-8004 保留 metadataKey：只能通过带签名的 setAgentWallet 设置
+    string public constant AGENT_WALLET_KEY = "agentWallet";
+
     // ------------------------------------------------------------------
     // 错误
     // ------------------------------------------------------------------
@@ -70,6 +91,9 @@ contract DIDIdentity is ERC721, Ownable, ReentrancyGuard, IERC1155Receiver, IERC
     error NotAuthorized(address caller);
     error InvalidAgent();
     error InvalidModuleId();
+    error ReservedMetadataKey(string key);
+    error SignatureExpired(uint256 deadline);
+    error InvalidWalletSignature();
 
     // ------------------------------------------------------------------
     // 事件（Locked/Unlocked、MetadataUpdate 来自 EIP-5192/4906 接口）
@@ -86,6 +110,7 @@ contract DIDIdentity is ERC721, Ownable, ReentrancyGuard, IERC1155Receiver, IERC
     constructor(string memory name_, string memory symbol_, string memory baseTokenURI_, string memory contractURI_)
         ERC721(name_, symbol_)
         Ownable(msg.sender)
+        EIP712("DIDAI", "1")
     {
         _baseTokenURI = baseTokenURI_;
         _contractURI = contractURI_;
@@ -113,6 +138,7 @@ contract DIDIdentity is ERC721, Ownable, ReentrancyGuard, IERC1155Receiver, IERC
         _safeMint(msg.sender, tokenId);
         emit Locked(tokenId); // EIP-5192：铸造即为锁定态
         emit Minted(msg.sender, tokenId, name);
+        emit Registered(tokenId, profileURI, msg.sender); // ERC-8004：mint 即注册
     }
 
     /// @notice 名称是否可用（前端预校验）
@@ -130,6 +156,13 @@ contract DIDIdentity is ERC721, Ownable, ReentrancyGuard, IERC1155Receiver, IERC
     function profileURIOf(uint256 tokenId) external view returns (string memory) {
         _requireOwned(tokenId);
         return _profileURIs[tokenId];
+    }
+
+    /// @notice ERC-8004：更新 agentURI（= profileURI），仅 token owner
+    function setProfileURI(uint256 agentId, string calldata newURI) external {
+        if (msg.sender != _requireOwned(agentId)) revert NotTokenOwner(msg.sender);
+        _profileURIs[agentId] = newURI;
+        emit URIUpdated(agentId, newURI, msg.sender);
     }
 
     function totalMinted() external view returns (uint256) {
@@ -275,6 +308,72 @@ contract DIDIdentity is ERC721, Ownable, ReentrancyGuard, IERC1155Receiver, IERC
     }
 
     // ==================================================================
+    // ERC-8004 Identity Registry：metadata + agentWallet
+    // ==================================================================
+
+    /// @notice ERC-8004：读取 agent 元数据
+    function getMetadata(uint256 agentId, string memory metadataKey) external view returns (bytes memory) {
+        _requireOwned(agentId);
+        return _metadata[agentId][metadataKey];
+    }
+
+    /// @notice ERC-8004：设置 agent 元数据；DID 持有者或被授权（PERMISSION_PERSONA）的 agent 可调用。
+    /// "agentWallet" 为保留键，拒绝经过此入口设置。
+    function setMetadata(uint256 agentId, string memory metadataKey, bytes memory metadataValue) external {
+        address owner = _requireOwned(agentId);
+        if (msg.sender != owner && agentPermissions[agentId][msg.sender] & PERMISSION_PERSONA == 0) {
+            revert NotAuthorized(msg.sender);
+        }
+        if (keccak256(bytes(metadataKey)) == keccak256(bytes(AGENT_WALLET_KEY))) {
+            revert ReservedMetadataKey(metadataKey);
+        }
+        _metadata[agentId][metadataKey] = metadataValue;
+        emit MetadataSet(agentId, metadataKey, metadataKey, metadataValue);
+    }
+
+    /// @notice ERC-8004：当前 agent 钱包地址（0 = 未设置）
+    function getAgentWallet(uint256 agentId) external view returns (address) {
+        _requireOwned(agentId);
+        return _agentWallet[agentId];
+    }
+
+    /// @notice ERC-8004：设置 agent 钱包。newWallet 必须对
+    /// （agentId, newWallet, deadline）的 EIP-712 结构体签名（EOA ecrecover / 合约钱包 ERC-1271）。
+    /// 仅 DID 持有者或被授权（PERMISSION_PERSONA）的 agent 可调用。
+    function setAgentWallet(uint256 agentId, address newWallet, uint256 deadline, bytes calldata signature) external {
+        address owner = _requireOwned(agentId);
+        if (msg.sender != owner && agentPermissions[agentId][msg.sender] & PERMISSION_PERSONA == 0) {
+            revert NotAuthorized(msg.sender);
+        }
+        if (newWallet == address(0)) revert InvalidAgent();
+        if (block.timestamp > deadline) revert SignatureExpired(deadline);
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(abi.encode(keccak256("AgentWalletAssignment(uint256 agentId,address newWallet,uint256 deadline)"), agentId, newWallet, deadline))
+        );
+        // EOA 走 ecrecover，合约钱包走 ERC-1271（OZ SignatureChecker 统一处理）
+        if (!SignatureChecker.isValidSignatureNow(newWallet, digest, signature)) revert InvalidWalletSignature();
+        _agentWallet[agentId] = newWallet;
+        emit MetadataSet(agentId, AGENT_WALLET_KEY, AGENT_WALLET_KEY, abi.encode(newWallet));
+    }
+
+    /// @notice ERC-8004：清除 agent 钱包设置；仅 DID 持有者或被授权 agent 可调用
+    function unsetAgentWallet(uint256 agentId) external {
+        address owner = _requireOwned(agentId);
+        if (msg.sender != owner && agentPermissions[agentId][msg.sender] & PERMISSION_PERSONA == 0) {
+            revert NotAuthorized(msg.sender);
+        }
+        delete _agentWallet[agentId];
+        emit MetadataSet(agentId, AGENT_WALLET_KEY, AGENT_WALLET_KEY, "");
+    }
+
+    /// @notice ERC-8004 setAgentWallet 的 EIP-712 摘要（前端/工具签名用）
+    function agentWalletDigest(uint256 agentId, address newWallet, uint256 deadline) external view returns (bytes32) {
+        return _hashTypedDataV4(
+            keccak256(abi.encode(keccak256("AgentWalletAssignment(uint256 agentId,address newWallet,uint256 deadline)"), agentId, newWallet, deadline))
+        );
+    }
+
+    // ==================================================================
     // 模块注册表（未来 AI 模块接入点）
     // ==================================================================
 
@@ -322,6 +421,7 @@ contract DIDIdentity is ERC721, Ownable, ReentrancyGuard, IERC1155Receiver, IERC
                 tokenIdOf[to] = tokenId;
             }
             delete tokenIdOf[from];
+            delete _agentWallet[tokenId]; // ERC-8004：token 转让时 agentWallet 自动清零
         }
 
         return super._update(to, tokenId, auth);
@@ -349,6 +449,7 @@ contract DIDIdentity is ERC721, Ownable, ReentrancyGuard, IERC1155Receiver, IERC
     function supportsInterface(bytes4 interfaceId) public view override(ERC721, IERC165) returns (bool) {
         return interfaceId == type(IERC5192).interfaceId // 0xb45a3c0e
             || interfaceId == type(IERC4906).interfaceId // 0x49064906
+            || interfaceId == type(IERC8004Identity).interfaceId // ERC-8004 Identity Registry
             || interfaceId == type(IERC1155Receiver).interfaceId || super.supportsInterface(interfaceId);
     }
 }

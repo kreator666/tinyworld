@@ -56,6 +56,28 @@ contract DIDParts is ERC1155, ERC1155Supply, Ownable, IDIDParts {
         emit PartRegistered(id, slot, rarity, maxSupply);
     }
 
+    error ArrayLengthMismatch();
+    error InvalidBatchLength();
+
+    /// @notice 批量注册配件：等长数组，逐条复用 registerPart 的插槽/重复/供应量校验，整体原子
+    function registerPartBatch(uint256[] calldata ids, uint8[] calldata slots, uint8[] calldata rarities, uint96[] calldata maxSupplies)
+        external
+        onlyOwner
+    {
+        uint256 n = ids.length;
+        if (n == 0) revert InvalidBatchLength();
+        if (slots.length != n || rarities.length != n || maxSupplies.length != n) revert ArrayLengthMismatch();
+        for (uint256 i = 0; i < n; ++i) {
+            uint8 slot = slots[i];
+            Slots.check(slot);
+            uint256 id = ids[i];
+            if (parts[id].registered) revert PartAlreadyRegistered(id);
+            if (maxSupplies[i] == 0) revert InvalidMaxSupply();
+            parts[id] = PartInfo({slot: slot, rarity: rarities[i], maxSupply: maxSupplies[i], mintable: true, registered: true});
+            emit PartRegistered(id, slot, rarities[i], maxSupplies[i]);
+        }
+    }
+
     function setPartMintable(uint256 id, bool mintable) external onlyOwner {
         if (!parts[id].registered) revert PartNotRegistered(id);
         parts[id].mintable = mintable;

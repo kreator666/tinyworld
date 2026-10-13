@@ -268,6 +268,34 @@
     },
     {
       "type": "function",
+      "name": "registerPartBatch",
+      "inputs": [
+        {
+          "name": "ids",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "slots",
+          "type": "uint8[]",
+          "internalType": "uint8[]"
+        },
+        {
+          "name": "rarities",
+          "type": "uint8[]",
+          "internalType": "uint8[]"
+        },
+        {
+          "name": "maxSupplies",
+          "type": "uint96[]",
+          "internalType": "uint96[]"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "renounceOwnership",
       "inputs": [],
       "outputs": [],
@@ -716,6 +744,11 @@
     },
     {
       "type": "error",
+      "name": "ArrayLengthMismatch",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "ERC1155InsufficientBalance",
       "inputs": [
         {
@@ -815,6 +848,11 @@
           "internalType": "address"
         }
       ]
+    },
+    {
+      "type": "error",
+      "name": "InvalidBatchLength",
+      "inputs": []
     },
     {
       "type": "error",

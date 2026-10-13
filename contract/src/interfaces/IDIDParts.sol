@@ -10,4 +10,12 @@ interface IDIDParts is IERC1155 {
     function slotOf(uint256 id) external view returns (uint8);
 
     function rarityOf(uint256 id) external view returns (uint8);
+
+    /// @notice 批量注册配件（等长数组，整体原子）
+    function registerPartBatch(
+        uint256[] calldata ids,
+        uint8[] calldata slots,
+        uint8[] calldata rarities,
+        uint96[] calldata maxSupplies
+    ) external;
 }

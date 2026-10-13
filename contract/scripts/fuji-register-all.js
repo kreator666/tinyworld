@@ -6,7 +6,7 @@
 require("dotenv").config();
 const { ethers } = require("hardhat");
 
-const PARTS = "0xdac819D6B834E26B23EE30Edc9C13eA0a4b834f2";
+const PARTS = "0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267";
 const partsAbi = require("../artifacts/src/DIDParts.sol/DIDParts.json").abi;
 
 const RARITY = [
