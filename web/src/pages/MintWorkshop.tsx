@@ -35,14 +35,14 @@ function buildCharacterItems(): NFTItem[] {
       items.push({
         ...baseHead,
         name: `角色 ${index}`,
-        imageUrl: char.headUrl,
+        imageUrl: char.headThumbUrl ?? char.headUrl, // 卡片用缩略图,全尺寸留给立绘/像素管线
       })
     }
     if (baseBody) {
       items.push({
         ...baseBody,
         name: `角色 ${index}`,
-        imageUrl: char.bodyUrl,
+        imageUrl: char.bodyThumbUrl ?? char.bodyUrl,
       })
     }
     return items

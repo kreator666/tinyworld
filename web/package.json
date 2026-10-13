@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:assets": "node scripts/build-pet-acc-assets.mjs"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.15",
