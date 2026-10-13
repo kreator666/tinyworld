@@ -16,8 +16,8 @@ import {
   quoteSwap,
   type UnsignedTx,
 } from '../../chain/defi'
-import { getChainContext } from '../../chain/registry'
-import { getAvaxPriceUsd } from '../../core/price'
+import { getChainContext, chainKeyByChainId } from '../../chain/registry'
+import { getNativePriceUsd } from '../../core/price'
 import { createApproval } from '../../core/approvals'
 import { evaluateProposal, type Proposal } from '../../policy/engine'
 import { getSwapMode } from '../../core/settings'
@@ -68,11 +68,11 @@ export function tokenSymbolOf(chainKey: string, address: Address): string {
   return `${address.slice(0, 8)}…`
 }
 
-/** 估值:native 路径按行情价;稳定币(USDC/USDT)路径按 $1 计。价格源失败返回 null(熔断信号) */
-async function estimateValueUsd(amountIn: bigint, nativeIn: boolean): Promise<number | null> {
+/** 估值:native 路径按该链原生币行情价;稳定币(USDC/USDT)路径按 $1 计。价格源失败返回 null(熔断信号) */
+async function estimateValueUsd(chainKey: string, amountIn: bigint, nativeIn: boolean): Promise<number | null> {
   if (!nativeIn) return Number(formatUnits(amountIn, STABLE_DECIMALS)) // 稳定币按 $1
   try {
-    const { usd } = await getAvaxPriceUsd()
+    const { usd } = await getNativePriceUsd(chainKey)
     return Number(formatEther(amountIn)) * usd
   } catch {
     return null
@@ -152,27 +152,30 @@ function recordingProposal(p: Proposal) {
 
 /**
  * 执行已放行的提案(defi-swap 工具的 execute 分支和审批 approve 端点共用):
- * 发交易 → 等回执 → 余额核实 → 写 tasks 表
+ * 发交易 → 等回执 → 余额核实 → 写 tasks 表。
+ * 多链重构:执行链按 proposal.chainId 路由(与请求链解耦,策略引擎已在评估阶段把关);
+ * chainKey 入参保留用于 tasks 记录缺省(实际以 chainId 反查为准)。
  */
 export async function executeProposal(
   chainKey: string,
   tokenId: number,
   proposal: Proposal,
 ): Promise<{ txHash: string; amountOut: string }> {
+  const execChainKey = chainKeyByChainId(proposal.chainId) ?? chainKey
   const { tokenIn, tokenOut, amountIn, owner } = proposal.params
   const amountOutMin = proposal.params.amountOutMin! // swap 提案必定携带(滑点保护)
   let result: { txHash: string; amountOut: bigint }
   if (tokenIn === 'native') {
     // 热钱包自有资金:原生币 → 代币
-    const r = await executeSwap(chainKey, BigInt(amountIn), BigInt(amountOutMin), tokenOut as Address)
+    const r = await executeSwap(execChainKey, BigInt(amountIn), BigInt(amountOutMin), tokenOut as Address)
     result = { txHash: r.txHash, amountOut: r.amountOut }
   } else {
     // 用户资金:代币 → 原生币(transferFrom + approve + swap,热钱包代执行)
     if (!owner) throw new Error('提案缺少 owner(用户资金路径)')
-    const r = await executeUserSwap(chainKey, owner as Address, tokenIn as Address, BigInt(amountIn), BigInt(amountOutMin))
+    const r = await executeUserSwap(execChainKey, owner as Address, tokenIn as Address, BigInt(amountIn), BigInt(amountOutMin))
     result = { txHash: r.txHash, amountOut: r.amountOut }
   }
-  await recordDefiTask(chainKey, tokenId, proposal, {
+  await recordDefiTask(execChainKey, tokenId, proposal, {
     txHash: result.txHash,
     amountOut: result.amountOut.toString(),
     usdValue: proposal.estimatedValueUsd,
@@ -203,7 +206,7 @@ async function buildNativeProposal(
       amountIn: amountIn.toString(),
       amountOutMin: ((quoted * SLIPPAGE_BPS) / BPS_BASE).toString(),
     },
-    estimatedValueUsd: await estimateValueUsd(amountIn, true),
+    estimatedValueUsd: await estimateValueUsd(chainKey, amountIn, true),
     reason,
   }
 }
@@ -233,7 +236,7 @@ async function buildUserProposal(
       amountOutMin: ((quoted * SLIPPAGE_BPS) / BPS_BASE).toString(),
       owner,
     },
-    estimatedValueUsd: await estimateValueUsd(amountIn, false),
+    estimatedValueUsd: await estimateValueUsd(chainKey, amountIn, false),
     reason,
   }
 }

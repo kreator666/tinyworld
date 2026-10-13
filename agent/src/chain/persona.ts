@@ -1,8 +1,8 @@
-import { createPublicClient, formatEther, formatUnits, http, keccak256, toBytes, isAddress, type Address } from 'viem'
-import { sepolia, avalancheFuji } from 'viem/chains'
+import { formatEther, formatUnits, keccak256, toBytes, isAddress, type Address } from 'viem'
 import type { AIProfile } from '../types'
 import * as solana from './personaSolana'
 import { getChainContext } from './registry'
+import { getPublicClient } from './clients'
 import {
   PERMISSION_SOCIAL,
   PersonaError,
@@ -136,22 +136,9 @@ const partsAbi = [
   },
 ] as const
 
-// 按链缓存只读客户端(链定义只影响编码细节;合约地址随请求链变化)
-const VIEM_CHAINS = { [sepolia.id]: sepolia, [avalancheFuji.id]: avalancheFuji } as const
-const clients = new Map<string, ReturnType<typeof createPublicClient>>()
-
-function clientFor(chainKey: string): ReturnType<typeof createPublicClient> {
-  let client = clients.get(chainKey)
-  if (!client) {
-    const { cfg } = getChainContext(chainKey)
-    client = createPublicClient({
-      chain: VIEM_CHAINS[cfg.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
-      transport: http(cfg.rpc),
-    })
-    clients.set(chainKey, client)
-  }
-  return client
-}
+// 按链缓存只读客户端统一走 chain/clients.ts 工厂(Solana 家族在工厂入口抛错,
+// 本模块的 Solana 分派在 isSolana 分支已提前委托 personaSolana,不会走到这里)
+const clientFor = getPublicClient
 
 /** 地址 → tokenId;未铸造返回 0(合约约定) */
 export async function resolveTokenId(chainKey: string, owner: string): Promise<number> {

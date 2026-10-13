@@ -1,50 +1,23 @@
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  isHex,
-  formatUnits,
-  encodeFunctionData,
-  type Address,
-  type Hex,
-} from 'viem'
+import { formatUnits, encodeFunctionData, isHex, type Address, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { sepolia, avalancheFuji } from 'viem/chains'
 import { config } from '../config'
 import { getChainContext } from './registry'
+import { getPublicClient, getWalletClient } from './clients'
 import type { UnsignedTx } from './defi'
 
 // ============================================================
 // Aave v3 链交互(M4+):热钱包资金存入/取出赚供给收益(Supply APY)
 // 合约地址来自 Aave 官方 address book(见 config.ts 注释)
 // Fuji 支持原生 AVAX(WrappedTokenGateway)与 ERC20(USDC/WAVAX 直接 supply)
+// 多链重构:client 统一走 chain/clients.ts 工厂(按 chainKey 缓存),本模块不再自建
 // ============================================================
 
-// 按链缓存只读客户端(链定义只影响编码细节;合约地址随请求链变化)
-const VIEM_CHAINS = { [sepolia.id]: sepolia, [avalancheFuji.id]: avalancheFuji } as const
-const clients = new Map<string, ReturnType<typeof createPublicClient>>()
+const clientFor = getPublicClient
 
-function clientFor(chainKey: string): ReturnType<typeof createPublicClient> {
-  let client = clients.get(chainKey)
-  if (!client) {
-    const { cfg } = getChainContext(chainKey)
-    client = createPublicClient({
-      chain: VIEM_CHAINS[cfg.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
-      transport: http(cfg.rpc),
-    })
-    clients.set(chainKey, client)
-  }
-  return client
-}
-
-/** 按请求链创建热钱包客户端(签名/发交易用,私钥固定,chain/rpc 随 chainKey) */
-function walletClientFor(chainKey: string, account: ReturnType<typeof privateKeyToAccount>) {
-  const { cfg } = getChainContext(chainKey)
-  return createWalletClient({
-    account,
-    chain: VIEM_CHAINS[cfg.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
-    transport: http(cfg.rpc),
-  })
+/** 按请求链创建热钱包客户端(签名/发交易用;AGENT_PRIVATE_KEY 单钥多链,地址跨链相同) */
+function walletClientFor(chainKey: string, _account?: ReturnType<typeof privateKeyToAccount>) {
+  if (!config.agentPrivateKey) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
+  return getWalletClient(chainKey, config.agentPrivateKey as Hex)
 }
 
 // Aave v3 Pool:getReserveData 返回完整 ReserveData,viem 解码需按结构体全量声明
@@ -233,9 +206,8 @@ export interface LendingResult {
 /** ERC20 存入 Aave:approve(不足才发)→ supply → 核实 aToken 余额真实增长 */
 export async function supplyErc20(chainKey: string, asset: Address, amount: bigint): Promise<LendingResult> {
   const { cfg } = getChainContext(chainKey)
-  const account = agentAccount()
-  if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = walletClientFor(chainKey, account)
+  const wallet = walletClientFor(chainKey)
+  const account = wallet.account! // 工厂已从 AGENT_PRIVATE_KEY 绑定
   const pool = cfg.aave!.pool
 
   const info = await getReserveInfo(chainKey, asset)
@@ -270,9 +242,8 @@ export async function supplyErc20(chainKey: string, asset: Address, amount: bigi
 /** 原生币(如 AVAX)经 Gateway 存入 Aave → 核实 aWAVAX 余额真实增长 */
 export async function supplyNative(chainKey: string, amount: bigint): Promise<LendingResult> {
   const { cfg } = getChainContext(chainKey)
-  const account = agentAccount()
-  if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = walletClientFor(chainKey, account)
+  const wallet = walletClientFor(chainKey)
+  const account = wallet.account! // 工厂已从 AGENT_PRIVATE_KEY 绑定
 
   const info = await getReserveInfo(chainKey, cfg.defi!.wNative)
   const before = await getATokenBalance(chainKey, info.aToken, account.address)
@@ -296,9 +267,8 @@ export async function supplyNative(chainKey: string, amount: bigint): Promise<Le
 /** 从 Aave 取出 ERC20 → 核实底层币到账 */
 export async function withdrawErc20(chainKey: string, asset: Address, amount: bigint): Promise<LendingResult> {
   const { cfg } = getChainContext(chainKey)
-  const account = agentAccount()
-  if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = walletClientFor(chainKey, account)
+  const wallet = walletClientFor(chainKey)
+  const account = wallet.account! // 工厂已从 AGENT_PRIVATE_KEY 绑定
 
   const erc20Before = (await clientFor(chainKey).readContract({
     address: asset,
@@ -330,9 +300,8 @@ export async function withdrawErc20(chainKey: string, asset: Address, amount: bi
 /** 从 Aave 取回原生币(经 Gateway)→ 核实原生余额真实增长(gas 扣在同一余额,要加回来) */
 export async function withdrawNative(chainKey: string, amount: bigint): Promise<LendingResult> {
   const { cfg } = getChainContext(chainKey)
-  const account = agentAccount()
-  if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = walletClientFor(chainKey, account)
+  const wallet = walletClientFor(chainKey)
+  const account = wallet.account! // 工厂已从 AGENT_PRIVATE_KEY 绑定
 
   // 网关 withdrawETH 会 transferFrom 用户的 aToken,必须先授权 aToken 给网关
   const info = await getReserveInfo(chainKey, cfg.defi!.wNative)

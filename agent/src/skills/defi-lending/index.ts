@@ -21,8 +21,8 @@ import {
 } from '../../chain/aave'
 import { buildUnsignedErc20Approve } from '../../chain/defi'
 import { getNativeBalance, getTokenBalance, hasAgentKey } from '../../chain/defi'
-import { getChainContext } from '../../chain/registry'
-import { getAvaxPriceUsd } from '../../core/price'
+import { getChainContext, chainKeyByChainId } from '../../chain/registry'
+import { getNativePriceUsd } from '../../core/price'
 import { getSwapMode } from '../../core/settings'
 import { createApproval } from '../../core/approvals'
 import { evaluateProposal, type Proposal } from '../../policy/engine'
@@ -59,12 +59,12 @@ function symbolOf(chainKey: string, token: { isNative: boolean; address: Address
   return token.address.toLowerCase() === cfg.defi!.usdc.toLowerCase() ? 'USDC' : 'WAVAX'
 }
 
-/** 估值:USDC 按 $1;AVAX/WAVAX 按行情价。价格源失败返回 null(熔断信号) */
-async function estimateValueUsd(amount: bigint, isNative: boolean, isUsdc: boolean): Promise<number | null> {
+/** 估值:USDC 按 $1;原生币按该链行情价(WAVAX 理论上同价,首期只支持原生与 USDC,防御)。价格源失败返回 null(熔断信号) */
+async function estimateValueUsd(chainKey: string, amount: bigint, isNative: boolean, isUsdc: boolean): Promise<number | null> {
   if (isUsdc) return Number(formatUnits(amount, USDC_DECIMALS))
-  if (!isNative) return null // WAVAX 理论上可按 AVAX 价估,首期只支持 AVAX 原生与 USDC,防御
+  if (!isNative) return null
   try {
-    const { usd } = await getAvaxPriceUsd()
+    const { usd } = await getNativePriceUsd(chainKey)
     return Number(formatEther(amount)) * usd
   } catch {
     return null
@@ -126,7 +126,7 @@ async function buildSupplyProposal(
       tokenOut: cfg.defi!.nativeSymbol === 'AVAX' ? 'aToken(WAVAX)' : 'aToken',
       amountIn: amount.toString(),
     },
-    estimatedValueUsd: await estimateValueUsd(amount, token.isNative, isUsdc),
+    estimatedValueUsd: await estimateValueUsd(chainKey, amount, token.isNative, isUsdc),
     reason,
   }
 }
@@ -154,7 +154,7 @@ async function buildWithdrawProposal(
       tokenOut: token.isNative ? 'native' : token.address,
       amountIn: amount.toString(),
     },
-    estimatedValueUsd: await estimateValueUsd(amount, token.isNative, isUsdc),
+    estimatedValueUsd: await estimateValueUsd(chainKey, amount, token.isNative, isUsdc),
     reason,
   }
 }
@@ -165,18 +165,20 @@ export async function executeLendingProposal(
   tokenId: number,
   proposal: Proposal,
 ): Promise<{ txHash: string; amountOut: string }> {
-  const cfg = getChainContext(chainKey).cfg
+  // 多链重构:执行链按 proposal.chainId 路由(与请求链解耦)
+  const execChainKey = chainKeyByChainId(proposal.chainId) ?? chainKey
+  const cfg = getChainContext(execChainKey).cfg
   const isNative = proposal.params.tokenIn === 'native'
   const asset = (isNative ? cfg.defi!.wNative : proposal.params.tokenIn) as Address
   const amount = BigInt(proposal.params.amountIn)
   const result = isNative
     ? proposal.action === 'supply'
-      ? await supplyNative(chainKey, amount)
-      : await withdrawNative(chainKey, amount)
+      ? await supplyNative(execChainKey, amount)
+      : await withdrawNative(execChainKey, amount)
     : proposal.action === 'supply'
-      ? await supplyErc20(chainKey, asset, amount)
-      : await withdrawErc20(chainKey, asset, amount)
-  await recordLendingTask(chainKey, tokenId, proposal, {
+      ? await supplyErc20(execChainKey, asset, amount)
+      : await withdrawErc20(execChainKey, asset, amount)
+  await recordLendingTask(execChainKey, tokenId, proposal, {
     txHash: result.txHash,
     amount: result.delta.toString(),
     usdValue: proposal.estimatedValueUsd,

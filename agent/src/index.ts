@@ -4,7 +4,7 @@ import { cors } from 'hono/cors'
 import { keccak256, toBytes, formatUnits, type Hex } from 'viem'
 import { config } from './config'
 import { PersonaError, loadPersona, ownerOf, resolveTokenId } from './chain/persona'
-import { resolveChainKey, getChainContext } from './chain/registry'
+import { resolveChainKey, getChainContext, chainKeyByChainId } from './chain/registry'
 import { chatWithAgent, invalidateAgent, reloadAgent, type ChatMode } from './core/agent'
 import { clearMemories, distill, getMemoryCounts, listMemories } from './core/memory'
 import {
@@ -518,13 +518,15 @@ app.post('/approvals/:id/approve', authRequired, async (c) => {
     await assertAgentOwnership(c, chainKey, approval.tokenId)
     if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
     try {
-      // 按 action 分发:swap 走兑换执行器;supply/withdraw 走借贷执行器
+      // 按 action 分发:swap 走兑换执行器;supply/withdraw 走借贷执行器(执行链按提案 chainId 路由)
       const { txHash, amountOut } =
         approval.proposal.action === 'swap'
           ? await executeProposal(chainKey, approval.tokenId, approval.proposal)
           : await executeLendingProposal(chainKey, approval.tokenId, approval.proposal)
       await resolveApproval(id, 'executed', txHash)
-      return c.json({ ok: true, status: 'executed', txHash, amountOut, explorer: `${getChainContext(chainKey).cfg.explorer}/tx/${txHash}` })
+      // 浏览器链接按提案目标链拼接(与请求链可能不同)
+      const execChainKey = chainKeyByChainId(approval.proposal.chainId) ?? chainKey
+      return c.json({ ok: true, status: 'executed', txHash, amountOut, explorer: `${getChainContext(execChainKey).cfg.explorer}/tx/${txHash}` })
     } catch (err) {
       // 执行失败(滑点/余额不足/revert):标 failed,保留人工处置痕迹
       await resolveApproval(id, 'failed')

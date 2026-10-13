@@ -1,6 +1,6 @@
 import { config } from '../config'
 import { getDb } from '../db'
-import { getChainContext } from '../chain/registry'
+import { chainKeyByChainId, getChainContext } from '../chain/registry'
 import type { UnsignedTx } from '../chain/defi'
 
 // ============================================================
@@ -46,12 +46,6 @@ export interface Verdict {
   reasons: string[]
 }
 
-/** 代币白名单(按链):WAVAX/WETH + USDC + USDT(未配置的零地址自动过滤) */
-function tokenWhitelist(chainKey: string): string[] {
-  const { wNative, usdc, usdt } = getChainContext(chainKey).cfg.defi!
-  return [wNative, usdc, usdt].filter((a) => a !== '0x0000000000000000000000000000000000000000').map((a) => a.toLowerCase())
-}
-
 /** 当天已执行的 defi 交易总额(USD,tasks 表 result.usdValue 累计) */
 async function dailySpentUsd(chainKey: string): Promise<number> {
   const db = await getDb()
@@ -79,32 +73,44 @@ async function inCooldown(chainKey: string, action: string): Promise<boolean> {
 
 /**
  * 评估提案:
- * - rejected:白名单外协议/代币、链不匹配(硬规则,人工也不能放行)
+ * - rejected:白名单外协议/代币、chainId 不在 CHAINS 白名单或该链无 defi 合约配置(硬规则,人工也不能放行)
  * - needsApproval:估值失败(熔断)、超单笔限额、超日累计、冷却期内(软规则,人工审批可放行)
  * - execute:全部通过
+ *
+ * 多链重构(方案A):chainId 不再要求等于请求链,只要求落在 CHAINS 白名单且该链配置了 defi 合约;
+ * 协议/代币白名单与日累计限额全部按"提案目标链"解析,与请求链解耦。
  */
 export async function evaluateProposal(chainKey: string, p: Proposal): Promise<Verdict> {
-  const cfg = getChainContext(chainKey).cfg
   const hardFail: string[] = []
   const soft: string[] = []
 
-  // 协议白名单:swap 只能走 DEX router;supply/withdraw 只能走 Aave Pool
-  if (p.chainId !== cfg.chainId) {
-    hardFail.push(`链不匹配(提案 chainId=${p.chainId},当前 ${cfg.chainId})`)
-  }
-  const allowedProtocol = p.action === 'swap' ? cfg.defi!.router : cfg.aave!.pool
-  if (p.protocol.toLowerCase() !== allowedProtocol.toLowerCase()) {
-    hardFail.push(`协议不在白名单: ${p.protocol}(当前 action=${p.action} 仅允许 ${allowedProtocol})`)
-  }
+  // 链硬规则:chainId 必须对应 CHAINS 白名单内的链,且该链必须配置 defi 合约(无配置直接拒绝并说明)
+  const pChainKey = chainKeyByChainId(p.chainId)
+  const pCfg = pChainKey ? getChainContext(pChainKey).cfg : null
+  if (!pChainKey || !pCfg) {
+    hardFail.push(`chainId=${p.chainId} 不在 CHAINS 白名单`)
+  } else if (!pCfg.defi) {
+    hardFail.push(`chainId=${p.chainId}(${pCfg.name})未配置 defi 合约,不支持执行`)
+  } else {
+    // 协议白名单:swap 只能走目标链 DEX router;supply/withdraw 只能走目标链 Aave Pool
+    if (p.action === 'swap') {
+      if (p.protocol.toLowerCase() !== pCfg.defi.router.toLowerCase()) {
+        hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.defi.router})`)
+      }
+    } else if (!pCfg.aave || p.protocol.toLowerCase() !== pCfg.aave.pool.toLowerCase()) {
+      hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.aave?.pool ?? '未配置 Aave'})`)
+    }
 
-  // 代币白名单('native' 表示原生币;swap 双向都允许;supply/withdraw 只校验底层资产 tokenIn,
-  // tokenOut 在借贷场景记 aToken 地址,由 Aave 协议本身保证其真实性,不重复校验)
-  const whitelist = tokenWhitelist(chainKey)
-  if (p.params.tokenIn !== 'native' && !whitelist.includes(p.params.tokenIn.toLowerCase())) {
-    hardFail.push(`tokenIn 不在白名单: ${p.params.tokenIn}`)
-  }
-  if (p.action === 'swap' && p.params.tokenOut !== 'native' && !whitelist.includes(p.params.tokenOut.toLowerCase())) {
-    hardFail.push(`tokenOut 不在白名单: ${p.params.tokenOut}`)
+    // 代币白名单(按目标链):WNative + USDC + USDT(未配置的零地址自动过滤)
+    const whitelist = [pCfg.defi.wNative, pCfg.defi.usdc, pCfg.defi.usdt]
+      .filter((a) => a !== '0x0000000000000000000000000000000000000000')
+      .map((a) => a.toLowerCase())
+    if (p.params.tokenIn !== 'native' && !whitelist.includes(p.params.tokenIn.toLowerCase())) {
+      hardFail.push(`tokenIn 不在白名单: ${p.params.tokenIn}`)
+    }
+    if (p.action === 'swap' && p.params.tokenOut !== 'native' && !whitelist.includes(p.params.tokenOut.toLowerCase())) {
+      hardFail.push(`tokenOut 不在白名单: ${p.params.tokenOut}`)
+    }
   }
 
   if (hardFail.length > 0) return { verdict: 'rejected', reasons: hardFail }
@@ -116,13 +122,14 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
     if (p.estimatedValueUsd > config.policyMaxTxUsd) {
       soft.push(`单笔估值 $${p.estimatedValueUsd.toFixed(2)} 超过限额 $${config.policyMaxTxUsd}`)
     }
-    const spent = await dailySpentUsd(chainKey)
+    // 日累计按提案目标链统计(执行/记 tasks 都在目标链)
+    const spent = await dailySpentUsd(pChainKey!)
     if (spent + p.estimatedValueUsd > config.policyDailyLimitUsd) {
       soft.push(`日累计将达到 $${(spent + p.estimatedValueUsd).toFixed(2)},超过日限额 $${config.policyDailyLimitUsd}`)
     }
   }
 
-  if (await inCooldown(chainKey, p.action)) {
+  if (await inCooldown(pChainKey!, p.action)) {
     soft.push(`同 action(${p.action})在 ${config.policyCooldownSeconds}s 冷却期内`)
   }
 

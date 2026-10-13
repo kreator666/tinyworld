@@ -1,47 +1,22 @@
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  isHex,
-  encodeFunctionData,
-  type Address,
-  type Hex,
-} from 'viem'
+import { encodeFunctionData, isHex, type Address, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { sepolia, avalancheFuji } from 'viem/chains'
+import { avalancheFuji } from 'viem/chains'
 import { config } from '../config'
 import { getChainContext } from './registry'
+import { getPublicClient, getWalletClient } from './clients'
 
 // ============================================================
 // DeFi 链交互(M4):Agent 热钱包签名,V2 风格 Router 兑换
 // 只操作热钱包自己的资金(少量测试币),用户本金不经过这里(设计文档 §7.1)
+// 多链重构:client 统一走 chain/clients.ts 工厂(按 chainKey 缓存),本模块不再自建
 // ============================================================
 
-// 按链缓存只读客户端(链定义只影响编码细节;合约地址随请求链变化)
-const VIEM_CHAINS = { [sepolia.id]: sepolia, [avalancheFuji.id]: avalancheFuji } as const
-const clients = new Map<string, ReturnType<typeof createPublicClient>>()
+const clientFor = getPublicClient
 
-function clientFor(chainKey: string): ReturnType<typeof createPublicClient> {
-  let client = clients.get(chainKey)
-  if (!client) {
-    const { cfg } = getChainContext(chainKey)
-    client = createPublicClient({
-      chain: VIEM_CHAINS[cfg.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
-      transport: http(cfg.rpc),
-    })
-    clients.set(chainKey, client)
-  }
-  return client
-}
-
-/** 按请求链创建热钱包客户端(签名/发交易用,私钥固定,chain/rpc 随 chainKey) */
-function walletClientFor(chainKey: string, account: ReturnType<typeof privateKeyToAccount>) {
-  const { cfg } = getChainContext(chainKey)
-  return createWalletClient({
-    account,
-    chain: VIEM_CHAINS[cfg.chainId as keyof typeof VIEM_CHAINS] ?? sepolia,
-    transport: http(cfg.rpc),
-  })
+/** 按请求链创建热钱包客户端(签名/发交易用;AGENT_PRIVATE_KEY 单钥多链,地址跨链相同) */
+function walletClientFor(chainKey: string, _account?: ReturnType<typeof privateKeyToAccount>) {
+  if (!config.agentPrivateKey) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
+  return getWalletClient(chainKey, config.agentPrivateKey as Hex)
 }
 
 // V2 Router 只用到两个方法:报价 + 原生币换代币(方法名按链变体:AVAX/ETH)
@@ -223,9 +198,8 @@ export async function executeSwap(
   tokenOut: Address,
 ): Promise<SwapResult> {
   const { cfg } = getChainContext(chainKey)
-  const account = agentAccount()
-  if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = walletClientFor(chainKey, account)
+  const wallet = walletClientFor(chainKey)
+  const account = wallet.account! // 工厂已从 AGENT_PRIVATE_KEY 绑定
 
   const before = await getTokenBalance(chainKey, tokenOut, account.address)
   const fnName = cfg.chainId === avalancheFuji.id ? 'swapExactAVAXForTokens' : 'swapExactETHForTokens'
@@ -268,9 +242,8 @@ export async function executeUserSwap(
   amountOutMin: bigint,
 ): Promise<UserSwapResult> {
   const { cfg } = getChainContext(chainKey)
-  const account = agentAccount()
-  if (!account) throw new Error('未配置执行密钥(AGENT_PRIVATE_KEY)')
-  const wallet = walletClientFor(chainKey, account)
+  const wallet = walletClientFor(chainKey)
+  const account = wallet.account! // 工厂已从 AGENT_PRIVATE_KEY 绑定
   const { router, wNative } = cfg.defi!
 
   // 1. 把用户的代币转入热钱包(依赖用户对热钱包的 approve 额度)

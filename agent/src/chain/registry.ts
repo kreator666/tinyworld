@@ -36,6 +36,14 @@ export function getChainContext(chainKey: string): ChainContext {
 /** 默认链 = TARGET_CHAIN(迁移基线,也是不带 X-Chain-Key 请求的回落链) */
 export const defaultChainKey = config.chainKey
 
+/** chainId → chainKey(EVM 链按 chainId 反查;找不到返回 null,调用方决定容错或拒绝) */
+export function chainKeyByChainId(chainId: number): string | null {
+  for (const [key, ctx] of registry) {
+    if (ctx.cfg.chainId === chainId) return key
+  }
+  return null
+}
+
 /** 从请求解析链:chainKey 入参为 X-Chain-Key 头的原始值(空/缺失 → 默认链) */
 export function resolveChainKey(headerValue: string | undefined | null): string {
   const key = headerValue?.trim()
