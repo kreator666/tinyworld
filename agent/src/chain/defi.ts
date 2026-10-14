@@ -1,6 +1,5 @@
 import { encodeFunctionData, isHex, type Address, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { avalancheFuji } from 'viem/chains'
 import { config } from '../config'
 import { getChainContext } from './registry'
 import { getPublicClient, getWalletClient } from './clients'
@@ -202,7 +201,7 @@ export async function executeSwap(
   const account = wallet.account! // 工厂已从 AGENT_PRIVATE_KEY 绑定
 
   const before = await getTokenBalance(chainKey, tokenOut, account.address)
-  const fnName = cfg.chainId === avalancheFuji.id ? 'swapExactAVAXForTokens' : 'swapExactETHForTokens'
+  const fnName = cfg.defi!.nativeSymbol === 'AVAX' ? 'swapExactAVAXForTokens' : 'swapExactETHForTokens'
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600)
 
   const txHash = await wallet.writeContract({
@@ -269,7 +268,7 @@ export async function executeUserSwap(
   // 3. 兑换为原生币,回到热钱包(方法名按链变体:AVAX/ETH)
   const before = await clientFor(chainKey).getBalance({ address: account.address })
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600)
-  const swapOutFn = cfg.chainId === avalancheFuji.id ? 'swapExactTokensForAVAX' : 'swapExactTokensForETH'
+  const swapOutFn = cfg.defi!.nativeSymbol === 'AVAX' ? 'swapExactTokensForAVAX' : 'swapExactTokensForETH'
   const t3 = await wallet.writeContract({
     address: router,
     abi: routerAbi,
@@ -306,11 +305,11 @@ function swapDeadline(): bigint {
 }
 
 function nativeSwapOutFn(chainKey: string): 'swapExactAVAXForTokens' | 'swapExactETHForTokens' {
-  return getChainContext(chainKey).cfg.chainId === avalancheFuji.id ? 'swapExactAVAXForTokens' : 'swapExactETHForTokens'
+  return getChainContext(chainKey).cfg.defi!.nativeSymbol === 'AVAX' ? 'swapExactAVAXForTokens' : 'swapExactETHForTokens'
 }
 
 function tokenSwapOutFn(chainKey: string): 'swapExactTokensForAVAX' | 'swapExactTokensForETH' {
-  return getChainContext(chainKey).cfg.chainId === avalancheFuji.id
+  return getChainContext(chainKey).cfg.defi!.nativeSymbol === 'AVAX'
     ? 'swapExactTokensForAVAX'
     : 'swapExactTokensForETH'
 }
