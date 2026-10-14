@@ -248,7 +248,8 @@ export async function claimStarterPart(owner: Address, partId: number): Promise<
     args: [BigInt(partId)],
     gas: 300000n,
   })
-  await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
+  const receipt = await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
+  if (receipt.status !== 'success') throw new Error('领取交易已回滚(链上执行失败),装备未发放,可稍后重试')
   return hash
 }
 

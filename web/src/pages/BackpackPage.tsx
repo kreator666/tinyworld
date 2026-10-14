@@ -77,8 +77,12 @@ export default function BackpackPage() {
       const hash = await claimStarterPart(address, claimPick)
       setLastTx(hash)
       setClaimState((s) => (s ? { ...s, claimed: true } : s))
-      showToast(`已领取新手装备「${partByChainId(claimPick)?.name ?? claimPick}」`)
+      showToast(`已领取新手装备「${partByChainId(claimPick)?.name ?? claimPick}」,已切到对应分类,点「穿戴」即可上身`)
       await refresh(address)
+      // 领取后自动切到该装备所在分类页签,避免用户不知道装备在哪
+      const slot = partByChainId(claimPick)?.slot ?? 0
+      const cat = SLOT_TO_CATEGORY[slot] as (typeof tabs)[number]['key'] | undefined
+      if (cat) setTab(cat)
     } catch (err) {
       showToast(explainChainError(err))
     } finally {
