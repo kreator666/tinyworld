@@ -17,7 +17,7 @@ const navItems = [
 ]
 
 export default function NavBar() {
-  const { connected, address, did, disconnect, login, showToast, walletKind } = useAppStore()
+  const { connected, address, did, disconnect, login, showToast, walletKind, updateLoginChainId } = useAppStore()
   const chainStore = useChainStore()
   const { active, chains, setActive, hydrateFromApi } = useChainConfig()
   const wizardOpen = useAppStore((s) => s.wizardOpen)
@@ -98,6 +98,7 @@ export default function NavBar() {
         }
         if (connected) {
           await ensureTargetChain()
+          updateLoginChainId(active.chainId)
           if (address) await chainStore.refresh(address)
         }
       }
@@ -112,6 +113,7 @@ export default function NavBar() {
     setSwitching(true)
     try {
       await ensureTargetChain()
+      updateLoginChainId(active.chainId)
       if (address) await chainStore.refresh(address)
       // eslint-disable-next-line no-empty
     } catch {}

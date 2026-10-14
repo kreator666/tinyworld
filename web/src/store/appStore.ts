@@ -29,6 +29,7 @@ interface AppState {
   /** 连接的钱包链族:决定链上交互走 EVM provider 还是 Phantom(persist) */
   walletKind: 'evm' | 'solana'
   connect: (login: WalletLogin, agentToken?: string | null, walletKind?: 'evm' | 'solana') => void
+  updateLoginChainId: (chainId: number) => void
   disconnect: () => void
   setHydrated: (hydrated: boolean) => void
   // DID 身份
@@ -80,157 +81,159 @@ export const useAppStore = create<AppState>()(
       login: null,
       agentToken: null,
       walletKind: 'evm',
-  connect: (login, agentToken, walletKind) =>
-    set({ connected: true, provider: login.provider, address: login.address, login, agentToken: agentToken ?? null, walletKind: walletKind ?? 'evm' }),
-  disconnect: () => set({ connected: false, provider: null, address: null, login: null, agentToken: null }),
-  setHydrated: (hydrated) => set({ hydrated }),
-  hydrated: false,
+      connect: (login, agentToken, walletKind) =>
+        set({ connected: true, provider: login.provider, address: login.address, login, agentToken: agentToken ?? null, walletKind: walletKind ?? 'evm' }),
+      updateLoginChainId: (chainId) => set((s) => (s.login ? { login: { ...s.login, chainId } } : s)),
+      disconnect: () => set({ connected: false, provider: null, address: null, login: null, agentToken: null }),
+      setHydrated: (hydrated) => set({ hydrated }),
+      hydrated: false,
 
-  did: null,
-  mintDID: (name, bio, chain, equipped) =>
-    set({
-      did: {
-        name, bio, chain,
-        mintedAt: new Date().toISOString().slice(0, 10),
-        contract: 'AgentVerse Identity...' + Math.random().toString(16).slice(2, 8),
-        address: get().address ?? '0x0',
-        equipped,
-      },
-    }),
+      did: null,
+      mintDID: (name, bio, chain, equipped) =>
+        set({
+          did: {
+            name, bio, chain,
+            mintedAt: new Date().toISOString().slice(0, 10),
+            contract: 'AgentVerse Identity...' + Math.random().toString(16).slice(2, 8),
+            address: get().address ?? '0x0',
+            equipped,
+          },
+        }),
 
-  inventory: nftLibrary.filter((i) => i.owned),
-  addToInventory: (items) =>
-    set((s) => {
-      const ids = new Set(s.inventory.map((i) => i.id))
-      return { inventory: [...s.inventory, ...items.filter((i) => !ids.has(i.id)).map((i) => ({ ...i, owned: true }))] }
-    }),
-  equip: (category, itemId) =>
-    set((s) => (s.did ? { did: { ...s.did, equipped: { ...s.did.equipped, [category]: itemId } } } : s)),
+      inventory: nftLibrary.filter((i) => i.owned),
+      addToInventory: (items) =>
+        set((s) => {
+          const ids = new Set(s.inventory.map((i) => i.id))
+          return { inventory: [...s.inventory, ...items.filter((i) => !ids.has(i.id)).map((i) => ({ ...i, owned: true }))] }
+        }),
+      equip: (category, itemId) =>
+        set((s) => (s.did ? { did: { ...s.did, equipped: { ...s.did.equipped, [category]: itemId } } } : s)),
 
-  aiProfile: defaultAIProfile,
-  saveAIProfile: (p) => set({ aiProfile: p }),
-  resetAIProfile: () => set({ aiProfile: defaultAIProfile }),
+      aiProfile: defaultAIProfile,
+      saveAIProfile: (p) => set({ aiProfile: p }),
+      resetAIProfile: () => set({ aiProfile: defaultAIProfile }),
 
-  following: [],
-  favorites: [],
-  toggleFollow: (id) =>
-    set((s) => ({ following: s.following.includes(id) ? s.following.filter((f) => f !== id) : [...s.following, id] })),
-  toggleFavorite: (id) =>
-    set((s) => ({ favorites: s.favorites.includes(id) ? s.favorites.filter((f) => f !== id) : [...s.favorites, id] })),
+      following: [],
+      favorites: [],
+      toggleFollow: (id) =>
+        set((s) => ({ following: s.following.includes(id) ? s.following.filter((f) => f !== id) : [...s.following, id] })),
+      toggleFavorite: (id) =>
+        set((s) => ({ favorites: s.favorites.includes(id) ? s.favorites.filter((f) => f !== id) : [...s.favorites, id] })),
 
-  chats: [],
-  activeChatId: null,
-  setActiveChat: (id) => set({ activeChatId: id }),
-  switchChatMode: (id, mode) =>
-    set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, mode } : c)) })),
-  // 会话列表从链上读取:为每个已铸造的 Agent 建会话
-  // 同名(链上名称唯一)的已有会话(如从个人主页"和 Agent 聊"创建)做合并,避免重复
-  upsertChainSession: (agent, selfAgent) => {
-    const id = `chain-${agent.tokenId}`
-    const existing =
-      get().chats.find((c) => c.id === id) ?? get().chats.find((c) => c.peerName === agent.name)
-    if (existing) {
-      set((s) => ({
-        chats: s.chats.map((c) =>
-          c.id === existing.id
-            ? { ...c, agentTokenId: agent.tokenId, selfAgent: selfAgent || c.selfAgent }
-            : c,
-        ),
-      }))
-      return existing.id
-    }
-    const session: ChatSession = {
-      id,
-      peerName: agent.name,
-      peerAddress: agent.owner.slice(0, 6) + '...' + agent.owner.slice(-4),
-      peerEmoji: '🤖',
-      mode: 'ai',
-      aiTag: '链上 Agent',
-      online: false,
-      selfAgent,
-      agentTokenId: agent.tokenId,
-      messages: [],
-    }
-    set((s) => ({ chats: [...s.chats, session], activeChatId: s.activeChatId ?? id }))
-    return id
-  },
-  sendMessage: (sessionId, text, kind = 'text', nftId) => {
-    const msg = { id: `m${msgSeq++}`, from: 'me' as const, kind, text, nftId, time: now() }
-    set((s) => ({
-      chats: s.chats.map((c) => (c.id === sessionId ? { ...c, messages: [...c.messages, msg] } : c)),
-    }))
-    // 模拟对方 AI 分身延迟回复;链上 Agent 会话走真实 agent/ 服务,跳过 mock
-    const session = get().chats.find((c) => c.id === sessionId)
-    if (session && !session.selfAgent && session.agentTokenId == null && (session.mode === 'ai' || !session.online)) {
-      const delay = 1000 + Math.random() * 2000
-      setTimeout(() => {
-        const reply = {
-          id: `m${msgSeq++}`, from: 'peer' as const, kind: 'text' as const,
-          text: aiReplies[Math.floor(Math.random() * aiReplies.length)],
-          time: now(), ai: true,
+      chats: [],
+      activeChatId: null,
+      setActiveChat: (id) => set({ activeChatId: id }),
+      switchChatMode: (id, mode) =>
+        set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, mode } : c)) })),
+      // 会话列表从链上读取:为每个已铸造的 Agent 建会话
+      // 同名(链上名称唯一)的已有会话(如从个人主页"和 Agent 聊"创建)做合并,避免重复
+      upsertChainSession: (agent, selfAgent) => {
+        const id = `chain-${agent.tokenId}`
+        const existing =
+          get().chats.find((c) => c.id === id) ?? get().chats.find((c) => c.peerName === agent.name)
+        if (existing) {
+          set((s) => ({
+            chats: s.chats.map((c) =>
+              c.id === existing.id
+                ? { ...c, agentTokenId: agent.tokenId, selfAgent: selfAgent || c.selfAgent }
+                : c,
+            ),
+          }))
+          return existing.id
         }
+        const session: ChatSession = {
+          id,
+          peerName: agent.name,
+          peerAddress: agent.owner.slice(0, 6) + '...' + agent.owner.slice(-4),
+          peerEmoji: '🤖',
+          mode: 'ai',
+          aiTag: '链上 Agent',
+          online: false,
+          selfAgent,
+          agentTokenId: agent.tokenId,
+          messages: [],
+        }
+        set((s) => ({ chats: [...s.chats, session], activeChatId: s.activeChatId ?? id }))
+        return id
+      },
+      sendMessage: (sessionId, text, kind = 'text', nftId) => {
+        const msg = { id: `m${msgSeq++}`, from: 'me' as const, kind, text, nftId, time: now() }
         set((s) => ({
-          chats: s.chats.map((c) => (c.id === sessionId ? { ...c, messages: [...c.messages, reply] } : c)),
+          chats: s.chats.map((c) => (c.id === sessionId ? { ...c, messages: [...c.messages, msg] } : c)),
         }))
-      }, delay)
-    }
-  },
-  // 追加一条对方消息(selfAgent 会话的真实 Agent 回复用)
-  appendPeerMessage: (sessionId, text) => {
-    const msg = { id: `m${msgSeq++}`, from: 'peer' as const, kind: 'text' as const, text, time: now(), ai: true }
-    set((s) => ({
-      chats: s.chats.map((c) => (c.id === sessionId ? { ...c, messages: [...c.messages, msg] } : c)),
-    }))
-  },
-  ensureChatWith: (peerName, peerAddress, peerEmoji, mode, aiTag, opts) => {
-    const existing = get().chats.find((c) => c.peerName === peerName)
-    if (existing) {
-      // 已存在的会话补标记(比如先建了普通会话,再从主页"和 Agent 聊"进入)
-      const patch: Partial<ChatSession> = {}
-      if (opts?.selfAgent && !existing.selfAgent) patch.selfAgent = true
-      if (opts?.agentTokenId != null && existing.agentTokenId == null) patch.agentTokenId = opts.agentTokenId
-      if (Object.keys(patch).length > 0) {
-        set((s) => ({ chats: s.chats.map((c) => (c.id === existing.id ? { ...c, ...patch } : c)) }))
-      }
-      set({ activeChatId: existing.id })
-      return existing.id
-    }
-    const id = `c${Date.now()}`
-    const session: ChatSession = {
-      id, peerName, peerAddress, peerEmoji, mode, aiTag, online: mode === 'human',
-      selfAgent: opts?.selfAgent, agentTokenId: opts?.agentTokenId,
-      messages: [{
-        id: `m${msgSeq++}`, from: 'peer', kind: 'text',
-        text: mode === 'ai' ? `你好,我是 ${peerName} 的 Agent,本人离线时由我代为交流~` : `你好,我是 ${peerName}。`,
-        time: now(), ai: mode === 'ai',
-      }],
-    }
-    set((s) => ({ chats: [session, ...s.chats], activeChatId: id }))
-    return id
-  },
+        // 模拟对方 AI 分身延迟回复;链上 Agent 会话走真实 agent/ 服务,跳过 mock
+        const session = get().chats.find((c) => c.id === sessionId)
+        if (session && !session.selfAgent && session.agentTokenId == null && (session.mode === 'ai' || !session.online)) {
+          const delay = 1000 + Math.random() * 2000
+          setTimeout(() => {
+            const reply = {
+              id: `m${msgSeq++}`, from: 'peer' as const, kind: 'text' as const,
+              text: aiReplies[Math.floor(Math.random() * aiReplies.length)],
+              time: now(), ai: true,
+            }
+            set((s) => ({
+              chats: s.chats.map((c) => (c.id === sessionId ? { ...c, messages: [...c.messages, reply] } : c)),
+            }))
+          }, delay)
+        }
+      },
+      // 追加一条对方消息(selfAgent 会话的真实 Agent 回复用)
+      appendPeerMessage: (sessionId, text) => {
+        const msg = { id: `m${msgSeq++}`, from: 'peer' as const, kind: 'text' as const, text, time: now(), ai: true }
+        set((s) => ({
+          chats: s.chats.map((c) => (c.id === sessionId ? { ...c, messages: [...c.messages, msg] } : c)),
+        }))
+      },
+      ensureChatWith: (peerName, peerAddress, peerEmoji, mode, aiTag, opts) => {
+        const existing = get().chats.find((c) => c.peerName === peerName)
+        if (existing) {
+          // 已存在的会话补标记(比如先建了普通会话,再从主页"和 Agent 聊"进入)
+          const patch: Partial<ChatSession> = {}
+          if (opts?.selfAgent && !existing.selfAgent) patch.selfAgent = true
+          if (opts?.agentTokenId != null && existing.agentTokenId == null) patch.agentTokenId = opts.agentTokenId
+          if (Object.keys(patch).length > 0) {
+            set((s) => ({ chats: s.chats.map((c) => (c.id === existing.id ? { ...c, ...patch } : c)) }))
+          }
+          set({ activeChatId: existing.id })
+          return existing.id
+        }
+        const id = `c${Date.now()}`
+        const session: ChatSession = {
+          id, peerName, peerAddress, peerEmoji, mode, aiTag, online: mode === 'human',
+          selfAgent: opts?.selfAgent, agentTokenId: opts?.agentTokenId,
+          messages: [{
+            id: `m${msgSeq++}`, from: 'peer', kind: 'text',
+            text: mode === 'ai' ? `你好,我是 ${peerName} 的 Agent,本人离线时由我代为交流~` : `你好,我是 ${peerName}。`,
+            time: now(), ai: mode === 'ai',
+          }],
+        }
+        set((s) => ({ chats: [session, ...s.chats], activeChatId: id }))
+        return id
+      },
 
-  toast: null,
-  showToast: (msg) => {
-    set({ toast: msg })
-    setTimeout(() => set({ toast: null }), 2600)
-  },
+      toast: null,
+      showToast: (msg) => {
+        set({ toast: msg })
+        setTimeout(() => set({ toast: null }), 2600)
+      },
 
-  wizardOpen: false,
-  setWizardOpen: (open) => set({ wizardOpen: open }),
-  hasOnboarded: false,
-  markOnboarded: () => set({ hasOnboarded: true }),
-}),
-{
-  name: 'app-store',
-  // 只持久化钱包登录态 + 新手引导完成标记,避免链上数据/聊天列表等过期数据被固化
-  partialize: (state) => ({
-    connected: state.connected,
-    address: state.address,
-    provider: state.provider,
-    login: state.login,
-    agentToken: state.agentToken,
-    walletKind: state.walletKind,
-    hasOnboarded: state.hasOnboarded,
-  }),
-})
-)
+      wizardOpen: false,
+      setWizardOpen: (open) => set({ wizardOpen: open }),
+      hasOnboarded: false,
+      markOnboarded: () => set({ hasOnboarded: true }),
+    }),
+    {
+      name: 'app-store',
+      // 只持久化钱包登录态 + 新手引导完成标记,避免链上数据/聊天列表等过期数据被固化
+      partialize: (state) => ({
+        connected: state.connected,
+        address: state.address,
+        provider: state.provider,
+        login: state.login,
+        agentToken: state.agentToken,
+        walletKind: state.walletKind,
+        hasOnboarded: state.hasOnboarded,
+      }),
+    })
+  )
+

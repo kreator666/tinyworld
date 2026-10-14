@@ -29,6 +29,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
   const active = useChainConfig((s) => s.active)
   const connect = useAppStore((s) => s.connect)
   const showToast = useAppStore((s) => s.showToast)
+  const updateLoginChainId = useAppStore((s) => s.updateLoginChainId)
   const refresh = useChainStore((s) => s.refresh)
   const nav = useNavigate()
   const isSolana = (active.family ?? 'evm') === 'solana'
@@ -137,6 +138,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
       // 强制切到目标链后刷新链上资产
       try {
         await ensureTargetChain()
+        updateLoginChainId(active.chainId)
         showToast(`${wallet.name} 已连接并切换到 ${active.name},正在读取链上资产…`)
         await refresh(address)
       } catch (err) {

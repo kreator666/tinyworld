@@ -5,6 +5,7 @@ import { useAppStore } from './store/appStore'
 import { useChainStore } from './store/chainStore'
 import { getActiveProvider, setActiveProvider } from './lib/wallet'
 import { clearActiveSolana, getSolanaProvider } from './lib/walletSolana'
+import { useChainConfig } from './store/chainConfigStore'
 import NavBar from './components/NavBar'
 import OnboardingWizard from './components/OnboardingWizard'
 import LandingPage from './pages/LandingPage'
@@ -44,8 +45,10 @@ function Toast() {
 }
 
 function WalletEvents() {
-  const { connected, address, disconnect, walletKind } = useAppStore()
+  const { connected, address, disconnect, walletKind, updateLoginChainId } = useAppStore()
   const clear = useChainStore((s) => s.clear)
+  const refresh = useChainStore((s) => s.refresh)
+  const active = useChainConfig((s) => s.active)
   const nav = useNavigate()
 
   useEffect(() => {
@@ -63,18 +66,37 @@ function WalletEvents() {
         nav('/')
       }
     }
-    const onChainChanged = () => {
-      // 链已切换,重新加载以保证状态干净
-      window.location.reload()
+    const onChainChanged = async () => {
+      // 链已切换,同步 login.chainId 并刷新目标链数据,避免 reload 后仍使用旧 chainId
+      try {
+        const chainIdHex = (await provider.request({ method: 'eth_chainId' })) as string
+        const chainId = Number.parseInt(chainIdHex, 16)
+        updateLoginChainId(chainId)
+        if (address && chainId === active.chainId) {
+          refresh(address)
+        }
+      } catch {
+        window.location.reload()
+      }
     }
 
     provider.on('accountsChanged', onAccountsChanged)
     provider.on('chainChanged', onChainChanged)
+
+    // 初始同步:页面加载/刷新后,校准 persisted login.chainId 与钱包实际网络
+    provider.request({ method: 'eth_chainId' }).then((chainIdHex) => {
+      const chainId = Number.parseInt(chainIdHex as string, 16)
+      updateLoginChainId(chainId)
+      if (address && chainId === active.chainId) {
+        refresh(address)
+      }
+    }).catch(() => {})
+
     return () => {
       provider.removeListener?.('accountsChanged', onAccountsChanged)
       provider.removeListener?.('chainChanged', onChainChanged)
     }
-  }, [connected, address, disconnect, clear, nav, walletKind])
+  }, [connected, address, disconnect, clear, nav, walletKind, updateLoginChainId, active.chainId, refresh])
 
   // Phantom 账户切换(accountChanged):与登录身份不一致时强制断开,避免用旧身份组交易、新账户签名导致Phantom拒签
   useEffect(() => {
