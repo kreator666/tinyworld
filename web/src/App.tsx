@@ -54,7 +54,13 @@ function WalletEvents() {
   useEffect(() => {
     // Phantom(solana)没有 chainChanged 事件,accountsChanged 由钱包 UI 管理,这里只挂 EVM provider
     if (walletKind !== 'evm') return
-    const provider = getActiveProvider()
+    // 刷新后模块级 provider 会丢失,从 window.ethereum 兜底恢复,否则无法监听/同步链
+    const winEth = typeof window !== 'undefined' ? (window as unknown as { ethereum?: { on?: (e: string, l: (...args: unknown[]) => void) => void; removeListener?: (e: string, l: (...args: unknown[]) => void) => void; request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum : undefined
+    let provider = getActiveProvider()
+    if (!provider && winEth?.request) {
+      provider = winEth
+      setActiveProvider(provider)
+    }
     if (!provider?.on) return
 
     const onAccountsChanged = (accounts: unknown) => {
