@@ -1,7 +1,7 @@
 import type { Address } from 'viem'
 import { isAddress } from 'viem'
 import type { createTool } from '@mastra/core/tools'
-import { getDb } from '../db'
+import { getDb, type ChainProtocolRow } from '../db'
 import { config } from '../config'
 import { PERMISSION_SOCIAL, getAgentPermissions } from '../chain/persona'
 import { getChainContext } from '../chain/registry'
@@ -32,6 +32,10 @@ export interface SkillManifest {
   solanaOnly?: boolean
   /** Solana 技能的后端依赖:jupiterApi = 需 cfg.solana.jupiterApiUrl;meteoraPool = 需热钱包私钥 + Meteora 池地址 */
   chainFeature?: 'jupiterApi' | 'meteoraPool'
+  /** 协议 gating:对应 chain_protocols 表的 protocol_key(如 dex/lending/jupiter/meteora/orca/raydium/drift/starter-claim)。
+   *  双轨过渡:表里有 disabled 行 → 技能隐藏;有 enabled 行 → 协议层视为可用(纯配置类不再回查老 cfg 字段);
+   *  无行(未迁移) → 回落 chainFeature/cfg 字段老逻辑 */
+  protocol?: string
   /** 清单层禁用(如协议程序未部署到当前环境):不出现在清单/安装/工具集,工具 execute 仍兜底提示 */
   disabled?: boolean
 }
@@ -57,13 +61,56 @@ export function registerSkill(def: SkillDef): void {
   builtins.set(def.manifest.id, def)
 }
 
-/** 技能在指定链家族是否可用(evmOnly 技能在 Solana 下不可用;solanaOnly 技能要求 Solana 链,后端就绪由 chainFeature 判断;disabled 技能全链隐藏) */
+// ============================================================
+// 协议可用性缓存(chain_protocols 表):isSkillAvailable 是同步函数且调用方多,
+// 不改成异步查表;改为启动时 + 每次 admin 写操作后(reloadChainRegistry)由 index.ts
+// 调 refreshProtocolCache(rows) 刷新,这里读缓存保持同步。
+// ============================================================
+const protocolCache = new Map<string, Map<string, boolean>>() // chainKey -> protocolKey -> enabled
+
+/** 刷新协议可用性缓存(数据源 listChainProtocols()) */
+export function refreshProtocolCache(rows: ChainProtocolRow[]): void {
+  protocolCache.clear()
+  for (const r of rows) {
+    let m = protocolCache.get(r.chain_key)
+    if (!m) {
+      m = new Map()
+      protocolCache.set(r.chain_key, m)
+    }
+    m.set(r.protocol_key, r.enabled)
+  }
+}
+
+type ProtocolStatus = 'enabled' | 'disabled' | 'none'
+
+/** 协议表对 (chainKey, protocol) 的意见:enabled / disabled / 无行 */
+function protocolStatus(chainKey: string, protocol: string): ProtocolStatus {
+  const enabled = protocolCache.get(chainKey)?.get(protocol)
+  if (enabled === undefined) return 'none'
+  return enabled ? 'enabled' : 'disabled'
+}
+
+/** 协议是否可用(对外 helper,供 gating 消费):协议表明确停用 → false;其余(含无行) → true。
+ *  注意"无行"不代表协议已配置——未迁移链上技能可见性仍由 isSkillAvailable 的老逻辑兜底。 */
+export function isProtocolAvailable(chainKey: string, protocol: string): boolean {
+  return protocolStatus(chainKey, protocol) !== 'disabled'
+}
+
+/** 技能在指定链家族是否可用(evmOnly 技能在 Solana 下不可用;solanaOnly 技能要求 Solana 链;
+ *  protocol 存在时先查协议表:disabled 行直接隐藏,enabled 行对纯配置类技能直接放行(协议表接管),
+ *  无行或未接管的 chainFeature 类回落 chainFeature/cfg 字段老逻辑;disabled 技能全链隐藏) */
 export function isSkillAvailable(chainKey: string, manifest: SkillManifest): boolean {
   if (manifest.disabled) return false
   const ctx = getChainContext(chainKey)
   if (manifest.evmOnly && ctx.family !== 'evm') return false
+  if (manifest.solanaOnly && ctx.family !== 'solana') return false
+  if (manifest.protocol) {
+    const status = protocolStatus(chainKey, manifest.protocol)
+    if (status === 'disabled') return false // 显式停用,优先于一切老配置
+    if (status === 'enabled' && !manifest.chainFeature) return true // 协议表接管的纯配置类技能
+  }
+  // 协议表无意见(none)或 chainFeature 类(后端就绪语义保留):老逻辑兜底
   if (manifest.solanaOnly) {
-    if (ctx.family !== 'solana') return false
     if (manifest.chainFeature === 'jupiterApi' && !ctx.cfg.solana?.jupiterApiUrl) return false
     if (manifest.chainFeature === 'meteoraPool' && !isMeteoraPoolConfigured()) return false
   }

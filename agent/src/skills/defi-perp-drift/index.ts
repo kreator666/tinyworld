@@ -219,6 +219,7 @@ export const defiPerpDrift: SkillDef = {
     permissions: [],
     scope: 'owner', // 资产操作,仅限主人对话
     solanaOnly: true, // 依赖 Solana + Drift 程序,EVM 下不可安装
+    protocol: 'drift', // chain_protocols 表 gating(无配置门槛;Drift 下线期间不 seed,恢复后 admin 插行)
   },
   makeTools: (chainKey, tokenId) => ({
     drift_deposit: makeDriftDeposit(tokenId),

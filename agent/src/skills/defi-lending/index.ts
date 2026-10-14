@@ -459,6 +459,7 @@ export const defiLending: SkillDef = {
     permissions: ['defi'],
     scope: 'owner', // 资产操作,仅限主人对话
     evmOnly: true, // 依赖 Aave v3(EVM),Solana 下不可安装
+    protocol: 'lending', // chain_protocols 表 gating(config 形如 {pool,gateway?})
   },
   makeTools: (chainKey, tokenId) => ({
     propose_supply: makeProposeSupply(chainKey, tokenId),

@@ -15,18 +15,19 @@ import {
   listConversations,
   listMessages,
 } from './core/conversation'
-import { initSchema, closeDb, listChains, seedChains, loadChainConfigsFromDb, updateChainConfig, listIdentitiesOf } from './db'
-import { applyDbChainConfigs } from './chain/registry'
+import { initSchema, closeDb, listChains, seedChains, loadChainConfigsFromDb, updateChainConfig, listIdentitiesOf, getChainRow, insertChainRow, listChainProtocols, upsertChainProtocol, deleteChainProtocol, listAdmins, addAdmin, removeAdmin, countAdmins, insertAudit } from './db'
+import { applyDbChainConfigs, applyDbChains } from './chain/registry'
 import { appendAssistantMessage } from './core/conversation'
 import { waitForTxReceipt, parseSwapAmountOut } from './chain/defi'
 import { ALL_CHAINS } from './config'
-import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill, ensureDefaultSkills } from './skills'
+import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill, ensureDefaultSkills, refreshProtocolCache } from './skills'
+import { seedChainProtocols } from './skills/protocolSeeding'
 import { startScheduler, stopScheduler } from './core/scheduler'
 import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
 import { createNonce, verifyLogin, signJwt, AuthError, isValidAddress } from './core/auth'
 import { readPersonaMirror, writePersonaMirror } from './core/personaMirror'
-import { authRequired, assertAgentOwnership } from './middleware/auth'
+import { authRequired, adminRequired, assertAgentOwnership } from './middleware/auth'
 import { getAgentStats } from './core/stats'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
@@ -52,11 +53,172 @@ app.use('/*', cors({ origin: corsOrigins }))
 
 app.get('/health', (c) => c.json({ ok: true }))
 
-// 各链合约地址查询(数据源是 chains 表;前端另存本地兜底,服务不可达时用本地数据)
+// 链配置管理(admin):鉴权 = 管理员钱包签名登录的 JWT(adminRequired,白名单在 admin_whitelist 表)。
+// 所有写操作 insertAudit 记审计,并热重载链注册表(applyDbChains + applyDbChainConfigs)立即生效。
+// 废弃:静态 CHAIN_ADMIN_TOKEN 比对(无身份、无审计)。
+
+/** 写操作后统一热重载:DB-only 链注册 + 内置链 config 覆盖层 + 协议可用性缓存(技能 gating) */
+async function reloadChainRegistry(): Promise<void> {
+  applyDbChains(await listChains())
+  applyDbChainConfigs(await loadChainConfigsFromDb())
+  refreshProtocolCache(await listChainProtocols())
+}
+
+// 各链合约地址 + 协议配置查询(前端 hydrate 用;config/protocols 原样透传)
 app.get('/chains', async (c) => {
   try {
     const chains = await listChains()
-    return c.json({ chains })
+    const protocols = await listChainProtocols()
+    const byChain = new Map<string, typeof protocols>()
+    for (const p of protocols) {
+      const list = byChain.get(p.chain_key) ?? []
+      list.push(p)
+      byChain.set(p.chain_key, list)
+    }
+    return c.json({ chains: chains.map((row) => ({ ...row, protocols: byChain.get(row.chain_key) ?? [] })) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 动态加链(DB-only):插 chains 行并热重载注册表,免改 config.ts 发版重启;chain_key 已存在返回 409
+app.post('/admin/chains', adminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{
+      chain_key?: string
+      chain_id?: number
+      name?: string
+      family?: string
+      rpc?: string
+      explorer?: string
+      identity_address?: string
+      parts_address?: string
+      config?: Record<string, unknown>
+    }>().catch(() => null)
+    const missing = ['chain_key', 'chain_id', 'name', 'family', 'rpc', 'explorer', 'identity_address', 'parts_address'].filter(
+      (k) => body?.[k as keyof typeof body] === undefined || body[k as keyof typeof body] === '',
+    )
+    if (!body || missing.length > 0) return c.json({ error: `缺少必填字段: ${missing.join(', ')}` }, 400)
+    if (body.family !== 'evm' && body.family !== 'solana') return c.json({ error: 'family 必须是 evm 或 solana' }, 400)
+    if (!Number.isInteger(body.chain_id) || (body.chain_id as number) <= 0) return c.json({ error: 'chain_id 必须是正整数' }, 400)
+    if (await getChainRow(body.chain_key!)) return c.json({ error: `链已存在: ${body.chain_key}` }, 409)
+    const row = {
+      chain_key: body.chain_key!,
+      chain_id: body.chain_id!,
+      name: body.name!,
+      family: body.family!,
+      rpc: body.rpc!,
+      explorer: body.explorer!,
+      identity_address: body.identity_address!,
+      parts_address: body.parts_address!,
+      config: body.config ?? {},
+    }
+    try {
+      await insertChainRow(row)
+    } catch (err) {
+      // chain_id 唯一约束冲突等
+      return c.json({ error: `插入失败(chain_key/chain_id 可能已存在): ${err instanceof Error ? err.message : err}` }, 409)
+    }
+    await insertAudit({ adminAddress: c.get('address'), action: 'add_chain', target: row.chain_key, payload: body })
+    await reloadChainRegistry()
+    return c.json({ ok: true, chain: await getChainRow(row.chain_key) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 链 config JSONB 合并(jsonb ||:body 顶层键覆盖同名字段;defi/aave/solana 这类子对象需给完整对象)
+// 例: curl -X PUT /admin/chains/fuji/config -H 'Authorization: Bearer <jwt>' -d '{"defi":{"router":"0x..."}}'
+app.put('/admin/chains/:key/config', adminRequired, async (c) => {
+  try {
+    const key = c.req.param('key')
+    const body = await c.req.json<Record<string, unknown>>().catch(() => null)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ error: '请求体必须是 JSON 对象(如 {"defi":{"router":"0x..."}})' }, 400)
+    }
+    const ok = await updateChainConfig(key, body)
+    if (!ok) return c.json({ error: `链不存在: ${key}` }, 404)
+    await insertAudit({ adminAddress: c.get('address'), action: 'update_chain_config', target: key, payload: body })
+    await reloadChainRegistry() // 立即生效
+    return c.json({ ok: true, chainKey: key, config: body })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 链协议配置 CRUD(chain_protocols 表;kind/config 由消费方自定义,技能 gating 第二阶段消费)
+app.get('/admin/chains/:key/protocols', adminRequired, async (c) => {
+  try {
+    const key = c.req.param('key')
+    return c.json({ chainKey: key, protocols: await listChainProtocols(key) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+app.put('/admin/chains/:key/protocols/:pkey', adminRequired, async (c) => {
+  try {
+    const key = c.req.param('key')
+    const pkey = c.req.param('pkey')
+    const body = await c.req.json<{ kind?: string; config?: Record<string, unknown>; enabled?: boolean }>().catch(() => null)
+    if (!body || typeof body.kind !== 'string' || body.kind.length === 0) {
+      return c.json({ error: '请求体必须是 JSON 对象且 kind 非空(如 {"kind":"dex","config":{...}})' }, 400)
+    }
+    if (!(await getChainRow(key))) return c.json({ error: `链不存在: ${key}` }, 404)
+    const row = { chain_key: key, protocol_key: pkey, kind: body.kind, config: body.config ?? {}, enabled: body.enabled ?? true, updated_by: c.get('address') }
+    await upsertChainProtocol(row)
+    await insertAudit({ adminAddress: c.get('address'), action: 'upsert_chain_protocol', target: `${key}/${pkey}`, payload: body })
+    await reloadChainRegistry() // 协议缓存随写刷新,技能 gating 立即生效
+    return c.json({ ok: true, protocol: row })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+app.delete('/admin/chains/:key/protocols/:pkey', adminRequired, async (c) => {
+  try {
+    const key = c.req.param('key')
+    const pkey = c.req.param('pkey')
+    const removed = await deleteChainProtocol(key, pkey)
+    if (!removed) return c.json({ error: `协议不存在: ${key}/${pkey}` }, 404)
+    await insertAudit({ adminAddress: c.get('address'), action: 'delete_chain_protocol', target: `${key}/${pkey}` })
+    await reloadChainRegistry() // 同上:协议缓存随写刷新
+    return c.body(null, 204)
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 管理员白名单 CRUD(签名登录的 admin 自我管理;删到最后一个会把自己锁死,拒绝)
+app.get('/admin/admins', adminRequired, async (c) => {
+  try {
+    return c.json({ admins: await listAdmins() })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+app.post('/admin/admins', adminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{ address?: string }>().catch(() => null)
+    const address = body?.address?.trim()
+    if (!address || !isValidAddress(address)) return c.json({ error: 'address 必须是合法的 EVM 0x 或 Solana base58 地址' }, 400)
+    const added = await addAdmin(address, c.get('address'))
+    await insertAudit({ adminAddress: c.get('address'), action: 'add_admin', target: address })
+    return c.json({ ok: true, added, admins: await listAdmins() })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+app.delete('/admin/admins/:address', adminRequired, async (c) => {
+  try {
+    const address = c.req.param('address')
+    if ((await countAdmins()) <= 1) return c.json({ error: '拒绝删除最后一个管理员' }, 400)
+    const removed = await removeAdmin(address)
+    if (!removed) return c.json({ error: `管理员不存在: ${address}` }, 404)
+    await insertAudit({ adminAddress: c.get('address'), action: 'remove_admin', target: address })
+    return c.json({ ok: true, admins: await listAdmins() })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -73,30 +235,6 @@ app.get('/identities/of/:address', async (c) => {
       address,
       identities: rows.map((r) => ({ chainKey: r.chain_key, tokenId: Number(r.token_id), name: r.name })),
     })
-  } catch (err) {
-    return handleErr(c, err)
-  }
-})
-
-// 链配置管理:把 body 顶层键合并进某链 chains.config 列(jsonb ||,body 同名字段覆盖;defi/aave/solana 这类
-// 子对象需给完整对象),改完立即刷新内存覆盖层。
-// 鉴权:请求头 X-Admin-Token 必须等于环境变量 CHAIN_ADMIN_TOKEN;未配置该变量时接口关闭(503)。
-// 以后"加链/改 router"只改数据库,例如:
-//   curl -X PUT /admin/chains/fuji/config -H 'X-Admin-Token: ***' -d '{"defi":{"router":"0x..."}}'
-// SQL 等价:UPDATE chains SET config = config || '{"defi":{"router":"0x..."}}'::jsonb WHERE chain_key='fuji';
-app.put('/admin/chains/:key/config', async (c) => {
-  const adminToken = process.env.CHAIN_ADMIN_TOKEN
-  if (!adminToken) return c.json({ error: '链配置管理接口未启用(设置 CHAIN_ADMIN_TOKEN 环境变量开启)' }, 503)
-  if (c.req.header('X-Admin-Token') !== adminToken) return c.json({ error: '管理员令牌无效' }, 403)
-  try {
-    const key = c.req.param('key')
-    getChainContext(key) // 校验链已登记(覆盖层只认识代码里有的链)
-    const body = await c.req.json<Record<string, unknown>>().catch(() => null)
-    if (!body || typeof body !== 'object') return c.json({ error: '请求体必须是 JSON 对象(如 {"defi":{"router":"0x..."}})' }, 400)
-    const ok = await updateChainConfig(key, body)
-    if (!ok) return c.json({ error: `链不存在: ${key}` }, 404)
-    applyDbChainConfigs(await loadChainConfigsFromDb()) // 立即生效
-    return c.json({ ok: true, chainKey: key, config: body })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -909,8 +1047,18 @@ async function main() {
       },
     })),
   )
-  // 链配置下沉:chains 表 config 列是权威,注入注册表覆盖层(DB 不可达时回落 config.ts)
+  // 链配置下沉 + DB-only 动态链:chains 表是权威,注入注册表(DB 不可达时回落 config.ts)
+  applyDbChains(await listChains())
   applyDbChainConfigs(await loadChainConfigsFromDb())
+  // 协议表 seeding:每链无行时从合并后 ChainConfig 推导初始协议行(已有行不动),随后刷新 gating 缓存
+  const seeded = await seedChainProtocols()
+  if (seeded.length > 0) console.log(`[protocols] 已 seed 初始协议行: ${seeded.join(', ')}`)
+  refreshProtocolCache(await listChainProtocols())
+  // 引导首个管理员:白名单为空且配置了 ADMIN_ADDRESS 时写入(added_by='bootstrap'),幂等
+  if ((await countAdmins()) === 0 && config.adminAddress) {
+    await addAdmin(config.adminAddress, 'bootstrap')
+    console.log(`[admin] 已引导首个管理员: ${config.adminAddress}`)
+  }
   await syncSkillsToDb()
   startScheduler() // M3:心跳驱动自主社交
   serve({ fetch: app.fetch, port: config.port }, (info) => {

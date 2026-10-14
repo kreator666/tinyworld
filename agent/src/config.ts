@@ -178,4 +178,7 @@ export const config = {
   // JWT 认证:SIWE 签名登录后签发会话 token(生产环境必须设置强随机字符串)
   jwtSecret: env('JWT_SECRET', 'dev-secret-change-me-in-production'),
   jwtExpiresIn: env('JWT_EXPIRES_IN', '24h'),
+  // 引导管理员地址(公钥地址,非秘密):admin_whitelist 为空时启动自动写入白名单;
+  // 之后增删管理员走 /admin/admins 接口(需签名登录 JWT)
+  adminAddress: env('ADMIN_ADDRESS'),
 } as const

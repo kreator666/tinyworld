@@ -1,5 +1,6 @@
 import path from 'node:path'
 import fs from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { PGlite } from '@electric-sql/pglite'
 import { vector } from '@electric-sql/pglite-pgvector'
@@ -111,6 +112,36 @@ export async function initSchema(): Promise<void> {
     -- 链扩展配置(defi/aave/行情源/solana 等,见 seedChains);老库升级补列,缺省空对象
     -- DB 是权威:client 工厂优先读这里,行缺失/DB 不可达时回落 config.ts
     ALTER TABLE chains ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+    -- 管理员白名单(签名登录鉴权):地址唯一,added_by 记录引入人(bootstrap=env 引导)
+    CREATE TABLE IF NOT EXISTS admin_whitelist (
+      address TEXT PRIMARY KEY,
+      added_by TEXT NOT NULL DEFAULT 'bootstrap',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    -- 管理操作审计:每次 admin 写操作记一条(action 如 update_chain_config/add_chain/add_protocol...)
+    CREATE TABLE IF NOT EXISTS admin_audit (
+      id TEXT PRIMARY KEY,
+      admin_address TEXT NOT NULL,
+      action TEXT NOT NULL,
+      target TEXT NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    -- 链协议配置(动态多协议:dex/lending/claim/swap-solana/perp 等,消费方自定义 kind)
+    -- 一行 = 一条链上一个协议实例的完整配置;admin CRUD + 热重载,技能 gating 第二阶段消费
+    CREATE TABLE IF NOT EXISTS chain_protocols (
+      chain_key TEXT NOT NULL,
+      protocol_key TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      config JSONB NOT NULL DEFAULT '{}',
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      updated_by TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (chain_key, protocol_key)
+    );
 
     -- 多对话管理(我的 Agent 助手页):对话历史按会话隔离,事实记忆跨会话共享
     CREATE TABLE IF NOT EXISTS conversations (
@@ -332,6 +363,128 @@ export async function updateChainConfig(chainKey: string, configJson: Record<str
     JSON.stringify(configJson),
     chainKey,
   ])
+  return (res.affectedRows ?? 0) > 0
+}
+
+/** 取单条 chains 行(管理接口判重用);不存在返回 null */
+export async function getChainRow(chainKey: string): Promise<ChainRow | null> {
+  const db = await getDb()
+  const res = await db.query<ChainRow>('SELECT * FROM chains WHERE chain_key = $1', [chainKey])
+  return res.rows[0] ?? null
+}
+
+/** 管理接口用:插入新链行(DB-only 动态链);chain_key/chain_id 冲突抛唯一约束错,调用方转 409 */
+export async function insertChainRow(row: Omit<ChainRow, 'enabled'> & { family: string }): Promise<void> {
+  const db = await getDb()
+  await db.query(
+    `INSERT INTO chains (chain_key, chain_id, name, identity_address, parts_address, rpc, explorer, family, config)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [row.chain_key, row.chain_id, row.name, row.identity_address, row.parts_address, row.rpc, row.explorer, row.family, JSON.stringify(row.config ?? {})],
+  )
+}
+
+// ============================================================
+// 管理员白名单 + 审计(签名鉴权管理接口)
+// ============================================================
+
+export interface AdminRow {
+  address: string
+  added_by: string
+  created_at: string
+}
+
+export async function listAdmins(): Promise<AdminRow[]> {
+  const db = await getDb()
+  const res = await db.query<AdminRow>('SELECT address, added_by, created_at FROM admin_whitelist ORDER BY created_at')
+  return res.rows
+}
+
+export async function isAdmin(address: string): Promise<boolean> {
+  const db = await getDb()
+  const res = await db.query('SELECT 1 FROM admin_whitelist WHERE address = $1', [address])
+  return res.rows.length > 0
+}
+
+/** 幂等添加(已存在不报错);返回是否新插入 */
+export async function addAdmin(address: string, addedBy: string): Promise<boolean> {
+  const db = await getDb()
+  const res = await db.query('INSERT INTO admin_whitelist (address, added_by) VALUES ($1, $2) ON CONFLICT (address) DO NOTHING', [
+    address,
+    addedBy,
+  ])
+  return (res.affectedRows ?? 0) > 0
+}
+
+/** 删除管理员;返回是否删到了行 */
+export async function removeAdmin(address: string): Promise<boolean> {
+  const db = await getDb()
+  const res = await db.query('DELETE FROM admin_whitelist WHERE address = $1', [address])
+  return (res.affectedRows ?? 0) > 0
+}
+
+export async function countAdmins(): Promise<number> {
+  const db = await getDb()
+  const res = await db.query<{ count: string }>('SELECT count(*)::text AS count FROM admin_whitelist')
+  return Number(res.rows[0]?.count ?? 0)
+}
+
+export interface AuditEntry {
+  adminAddress: string
+  action: string // 如 update_chain_config / add_chain / add_protocol
+  target: string // 如链 chain_key 或 admin 地址
+  payload?: Record<string, unknown>
+}
+
+export async function insertAudit(entry: AuditEntry): Promise<void> {
+  const db = await getDb()
+  await db.query('INSERT INTO admin_audit (id, admin_address, action, target, payload) VALUES ($1, $2, $3, $4, $5)', [
+    randomUUID(),
+    entry.adminAddress,
+    entry.action,
+    entry.target,
+    JSON.stringify(entry.payload ?? {}),
+  ])
+}
+
+// ============================================================
+// 链协议配置(chain_protocols):动态多协议,admin CRUD
+// ============================================================
+
+export interface ChainProtocolRow {
+  chain_key: string
+  protocol_key: string
+  kind: string
+  config: Record<string, unknown>
+  enabled: boolean
+  updated_by: string
+  updated_at: string
+}
+
+export async function upsertChainProtocol(row: Omit<ChainProtocolRow, 'updated_at'>): Promise<void> {
+  const db = await getDb()
+  await db.query(
+    `INSERT INTO chain_protocols (chain_key, protocol_key, kind, config, enabled, updated_by, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
+     ON CONFLICT (chain_key, protocol_key) DO UPDATE SET
+       kind = EXCLUDED.kind, config = EXCLUDED.config, enabled = EXCLUDED.enabled,
+       updated_by = EXCLUDED.updated_by, updated_at = now()`,
+    [row.chain_key, row.protocol_key, row.kind, JSON.stringify(row.config ?? {}), row.enabled, row.updated_by],
+  )
+}
+
+/** 列协议;chainKey 为空列全部(前端 /chains 一次查出按链分组用) */
+export async function listChainProtocols(chainKey?: string): Promise<ChainProtocolRow[]> {
+  const db = await getDb()
+  const res = chainKey
+    ? await db.query<ChainProtocolRow>('SELECT * FROM chain_protocols WHERE chain_key = $1 ORDER BY protocol_key', [chainKey])
+    : await db.query<ChainProtocolRow>('SELECT * FROM chain_protocols ORDER BY chain_key, protocol_key')
+  return res.rows
+}
+
+/** 删除协议;返回是否删到了行 */
+export async function deleteChainProtocol(chainKey: string, protocolKey: string): Promise<boolean> {
+  const db = await getDb()
+  const res = await db.query('DELETE FROM chain_protocols WHERE chain_key = $1 AND protocol_key = $2', [chainKey, protocolKey])
   return (res.affectedRows ?? 0) > 0
 }
 

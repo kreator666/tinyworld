@@ -98,6 +98,7 @@ export const defiSwapRaydium: SkillDef = {
     permissions: [],
     scope: 'owner',
     solanaOnly: true,
+    protocol: 'orca', // chain_protocols 表 gating(程序未部署,无 seed 行;重启用时 admin 插 enabled 行)
     disabled: true, // 协议程序未部署到 devnet,清单/安装/工具集隐藏(报价函数保留,便于日后重启用)
   },
   makeTools: (chainKey, tokenId) => ({

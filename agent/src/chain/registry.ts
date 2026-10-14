@@ -1,4 +1,5 @@
 import { config, ALL_CHAINS, type ChainConfig } from '../config'
+import type { ChainRow } from '../db'
 
 // ============================================================
 // 链注册表(多链重构·方案A):请求级链分派的核心。
@@ -22,7 +23,7 @@ for (const [chainKey, cfg] of Object.entries(ALL_CHAINS)) {
 // DB 配置覆盖层(链配置下沉):chains 表 config 列是权威。
 // 启动时 index.ts 调 applyDbChainConfigs 注入;DB 不可达/无行时覆盖层为空,
 // getChainContext 回落到 config.ts 的 ALL_CHAINS,行为与改造前一致。
-// 注意:覆盖层只认识代码里已登记的链(需要 family/chainId 静态元数据);DB-only 的链请先加进 config.ts。
+// 覆盖层对 ALL_CHAINS 内置链做浅合并;DB-only 新链走 applyDbChains 整行注册(见下)。
 // ============================================================
 const dbOverlay = new Map<string, Record<string, unknown>>()
 const mergedCache = new Map<string, ChainContext>()
@@ -49,6 +50,46 @@ export function applyDbChainConfigs(rows: Record<string, Record<string, unknown>
   for (const [key, cfg] of Object.entries(rows)) {
     if (registry.has(key)) dbOverlay.set(key, cfg)
   }
+}
+
+// ============================================================
+// DB-only 动态链:加新链不用改 config.ts 发版重启。
+// chains 表行 = 全量配置:固有列 + config JSONB 直接构造 ChainContext 注册进 registry
+// (不做 overlay 合并;行删除或 enabled=false 时注销,ALL_CHAINS 内置链永不删)。
+// 已登记的链 getChainContext/resolveChainKey/chainKeyByChainId 自动覆盖。
+// ============================================================
+const dbAddedChains = new Set<string>()
+
+export function applyDbChains(rows: ChainRow[]): void {
+  const seen = new Set<string>()
+  for (const row of rows) {
+    if (!row.enabled) continue
+    seen.add(row.chain_key)
+    if (Object.prototype.hasOwnProperty.call(ALL_CHAINS, row.chain_key)) continue
+    const family = row.family === 'solana' ? 'solana' : 'evm'
+    const cfgJson = (row.config ?? {}) as Partial<ChainConfig>
+    // 固有列(表结构)优先;config JSONB 补充扩展字段(defi/aave/solana/partsClaim/rpcFallbacks 等)
+    const cfg: ChainConfig = {
+      ...cfgJson,
+      family,
+      name: row.name,
+      chainId: row.chain_id,
+      rpc: row.rpc,
+      explorer: row.explorer,
+      identityAddress: row.identity_address,
+      partsAddress: row.parts_address,
+    }
+    registry.set(row.chain_key, { chainKey: row.chain_key, family, cfg })
+    dbAddedChains.add(row.chain_key)
+  }
+  // 行消失/禁用:注销此前由 DB 添加的链(内置链不动)
+  for (const key of [...dbAddedChains]) {
+    if (!seen.has(key)) {
+      registry.delete(key)
+      dbAddedChains.delete(key)
+    }
+  }
+  mergedCache.clear()
 }
 
 /** 已知链(ALL_CHAINS 的键) */

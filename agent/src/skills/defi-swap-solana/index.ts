@@ -155,6 +155,7 @@ export const defiSwapSol: SkillDef = {
     scope: 'owner', // 资产操作,仅限主人对话
     solanaOnly: true, // 依赖 Solana + Jupiter API,EVM 下不可安装
     chainFeature: 'jupiterApi', // 需要 cfg.solana.jupiterApiUrl 非空(自托管 Jupiter API)
+    protocol: 'jupiter', // chain_protocols 表 gating(config 形如 {apiUrl})
   },
   makeTools: (chainKey, tokenId) => ({
     propose_swap: makeProposeSwap(chainKey, tokenId),

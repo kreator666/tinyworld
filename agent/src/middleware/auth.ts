@@ -1,6 +1,7 @@
 import { createMiddleware } from 'hono/factory'
 import type { Context } from 'hono'
 import { verifyJwt, isAgentOwner, AuthError } from '../core/auth'
+import { isAdmin } from '../db'
 import { resolveChainKey } from '../chain/registry'
 
 // ============================================================
@@ -33,6 +34,27 @@ export const authRequired = createMiddleware(async (c, next) => {
     // 登录链与请求链一致性:新签发的 token 带 chainKey,跨链使用一律拒绝
     if (payload.chainKey && payload.chainKey !== chainKey) {
       return c.json({ error: '登录链与请求链不匹配' }, 401)
+    }
+    c.set('address', payload.address)
+    await next()
+  } catch (err) {
+    const msg = err instanceof AuthError ? err.message : 'token 无效或已过期'
+    return c.json({ error: msg }, 401)
+  }
+})
+
+/** 管理接口鉴权:有效 JWT + 地址在 admin_whitelist。
+ *  与 authRequired 的差异:admin 操作是跨链全局的,不做登录链与 X-Chain-Key 一致性检查(该头不解析)。 */
+export const adminRequired = createMiddleware(async (c, next) => {
+  const auth = c.req.header('Authorization')
+  if (!auth || !auth.startsWith('Bearer ')) {
+    return c.json({ error: '缺少 Authorization: Bearer <token> 头' }, 401)
+  }
+  const token = auth.slice(7).trim()
+  try {
+    const payload = verifyJwt(token)
+    if (!(await isAdmin(payload.address))) {
+      return c.json({ error: '该地址不在管理员白名单中' }, 403)
     }
     c.set('address', payload.address)
     await next()

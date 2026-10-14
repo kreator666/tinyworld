@@ -406,6 +406,7 @@ export const defiSwap: SkillDef = {
     permissions: ['defi'],
     scope: 'owner', // 资产操作,仅限主人对话
     evmOnly: true, // 依赖 EVM Router/ERC-20,Solana 下不可安装
+    protocol: 'dex', // chain_protocols 表 gating(config 形如 {router,wNative,usdc,usdt,nativeSymbol})
   },
   makeTools: (chainKey, tokenId) => ({
     propose_swap: makeProposeSwap(chainKey, tokenId),

@@ -162,6 +162,7 @@ export const defiSwapMeteora: SkillDef = {
     scope: 'owner', // 资产操作,仅限主人对话
     solanaOnly: true, // 依赖 Solana + Meteora DLMM 池,EVM 下不可安装
     chainFeature: 'meteoraPool',
+    protocol: 'meteora', // chain_protocols 表 gating(config 形如 {poolAddress})
   },
   makeTools: (chainKey, tokenId) => ({
     propose_swap: makeProposeSwap(chainKey, tokenId),
