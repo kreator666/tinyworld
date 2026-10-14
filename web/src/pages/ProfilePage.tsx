@@ -396,11 +396,11 @@ export default function ProfilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visitingTokenId, isSelf])
 
-  // 本地镜像没有 DID 时,回退到链上数据(Sepolia)——仅自己的主页需要
+  // 读取当前钱包在目标链上的 Agent 状态(名称/装备等),用于个人主页展示
   useEffect(() => {
-    if (isSelf && !did && connected && onTargetChain && address) refresh(address)
+    if (isSelf && connected && onTargetChain && address) refresh(address)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSelf, did, connected, onTargetChain, address])
+  }, [isSelf, connected, onTargetChain, address])
 
   // 真实统计指标:活跃度/社交互动数(后端按 tokenId 统计);NFT 装备数(链上 balanceOfBatch,按所属钱包)
   const statsTokenId = isSelf ? tokenId : visitingTokenId
@@ -462,19 +462,20 @@ export default function ProfilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSelf, connected, onTargetChain, tokenId])
 
+  // 链上数据为实时权威;本地 did 镜像(铸造时写入)仅作为名称/简介/铸造时间的兜底
   const chainDid: DIDIdentity | null =
-    isSelf && !did && tokenId > 0
+    isSelf && tokenId > 0
       ? {
-          name: didName || '未命名 Agent',
-          bio: '',
+          name: didName || did?.name || '未命名 Agent',
+          bio: did?.bio ?? '',
           chain: active.name,
-          mintedAt: '—',
+          mintedAt: did?.mintedAt ?? '—',
           contract: active.identity,
           address: address ?? '0x0',
           equipped: chainEquipped,
         }
       : null
-  const view = isSelf ? (did ?? chainDid) : other
+  const view = isSelf ? (chainDid ?? did) : other
 
   if (!view) {
     if (!isSelf) {
