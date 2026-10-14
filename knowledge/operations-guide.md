@@ -351,5 +351,24 @@ shutdown 检查点记录(CRC32C 重算)、其余补零,数据回到上次干净�
 - defi 配置(LFJ V1 Router / WAVAX / USDC / USDT / Aave Pool+Gateway)来源:
   LFJ 官方文档 developers.lfj.gg、Aave address book(bgd-labs)、Circle 官网;注意 USDC 正确地址是
   `0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E`(尾号易记错,以 address book 为准)
-- 链配置已下沉 chains 表(DB 权威);主网条目随代码 config.ts 种子写入,也可用
-  `PUT /admin/chains/avalanche/config`(X-Admin-Token)在线修改
+- 链配置已下沉 chains 表(DB 权威);主网条目随代码 config.ts 种子写入
+
+### 动态链/协议配置(2026-10-14 改造,admin 接口)
+
+- **鉴权 = 管理员钱包签名**:废除了 CHAIN_ADMIN_TOKEN。用任意链 SIWE 登录拿 JWT,白名单查
+  `admin_whitelist` 表(首个引导管理员 = agent/.env 的 `ADMIN_ADDRESS`,公钥非秘密,启动时种子)。
+  admin 路由不校验 X-Chain-Key(跨链全局操作)。每次写操作落 `admin_audit`(who/when/what)。
+- **动态加链**:`POST /admin/chains` {chain_key, chain_id, name, family, rpc, explorer,
+  identity_address, parts_address, config?} → 插行 + 热重载注册表(applyDbChains),**免重启**,
+  带 X-Chain-Key 的新链请求立即可用;重复 chain_key/chain_id → 409。
+- **协议注册表**:`chain_protocols(chain_key, protocol_key, kind, config JSONB, enabled, updated_by)`。
+  `PUT/DELETE/GET /admin/chains/:key/protocols[/:pkey]`。协议 key 约定:`dex`(defi-swap)、
+  `lending`(defi-lending)、`starter-claim`、`jupiter`、`meteora`、`drift`。
+- **技能 gating 三态优先级**:协议表 disabled 行 > enabled 行(接管,老配置不再看)>
+  无行(回落老配置检查)。启动时对协议表无行的链自动 seeding(从 ChainConfig 推导,幂等,
+  尊重人工停用)。即:已实现协议类型 = 插行即上线/停用;新协议类型 = 写适配器 + 插行。
+- **管理端点全集**(均需 admin JWT):POST /admin/chains、PUT /admin/chains/:key/config、
+  PUT/DELETE/GET /admin/chains/:key/protocols[/:pkey]、GET/POST/DELETE /admin/admins[/:address]
+  (拒绝删除最后一个管理员)。GET /chains 每链附 protocols 数组。
+- 验证脚本:agent/scripts/verify-dynamic-chain-config.ts(15 项)、verify-skill-gating.ts(7 项)、
+  verify-skill-registry.ts(4 项)。
