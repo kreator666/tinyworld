@@ -1,6 +1,7 @@
 import { sepolia, avalancheFuji, avalanche, type Chain } from 'viem/chains'
 import DIDIdentityJson from '../abi/DIDIdentity.json'
 import DIDPartsJson from '../abi/DIDParts.json'
+import StarterPartClaimJson from '../abi/StarterPartClaim.json'
 import { toChainParts, type ChainPart } from '../data/equipmentCatalog'
 import type { ChainType } from '../types'
 
@@ -23,6 +24,8 @@ export interface ChainContracts {
   explorer: string // 区块浏览器地址(用于拼接 tx/address 链接)
   /** 链族:缺省视为 'evm';solana 链的读写走 lib/chainSolana.ts */
   family?: 'evm' | 'solana'
+  /** 新手装备免费领养合约(EVM;未部署的链不填) */
+  partsClaim?: `0x${string}`
 }
 
 // Solana devnet 的 viem 链定义:仅作占位(solana 不走 viem client),
@@ -85,6 +88,7 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
 
 export const identityAbi = DIDIdentityJson.abi
 export const partsAbi = DIDPartsJson.abi
+export const starterClaimAbi = StarterPartClaimJson.abi
 
 // ============================================================
 // 链上配件注册表:链上 uint256 id ↔ 本地 SVG 部件 id

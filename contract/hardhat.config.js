@@ -16,6 +16,8 @@ module.exports = {
     version: "0.8.28",
     settings: {
       optimizer: { enabled: true, runs: 200 },
+      // DIDReputation 等新合约需经 IR 管线才能编译(foundry.toml 已开 via_ir,保持一致)
+      viaIR: true,
       evmVersion: "cancun",
     },
   },

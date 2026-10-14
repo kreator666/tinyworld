@@ -7,6 +7,7 @@
 
 - **DIDParts(ERC-1155)**:配件。同款多份,共 120 种(头/身/配饰/宠物 × 30)。
 - **DIDIdentity(ERC-721 + Soulbound)**:DID 主身份。每地址限 1 枚,名字唯一,默认锁定不可转账;持有 4 个插槽,穿戴=把 1155 配件转入合约托管。
+- **StarterPartClaim(2026-10 新增)**:新手装备免费领养合约。owner 授 minter 权限后,持有 DID 的地址可自签领取池内 4 件普通装之一(每地址一次)。用户钱包自签自付 gas,Agent 热钱包不参与。测试:`contract/test/starter-claim.test.js`(8 用例);部署:`contract/scripts/deploy-claim.js`(部署后自动 `setMinter`)。
 
 ## 装备编号
 
@@ -42,7 +43,7 @@
 | 页面 | 读的链上数据 | 写的链上操作 |
 |------|-------------|-------------|
 | 铸造工坊 | tokenIdOf / balanceOfBatch(显示持有态) | `DIDIdentity.mint` |
-| 资产背包 | tokenIdOf / nameOf / getEquipped / balanceOfBatch | `setApprovalForAll`(首次)+ `equip` / `unequip` |
+| 资产背包 | tokenIdOf / nameOf / getEquipped / balanceOfBatch | `setApprovalForAll`(首次)+ `equip` / `unequip`、StarterPartClaim.`claim`(新手装备领取,四选一,需先有 DID) |
 | 管理员后台 | parts(id) / totalSupply(id) | `registerPart`(逐笔)+ `mintPartBatch` |
 | 个人主页 | tokenIdOf / nameOf / getEquipped(本地 did 为空时回退) | 无 |
 
@@ -61,7 +62,17 @@
 
 ## 自动化测试
 
-`contract/test/full-flow.test.js`(Hardhat + ethers v6,29 个用例)覆盖完整链路:
+`contract/test/full-flow.test.js`(Hardhat + ethers v6,29 用例)覆盖完整链路:
 部署白名单 → registerPart 权限与约束 → mintPartBatch 与 maxSupply/mintable 强约束 → DID mint 与名称唯一性(含 `nameAvailable`)→ 授权/穿戴/换装/卸下 → Soulbound 锁定与销毁 → `setPersona` 持有者与 agent 权限。
 
+`contract/test/starter-claim.test.js`(8 用例)覆盖新手领取:池校验/重复领取/无 DID/未授权 minter/maxSupply 硬顶。
+
 运行: `cd contract && npx hardhat test test/full-flow.test.js`
+
+## 新手装备领取(2026-10,A 方案 v2)
+
+- 合约 `StarterPartClaim`:`claim(partId)` 校验 池内 id + 未领过 + `tokenIdOf != 0`,然后 `mintPart` 1 件;池子 4 件普通装(默认 1001/2001/3001/4001,部署时可 env `CLAIM_POOL_IDS` 覆盖)。
+- 用户 MetaMask 自签自付 gas;防刷全靠链上(claimed mapping + DID 门槛 + maxSupply 硬顶),无 DB 表。
+- 前端:背包页「领取新手装备」卡片(evm 链 + 链配置含 `partsClaim` + 有 DID + 未领过才显示),`lib/chain.ts` 的 `fetchStarterClaimState`/`claimStarterPart`。
+- 配置链路:合约地址写 agent chains 表 `config.partsClaim`(PUT /admin/chains/:key/config),前端 hydrateFromApi 透传;`web/src/lib/contracts.ts` 本地兜底字段 `partsClaim`。
+- 部署(每链,owner key):`PARTS_ADDRESS=... IDENTITY_ADDRESS=... npx hardhat run scripts/deploy-claim.js --network <net>`(脚本内自动 setMinter)。

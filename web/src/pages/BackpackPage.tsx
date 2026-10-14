@@ -6,10 +6,10 @@ import { useChainStore } from '../store/chainStore'
 import { nftLibrary } from '../mock/data'
 import NFTCard, { rarityDot, rarityStyle } from '../components/NFTCard'
 import PaperDoll from '../components/PaperDoll'
-import { chainParts } from '../lib/contracts'
-import { isWalletOnActiveChain } from '../lib/chainDispatch'
+import { chainParts, partByChainId, SLOT_TO_CATEGORY } from '../lib/contracts'
+import { isWalletOnActiveChain, fetchStarterClaimState, claimStarterPart, explainChainError } from '../lib/chainDispatch'
 import { explorerAddress, explorerTx, useChainConfig } from '../store/chainConfigStore'
-import { getCharacterDisplay } from '../data/equipmentCatalog'
+import { getCharacterDisplay, getPartByChainId } from '../data/equipmentCatalog'
 
 const tabs: { key: NFTCategory | 'did'; label: string }[] = [
   { key: 'did', label: 'Agent 主身份' },
@@ -29,8 +29,14 @@ export default function BackpackPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]['key']>('did')
   const [acting, setActing] = useState<string | null>(null)
   const [lastTx, setLastTx] = useState<string | null>(null)
+  // 新手装备免费领养:需 evm 链 + 已配置 partsClaim + 钱包在目标链 + 已持有 DID + 未领取
+  const [claimState, setClaimState] = useState<{ claimed: boolean; pool: number[] } | null>(null)
+  const [claimPick, setClaimPick] = useState<number | null>(null)
+  const [claiming, setClaiming] = useState(false)
   const showToast = useAppStore((s) => s.showToast)
   const onTargetChain = isWalletOnActiveChain(login, active)
+  const claimReady =
+    (active.family ?? 'evm') === 'evm' && !!active.partsClaim && connected && onTargetChain && !!address && tokenId > 0
 
   // 切链先清空旧链的 DID/装备数据,避免展示上一链的背包内容
   useEffect(() => {
@@ -44,6 +50,41 @@ export default function BackpackPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, onTargetChain, address, active.key])
+
+  // 读取新手装备领养状态(claimed + 池内 4 件装备 id)
+  useEffect(() => {
+    setClaimState(null)
+    setClaimPick(null)
+    if (!claimReady || !address) return
+    let cancelled = false
+    fetchStarterClaimState(address)
+      .then((s) => {
+        if (!cancelled) setClaimState(s)
+      })
+      .catch(() => {
+        if (!cancelled) setClaimState(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [claimReady, address, active.key])
+
+  // 领取一件新手装备:钱包自签、自付 gas,上链确认后刷新链上背包
+  const doClaim = async () => {
+    if (!address || claimPick === null) return
+    setClaiming(true)
+    try {
+      const hash = await claimStarterPart(address, claimPick)
+      setLastTx(hash)
+      setClaimState((s) => (s ? { ...s, claimed: true } : s))
+      showToast(`已领取新手装备「${partByChainId(claimPick)?.name ?? claimPick}」`)
+      await refresh(address)
+    } catch (err) {
+      showToast(explainChainError(err))
+    } finally {
+      setClaiming(false)
+    }
+  }
 
   const doEquip = async (localId: string, category: NFTCategory) => {
     const part = chainParts.find((p) => p.localId === localId)
@@ -99,6 +140,59 @@ export default function BackpackPage() {
   const isWorn = (localId: string) => {
     const cat = tabs.find((t) => t.key !== 'did' && equipped[t.key as NFTCategory] === localId)?.key
     return !!cat
+  }
+
+  // 新手装备免费领养卡片:池内 4 件装备任选一件
+  const renderStarterClaim = () => {
+    if (!claimReady || !claimState || claimState.claimed || claimState.pool.length === 0) return null
+    return (
+      <div className="glass neon-border p-5 mb-6">
+        <div className="flex items-center gap-3">
+          <span className="w-11 h-11 rounded-xl bg-neon-grad grid place-items-center text-2xl shadow-neon-purple">🎁</span>
+          <div>
+            <div className="font-semibold">领取新手装备</div>
+            <div className="text-xs text-slate-400 mt-0.5">
+              新用户福利:从下方任选 1 件起步装备免费领养(每地址限一次,钱包自签并自付少量 Gas)
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+          {claimState.pool.map((id) => {
+            const part = partByChainId(id)
+            const catalog = getPartByChainId(id)
+            const category = SLOT_TO_CATEGORY[part?.slot ?? 0] as NFTCategory
+            const display = getCharacterDisplay(category, part?.localId ?? '')
+            const imageUrl = display?.imageUrl || catalog?.imageUrl
+            const name = display?.name || part?.name || `装备 ${id}`
+            const picked = claimPick === id
+            return (
+              <button
+                key={id}
+                onClick={() => setClaimPick(id)}
+                className={`rounded-xl border p-3 text-left transition ${
+                  picked ? 'border-neon-cyan bg-neon-cyan/10 shadow-neon-cyan' : 'border-white/10 hover:border-neon-purple/50'
+                }`}
+              >
+                {imageUrl ? (
+                  <img src={imageUrl} alt={name} className="w-full h-20 object-contain rounded-lg bg-slate-900/60" />
+                ) : (
+                  <div className="w-full h-20 grid place-items-center text-3xl rounded-lg bg-slate-900/60">{catalog?.emoji ?? '❓'}</div>
+                )}
+                <div className="mt-2 text-sm truncate">{name}</div>
+                <div className="mt-1">
+                  <span className={`tag ${rarityStyle[(part?.rarity ?? '普通') as Rarity]}`}>
+                    {rarityDot[(part?.rarity ?? '普通') as Rarity]} {part?.rarity ?? '普通'}
+                  </span>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+        <button className="btn-primary w-full mt-4" disabled={claiming || claimPick === null} onClick={doClaim}>
+          {claiming ? '领取中…' : claimPick === null ? '先选择一件装备' : '免费领取所选装备'}
+        </button>
+      </div>
+    )
   }
 
   const renderList = () => {
@@ -237,6 +331,8 @@ export default function BackpackPage() {
     <div className="mx-auto max-w-7xl px-4 py-6">
       <h2 className="text-2xl font-bold mb-1">资产背包</h2>
       <p className="text-sm text-slate-400 mb-5">链上资产(连接 {active.name} 后自动读取)</p>
+
+      {renderStarterClaim()}
 
       <div className="flex gap-2 mb-6 flex-wrap">
         {tabs.map((t) => (

@@ -11,6 +11,9 @@ interface IDIDParts is IERC1155 {
 
     function rarityOf(uint256 id) external view returns (uint8);
 
+    /// @notice 铸造配件(仅 owner 或被授权的 minter;受注册/可铸/maxSupply 约束)
+    function mintPart(address to, uint256 id, uint256 amount) external;
+
     /// @notice 批量注册配件（等长数组，整体原子）
     function registerPartBatch(
         uint256[] calldata ids,

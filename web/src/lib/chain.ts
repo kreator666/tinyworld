@@ -2,7 +2,7 @@ import { createPublicClient, createWalletClient, custom, http, zeroAddress, type
 import type { EvmUnsignedTx } from './agentApi'
 import type { Equipped } from '../types'
 import { getActiveProvider } from './wallet'
-import { SLOT_TO_CATEGORY, chainParts, identityAbi, partByChainId, partsAbi } from './contracts'
+import { SLOT_TO_CATEGORY, chainParts, identityAbi, partByChainId, partsAbi, starterClaimAbi } from './contracts'
 import { getActiveChain } from '../store/chainConfigStore'
 import { avalanche, avalancheFuji, sepolia } from 'viem/chains'
 
@@ -204,6 +204,48 @@ export async function mintIdentity(owner: Address, name: string, profileURI: str
     abi: identityAbi,
     functionName: 'mint',
     args: [name, profileURI],
+    gas: 300000n,
+  })
+  await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
+  return hash
+}
+
+export interface StarterClaimState {
+  claimed: boolean
+  pool: number[]
+}
+
+/** 读取新手装备领养状态:claimed + 池内 4 个装备 id;链未配置 partsClaim 时返回 null */
+export async function fetchStarterClaimState(address: Address): Promise<StarterClaimState | null> {
+  const claimAddr = A().partsClaim
+  if (!claimAddr) return null
+  const client = readClient()
+  const [claimed, pool] = await Promise.all([
+    client.readContract({
+      address: claimAddr,
+      abi: starterClaimAbi,
+      functionName: 'claimed',
+      args: [address],
+    }) as Promise<boolean>,
+    client.readContract({
+      address: claimAddr,
+      abi: starterClaimAbi,
+      functionName: 'pool',
+    }) as Promise<bigint[]>,
+  ])
+  return { claimed, pool: pool.map(Number) }
+}
+
+/** 领取一件新手装备(需已持有 DID;自签、自付 gas),返回 tx hash */
+export async function claimStarterPart(owner: Address, partId: number): Promise<Hash> {
+  const claimAddr = A().partsClaim
+  if (!claimAddr) throw new Error('当前链未部署新手装备领养合约')
+  const wallet = walletClient(owner)
+  const hash = await wallet.writeContract({
+    address: claimAddr,
+    abi: starterClaimAbi,
+    functionName: 'claim',
+    args: [BigInt(partId)],
     gas: 300000n,
   })
   await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })

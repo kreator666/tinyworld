@@ -31,7 +31,17 @@ export const useChainConfig = create<ChainConfigState>((set, get) => ({
       const res = await fetch(`${AGENT_API}/chains`)
       if (!res.ok) return
       const data = (await res.json()) as {
-        chains: { chain_key: string; chain_id: number; name: string; identity_address: string; parts_address: string; rpc: string; explorer: string; family?: string }[]
+        chains: {
+          chain_key: string
+          chain_id: number
+          name: string
+          identity_address: string
+          parts_address: string
+          rpc: string
+          explorer: string
+          family?: string
+          config?: { partsClaim?: string } & Record<string, unknown> // chains 表 JSONB:合约地址列之外的扩展配置
+        }[]
       }
       const merged = get().chains.map((local) => {
         // 按 chain_id 匹配后端 chains 表,地址/RPC/浏览器/family 以后端为准(多链:后端是链目录的唯一权威)
@@ -45,6 +55,8 @@ export const useChainConfig = create<ChainConfigState>((set, get) => ({
           rpc: remote.rpc,
           explorer: remote.explorer,
           family: (remote.family as 'evm' | 'solana' | undefined) ?? local.family,
+          // 新手装备领养合约地址走 chains.config JSONB(与 defi/aave 同通道;/admin PUT 写入);后端未配置时保留本地兜底
+          partsClaim: (remote.config?.partsClaim as `0x${string}` | undefined) ?? local.partsClaim,
         }
       })
       set((s) => ({

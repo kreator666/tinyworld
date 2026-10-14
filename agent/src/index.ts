@@ -897,7 +897,7 @@ async function main() {
       rpc: c.rpc,
       explorer: c.explorer,
       family: c.family,
-      // 扩展配置(defi/aave/行情源/solana)落 chains.config 列;只在新行插入时写入,不重载手工改动
+      // 扩展配置(defi/aave/行情源/solana/新手装备领养合约)落 chains.config 列;只在新行插入时写入,不重载手工改动
       config: {
         ...(c.defi ? { defi: c.defi } : {}),
         ...(c.aave ? { aave: c.aave } : {}),
@@ -905,6 +905,7 @@ async function main() {
         ...(c.nativeGatePair ? { nativeGatePair: c.nativeGatePair } : {}),
         ...(c.rpcFallbacks ? { rpcFallbacks: c.rpcFallbacks } : {}),
         ...(c.solana ? { solana: c.solana } : {}),
+        ...(c.partsClaim ? { partsClaim: c.partsClaim } : {}),
       },
     })),
   )

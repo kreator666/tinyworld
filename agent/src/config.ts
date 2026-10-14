@@ -20,6 +20,7 @@ interface ChainConfig {
   explorer: string
   identityAddress: string // EVM 为 0x 合约地址;Solana 为程序地址(base58)
   partsAddress: string
+  partsClaim?: string // 新手装备免费领养合约地址(EVM);未部署的链不填,运行时经 /admin/chains/:key/config 写入 chains.config
   nativePriceId?: string // 原生币 CoinGecko id(defi-quote 技能用;缺省回落 AVAX)
   nativeGatePair?: string // 原生币 Gate.io 交易对(回退行情源)
   defi?: {
