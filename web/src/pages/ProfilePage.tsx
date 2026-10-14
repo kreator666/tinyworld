@@ -462,7 +462,8 @@ export default function ProfilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSelf, connected, onTargetChain, tokenId])
 
-  // 链上数据为实时权威;本地 did 镜像(铸造时写入)仅作为名称/简介/铸造时间的兜底
+  // 链上数据为实时权威;本地 did 镜像(铸造时写入)作为名称/简介/铸造时间及预览形象的兜底
+  const hasChainEquipped = Object.values(chainEquipped).some(Boolean)
   const chainDid: DIDIdentity | null =
     isSelf && tokenId > 0
       ? {
@@ -472,7 +473,7 @@ export default function ProfilePage() {
           mintedAt: did?.mintedAt ?? '—',
           contract: active.identity,
           address: address ?? '0x0',
-          equipped: chainEquipped,
+          equipped: hasChainEquipped ? chainEquipped : (did?.equipped ?? chainEquipped),
         }
       : null
   const view = isSelf ? (chainDid ?? did) : other
