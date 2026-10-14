@@ -76,3 +76,17 @@
 - 前端:背包页「领取新手装备」卡片(evm 链 + 链配置含 `partsClaim` + 有 DID + 未领过才显示),`lib/chain.ts` 的 `fetchStarterClaimState`/`claimStarterPart`。
 - 配置链路:合约地址写 agent chains 表 `config.partsClaim`(PUT /admin/chains/:key/config),前端 hydrateFromApi 透传;`web/src/lib/contracts.ts` 本地兜底字段 `partsClaim`。
 - 部署(每链,owner key):`PARTS_ADDRESS=... IDENTITY_ADDRESS=... npx hardhat run scripts/deploy-claim.js --network <net>`(脚本内自动 setMinter)。
+
+### 大礼包 v2(2026-10-15):随机四件套 + 自动穿戴
+
+- **Fuji 当前权威地址**:DIDIdentity v2 `0x3ef5218e6D15b755c9bDC4298d0721b9886551eb`、
+  StarterPartClaim v2 `0x3D98d0Ff048a82a387FDdfF0A4e10a1EF6FBe0f2`(DIDParts 不变 0x884d…0267)。
+  旧 identity(0x386b…/0x15dC…)与旧 claim(0x03e5…/0x0DAb…)全部作废,minter 权限已撤销。
+- DIDIdentity v2 语义变化:`equip` 放宽为 owner 或授权 operator(getApproved 单 token /
+  isApprovedForAll),新增 `equipBatch` 一笔穿 4 槽;`unequip` 仍仅 owner。
+- `claimPack()`:从每槽前 8 件(1001-1008 等)各随机 1 件(blockhash 伪随机)铸造并自动穿戴;
+  未授权时领取成功但 dressed=false,前端引导手动穿。
+- 新用户流程(最多 3 签名):setApprovalForAll(parts→identity) + approve(claim, tokenId) + claimPack。
+- 端到端验证:`npx hardhat run scripts/e2e-fuji-starter-pack.js --network localhost`
+  (需先 `npx hardhat node --fork <fuji-rpc> --fork-block-number <最新块>`,claimPack 显式 gasLimit 跳过 estimateGas——
+  fork 上 estimateGas 对 blockhash 调用会挂);mainnet 未部署此功能。

@@ -76,6 +76,8 @@ Avalanche Primary Network 有三条链:
 - Cancun EVM 兼容(全部交易成功);冒烟已铸造 tokenId=1 "Diego" 并完成人格上链与四槽穿戴验证
 - 冒烟脚本: `contract/scripts/fuji-smoke.js`(可重复执行,幂等)
 
+> **2026-10 起上述地址已被后续两轮重部署取代**(ERC-8004 改造 → 大礼包 v2),当前 Fuji 权威地址见下方「大礼包 v2」记录,旧 DID 数据不再使用。
+
 **回退策略**:Sepolia 配置保留在表中,`VITE_TARGET_CHAIN=sepolia` 即可整体切回,互不干扰。
 
 ## 7. 风险与注意
