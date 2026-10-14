@@ -98,16 +98,16 @@ export async function mintIdentity(owner: string, name: string, profileURI: stri
   return isSolana() ? sol.mintIdentity(owner, name, profileURI) : evm.mintIdentity(owner as Address, name, profileURI)
 }
 
-/** 新手装备领养状态(Solana 不支持,返回 null) */
-export async function fetchStarterClaimState(address: string): Promise<evm.StarterClaimState | null> {
+/** 新手大礼包领取状态(Solana 不支持,返回 null) */
+export async function fetchStarterClaimState(address: string): Promise<boolean | null> {
   if (isSolana()) return null
   return evm.fetchStarterClaimState(address as Address)
 }
 
-/** 领取一件新手装备(Solana 不支持,抛错) */
-export async function claimStarterPart(owner: string, partId: number): Promise<string> {
-  if (isSolana()) throw new Error('Solana 链不支持新手装备领养')
-  return evm.claimStarterPart(owner as Address, partId)
+/** 领取新手大礼包:随机 4 件套 + 自动穿戴,缺失授权自动补齐(Solana 不支持,抛错) */
+export async function claimStarterPack(owner: string, tokenId: number): Promise<string> {
+  if (isSolana()) throw new Error('Solana 链不支持新手大礼包')
+  return evm.claimStarterPack(owner as Address, tokenId)
 }
 
 export async function equipPart(owner: string, tokenId: number, slot: number, partChainId: number): Promise<string> {

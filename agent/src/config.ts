@@ -73,7 +73,7 @@ const CHAINS: Record<string, ChainConfig> = {
     chainId: 43113,
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
     explorer: 'https://testnet.snowtrace.io',
-    identityAddress: '0x386b7Ec042659855386B25D70114C285F328eE65',
+    identityAddress: '0x3ef5218e6D15b755c9bDC4298d0721b9886551eb', // 2026-10 大礼包 v2 重部署(旧 0x386b…已作废)
     partsAddress: '0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267',
     nativePriceId: 'avalanche-2', // defi-quote 行情技能:原生币 CoinGecko id
     nativeGatePair: 'AVAX_USDT', // Gate.io 回退源交易对

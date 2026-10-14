@@ -212,44 +212,80 @@ export async function mintIdentity(owner: Address, name: string, profileURI: str
 
 export interface StarterClaimState {
   claimed: boolean
-  pool: number[]
 }
 
-/** 读取新手装备领养状态:claimed + 池内 4 个装备 id;链未配置 partsClaim 时返回 null */
-export async function fetchStarterClaimState(address: Address): Promise<StarterClaimState | null> {
+/** 读取新手大礼包领取状态(claimed);链未配置 partsClaim 时返回 null */
+export async function fetchStarterClaimState(address: Address): Promise<boolean | null> {
   const claimAddr = A().partsClaim
   if (!claimAddr) return null
-  const client = readClient()
-  const [claimed, pool] = await Promise.all([
-    client.readContract({
-      address: claimAddr,
-      abi: starterClaimAbi,
-      functionName: 'claimed',
-      args: [address],
-    }) as Promise<boolean>,
-    client.readContract({
-      address: claimAddr,
-      abi: starterClaimAbi,
-      functionName: 'pool',
-    }) as Promise<bigint[]>,
-  ])
-  return { claimed, pool: pool.map(Number) }
+  return (await readClient().readContract({
+    address: claimAddr,
+    abi: starterClaimAbi,
+    functionName: 'claimed',
+    args: [address],
+  })) as boolean
 }
 
-/** 领取一件新手装备(需已持有 DID;自签、自付 gas),返回 tx hash */
-export async function claimStarterPart(owner: Address, partId: number): Promise<Hash> {
+/** 领取新手大礼包:随机 4 件套(头/身/配饰/宠物 各 1 件)铸到用户钱包并自动穿戴。
+ *  缺失的授权自动补齐(用户最多签 3 笔):① DIDParts 托管授权(setApprovalForAll→identity);
+ *  ② identity 授权领取合约代为换装(approve,单 token)。返回 claimPack 的 tx hash */
+export async function claimStarterPack(owner: Address, tokenId: number): Promise<Hash> {
   const claimAddr = A().partsClaim
   if (!claimAddr) throw new Error('当前链未部署新手装备领养合约')
+  const client = readClient()
   const wallet = walletClient(owner)
+
+  // ① 配件托管授权:identity 需要能把配件从用户钱包拉走托管
+  const custodial = (await client.readContract({
+    address: A().parts,
+    abi: partsAbi,
+    functionName: 'isApprovedForAll',
+    args: [owner, A().identity],
+  })) as boolean
+  if (!custodial) {
+    const approveHash = await wallet.writeContract({
+      address: A().parts,
+      abi: partsAbi,
+      functionName: 'setApprovalForAll',
+      args: [A().identity, true],
+      gas: 100000n,
+    })
+    await client.waitForTransactionReceipt({ hash: approveHash, timeout: TX_RECEIPT_TIMEOUT })
+  }
+
+  // ② identity 授权领取合约代为换装:getApproved 单 token 或 isApprovedForAll 任一即可
+  const singleApproved = (await client.readContract({
+    address: A().identity,
+    abi: identityAbi,
+    functionName: 'getApproved',
+    args: [BigInt(tokenId)],
+  })) as Address
+  const operatorApproved = (await client.readContract({
+    address: A().identity,
+    abi: identityAbi,
+    functionName: 'isApprovedForAll',
+    args: [owner, claimAddr],
+  })) as boolean
+  if (singleApproved.toLowerCase() !== claimAddr.toLowerCase() && !operatorApproved) {
+    const approveHash = await wallet.writeContract({
+      address: A().identity,
+      abi: identityAbi,
+      functionName: 'approve',
+      args: [claimAddr, BigInt(tokenId)],
+      gas: 100000n,
+    })
+    await client.waitForTransactionReceipt({ hash: approveHash, timeout: TX_RECEIPT_TIMEOUT })
+  }
+
+  // ③ claimPack:铸 4 件 + 尝试自动穿戴(穿戴失败不 revert,装备留在钱包可手动穿)
   const hash = await wallet.writeContract({
     address: claimAddr,
     abi: starterClaimAbi,
-    functionName: 'claim',
-    args: [BigInt(partId)],
-    gas: 300000n,
+    functionName: 'claimPack',
+    gas: 800000n,
   })
-  const receipt = await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
-  if (receipt.status !== 'success') throw new Error('领取交易已回滚(链上执行失败),装备未发放,可稍后重试')
+  const receipt = await client.waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
+  if (receipt.status !== 'success') throw new Error('大礼包领取交易已回滚(链上执行失败),装备未发放,可稍后重试')
   return hash
 }
 

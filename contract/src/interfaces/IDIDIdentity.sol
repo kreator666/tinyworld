@@ -44,6 +44,9 @@ interface IDIDIdentity is IERC721 {
     // ---- 4 插槽装备 ----
     function equip(uint256 tokenId, uint8 slot, address collection, uint256 id) external;
 
+    /// @notice 批量换装(owner 或授权 operator);等长数组,整体原子
+    function equipBatch(uint256 tokenId, uint8[] calldata slots, address[] calldata collections, uint256[] calldata ids) external;
+
     function unequip(uint256 tokenId, uint8 slot) external;
 
     function getEquipped(uint256 tokenId) external view returns (EquippedItem[4] memory items);

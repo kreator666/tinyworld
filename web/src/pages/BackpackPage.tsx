@@ -7,7 +7,7 @@ import { nftLibrary } from '../mock/data'
 import NFTCard, { rarityDot, rarityStyle } from '../components/NFTCard'
 import PaperDoll from '../components/PaperDoll'
 import { chainParts, partByChainId, SLOT_TO_CATEGORY } from '../lib/contracts'
-import { isWalletOnActiveChain, fetchStarterClaimState, claimStarterPart, explainChainError } from '../lib/chainDispatch'
+import { isWalletOnActiveChain, fetchStarterClaimState, claimStarterPack, explainChainError } from '../lib/chainDispatch'
 import { explorerAddress, explorerTx, useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay, getPartByChainId } from '../data/equipmentCatalog'
 
@@ -29,9 +29,8 @@ export default function BackpackPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]['key']>('did')
   const [acting, setActing] = useState<string | null>(null)
   const [lastTx, setLastTx] = useState<string | null>(null)
-  // 新手装备免费领养:需 evm 链 + 已配置 partsClaim + 钱包在目标链 + 已持有 DID + 未领取
-  const [claimState, setClaimState] = useState<{ claimed: boolean; pool: number[] } | null>(null)
-  const [claimPick, setClaimPick] = useState<number | null>(null)
+  // 新手大礼包 v2:需 evm 链 + 已配置 partsClaim + 钱包在目标链 + 已持有 DID + 未领取
+  const [claimed, setClaimed] = useState<boolean | null>(null)
   const [claiming, setClaiming] = useState(false)
   const showToast = useAppStore((s) => s.showToast)
   const onTargetChain = isWalletOnActiveChain(login, active)
@@ -51,38 +50,33 @@ export default function BackpackPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, onTargetChain, address, active.key])
 
-  // 读取新手装备领养状态(claimed + 池内 4 件装备 id)
+  // 读取新手大礼包领取状态(claimed)
   useEffect(() => {
-    setClaimState(null)
-    setClaimPick(null)
+    setClaimed(null)
     if (!claimReady || !address) return
     let cancelled = false
     fetchStarterClaimState(address)
       .then((s) => {
-        if (!cancelled) setClaimState(s)
+        if (!cancelled) setClaimed(s)
       })
       .catch(() => {
-        if (!cancelled) setClaimState(null)
+        if (!cancelled) setClaimed(null)
       })
     return () => {
       cancelled = true
     }
   }, [claimReady, address, active.key])
 
-  // 领取一件新手装备:钱包自签、自付 gas,上链确认后刷新链上背包
+  // 领取新手大礼包:随机 4 件套 + 自动穿戴;缺失授权自动补齐(最多 3 笔签名)
   const doClaim = async () => {
-    if (!address || claimPick === null) return
+    if (!address || !tokenId) return
     setClaiming(true)
     try {
-      const hash = await claimStarterPart(address, claimPick)
+      const hash = await claimStarterPack(address, tokenId)
       setLastTx(hash)
-      setClaimState((s) => (s ? { ...s, claimed: true } : s))
-      showToast(`已领取新手装备「${partByChainId(claimPick)?.name ?? claimPick}」,已切到对应分类,点「穿戴」即可上身`)
+      setClaimed(true)
+      showToast('大礼包已开箱,4 件装备已自动穿上!')
       await refresh(address)
-      // 领取后自动切到该装备所在分类页签,避免用户不知道装备在哪
-      const slot = partByChainId(claimPick)?.slot ?? 0
-      const cat = SLOT_TO_CATEGORY[slot] as (typeof tabs)[number]['key'] | undefined
-      if (cat) setTab(cat)
     } catch (err) {
       showToast(explainChainError(err))
     } finally {
@@ -146,55 +140,39 @@ export default function BackpackPage() {
     return !!cat
   }
 
-  // 新手装备免费领养卡片:池内 4 件装备任选一件
+  // 新手大礼包卡片:单按钮一键领取,随机 4 件套自动穿戴;4 个槽位展示神秘礼盒
   const renderStarterClaim = () => {
-    if (!claimReady || !claimState || claimState.claimed || claimState.pool.length === 0) return null
+    if (!claimReady || claimed !== false) return null
+    const slots: { label: string; emoji: string }[] = [
+      { label: '头部', emoji: '🎁' },
+      { label: '身体', emoji: '🎁' },
+      { label: '配饰', emoji: '🎁' },
+      { label: '宠物', emoji: '🎁' },
+    ]
     return (
       <div className="glass neon-border p-5 mb-6">
         <div className="flex items-center gap-3">
           <span className="w-11 h-11 rounded-xl bg-neon-grad grid place-items-center text-2xl shadow-neon-purple">🎁</span>
           <div>
-            <div className="font-semibold">领取新手装备</div>
+            <div className="font-semibold">领取新手大礼包</div>
             <div className="text-xs text-slate-400 mt-0.5">
-              新用户福利:从下方任选 1 件起步装备免费领养(每地址限一次,钱包自签并自付少量 Gas)
+              新用户福利:一次开箱随机获得 4 件装备(头/身/配饰/宠物 各 1 件)并自动穿上,每地址限一次
             </div>
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-          {claimState.pool.map((id) => {
-            const part = partByChainId(id)
-            const catalog = getPartByChainId(id)
-            const category = SLOT_TO_CATEGORY[part?.slot ?? 0] as NFTCategory
-            const display = getCharacterDisplay(category, part?.localId ?? '')
-            const imageUrl = display?.imageUrl || catalog?.imageUrl
-            const name = display?.name || part?.name || `装备 ${id}`
-            const picked = claimPick === id
-            return (
-              <button
-                key={id}
-                onClick={() => setClaimPick(id)}
-                className={`rounded-xl border p-3 text-left transition ${
-                  picked ? 'border-neon-cyan bg-neon-cyan/10 shadow-neon-cyan' : 'border-white/10 hover:border-neon-purple/50'
-                }`}
-              >
-                {imageUrl ? (
-                  <img src={imageUrl} alt={name} className="w-full h-20 object-contain rounded-lg bg-slate-900/60" />
-                ) : (
-                  <div className="w-full h-20 grid place-items-center text-3xl rounded-lg bg-slate-900/60">{catalog?.emoji ?? '❓'}</div>
-                )}
-                <div className="mt-2 text-sm truncate">{name}</div>
-                <div className="mt-1">
-                  <span className={`tag ${rarityStyle[(part?.rarity ?? '普通') as Rarity]}`}>
-                    {rarityDot[(part?.rarity ?? '普通') as Rarity]} {part?.rarity ?? '普通'}
-                  </span>
-                </div>
-              </button>
-            )
-          })}
+          {slots.map((s) => (
+            <div key={s.label} className="rounded-xl border border-white/10 p-3 text-center">
+              <div className="w-full h-20 grid place-items-center text-3xl rounded-lg bg-slate-900/60">{s.emoji}</div>
+              <div className="mt-2 text-sm text-slate-300">{s.label}</div>
+              <div className="mt-1 text-[11px] text-slate-500">随机 1 件</div>
+            </div>
+          ))}
         </div>
-        <button className="btn-primary w-full mt-4" disabled={claiming || claimPick === null} onClick={doClaim}>
-          {claiming ? '领取中…' : claimPick === null ? '先选择一件装备' : '免费领取所选装备'}
+        <button className="btn-primary w-full mt-4" disabled={claiming} onClick={doClaim}>
+          {claiming ? '开箱中…' : '一键领取并自动穿戴'}
         </button>
+        <div className="mt-2 text-[11px] text-slate-500 text-center">首次领取可能需要签署最多 3 笔交易(托管授权 + 代穿授权 + 领取)</div>
       </div>
     )
   }

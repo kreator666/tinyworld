@@ -29,7 +29,7 @@ module.exports = {
   },
   networks: {
     hardhat: { chainId: 31337 },
-    localhost: { url: "http://127.0.0.1:8545", chainId: 31337 },
+    localhost: { url: "http://127.0.0.1:8545", chainId: 31337, ...(PRIVATE_KEY ? { accounts: [PRIVATE_KEY] } : {}) },
     // 测试网仅在 .env 配齐 RPC + 私钥后启用
     ...(SEPOLIA_RPC_URL && PRIVATE_KEY
       ? { sepolia: { url: SEPOLIA_RPC_URL, accounts: [PRIVATE_KEY] } }

@@ -202,12 +202,54 @@ contract DIDIdentity is
     // 4 插槽装备（custodial nesting）
     // ==================================================================
 
-    /// @notice 装备配件到指定插槽；配件转入本合约托管。
-    /// 插槽已占用时自动把旧件退回 DID 持有者（一笔交易完成换装）。
-    /// 前置：持有者在配件合约上 setApprovalForAll(address(this), true)
+    /// @notice 装备配件到指定插槽;配件转入本合约托管。
+    /// 插槽已占用时自动把旧件退回 DID 持有者(一笔交易完成换装)。
+    /// 前置:持有者在配件合约上 setApprovalForAll(address(this), true);
+    /// 调用者 = owner 或该 DID 的授权 operator(getApproved 单 token 或 isApprovedForAll)
     function equip(uint256 tokenId, uint8 slot, address collection, uint256 id) external nonReentrant {
+        _equip(tokenId, slot, collection, id, msg.sender);
+    }
+
+    error InvalidBatchLength();
+    error ArrayLengthMismatch();
+
+    /// @notice 批量换装:等长数组,逐件复用 equip 的校验/托管/换装/事件逻辑,整体原子(任一件失败整笔回滚)
+    function equipBatch(uint256 tokenId, uint8[] calldata slots, address[] calldata collections, uint256[] calldata ids)
+        external
+        nonReentrant
+    {
+        uint256 n = slots.length;
+        if (n == 0) revert InvalidBatchLength();
+        if (collections.length != n || ids.length != n) revert ArrayLengthMismatch();
+        for (uint256 i = 0; i < n; ++i) {
+            _equip(tokenId, slots[i], collections[i], ids[i], msg.sender);
+        }
+    }
+
+    /// @notice 卸下指定插槽配件,退回 DID 持有者;仅 owner(operator 不可代卸)
+    function unequip(uint256 tokenId, uint8 slot) external nonReentrant {
         address owner = _requireOwned(tokenId);
         if (msg.sender != owner) revert NotTokenOwner(msg.sender);
+        Slots.check(slot);
+
+        EquippedItem memory old = _equipped[tokenId][slot];
+        if (old.collection == address(0)) revert NothingEquipped(tokenId, slot);
+
+        delete _equipped[tokenId][slot];
+        IERC1155(old.collection).safeTransferFrom(address(this), owner, old.id, 1, "");
+
+        emit Unequipped(tokenId, slot, old.collection, old.id);
+        emit MetadataUpdate(tokenId);
+    }
+
+    /// @notice equip / equipBatch 共用的换装实现:owner 或授权 operator 均可调用(参照 OZ ERC721 _isAuthorized 语义),
+    /// 授权场景如 StarterPartClaim 经 getApproved/approve 替新用户一键穿戴
+    function _equip(uint256 tokenId, uint8 slot, address collection, uint256 id, address operator) internal {
+        address owner = _requireOwned(tokenId);
+        // owner 或授权 operator:isApprovedForAll 批量授权 / getApproved 单 token 授权(语义对齐 OZ _isAuthorized)
+        if (operator != owner && !isApprovedForAll(owner, operator) && getApproved(tokenId) != operator) {
+            revert NotTokenOwner(operator);
+        }
         Slots.check(slot);
         if (!approvedCollections[collection]) revert CollectionNotApproved(collection);
         uint8 actual = IDIDParts(collection).slotOf(id); // 未注册的配件 id 会在此 revert
@@ -226,22 +268,6 @@ contract DIDIdentity is
 
         emit Equipped(tokenId, slot, collection, id);
         emit MetadataUpdate(tokenId); // EIP-4906：通知市场刷新纸娃娃外观
-    }
-
-    /// @notice 卸下指定插槽配件，退回 DID 持有者
-    function unequip(uint256 tokenId, uint8 slot) external nonReentrant {
-        address owner = _requireOwned(tokenId);
-        if (msg.sender != owner) revert NotTokenOwner(msg.sender);
-        Slots.check(slot);
-
-        EquippedItem memory old = _equipped[tokenId][slot];
-        if (old.collection == address(0)) revert NothingEquipped(tokenId, slot);
-
-        delete _equipped[tokenId][slot];
-        IERC1155(old.collection).safeTransferFrom(address(this), owner, old.id, 1, "");
-
-        emit Unequipped(tokenId, slot, old.collection, old.id);
-        emit MetadataUpdate(tokenId);
     }
 
     /// @notice 一次读取 4 个插槽（前端纸娃娃渲染 / 市场展示）

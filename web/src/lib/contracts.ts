@@ -50,15 +50,15 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     rpc: 'https://ethereum-sepolia-rpc.publicnode.com',
     explorer: 'https://sepolia.etherscan.io',
   },
-  // Avalanche Fuji 测试网(2026-10 ERC-8004 改造后重新部署,链ID 43113)
+  // Avalanche Fuji 测试网(2026-10 新手大礼包 v2:identity v2 重部署,equip 放宽 operator + equipBatch)
   fuji: {
     key: 'fuji',
     name: 'Fuji',
     chainId: 43113,
     chain: avalancheFuji,
-    identity: '0x386b7Ec042659855386B25D70114C285F328eE65',
+    identity: '0x3ef5218e6D15b755c9bDC4298d0721b9886551eb',
     parts: '0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267',
-    partsClaim: '0x03e5A82AFF8aA335de24c8769ed2dD49f94FdcDA',
+    partsClaim: '0x3D98d0Ff048a82a387FDdfF0A4e10a1EF6FBe0f2',
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
     explorer: 'https://testnet.snowtrace.io',
   },

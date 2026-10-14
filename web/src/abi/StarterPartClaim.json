@@ -11,11 +11,6 @@
           "internalType": "address",
           "name": "identity_",
           "type": "address"
-        },
-        {
-          "internalType": "uint256[4]",
-          "name": "poolIds_",
-          "type": "uint256[4]"
         }
       ],
       "stateMutability": "nonpayable",
@@ -44,17 +39,6 @@
       "type": "error"
     },
     {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "partId",
-          "type": "uint256"
-        }
-      ],
-      "name": "NotInPool",
-      "type": "error"
-    },
-    {
       "anonymous": false,
       "inputs": [
         {
@@ -64,24 +48,24 @@
           "type": "address"
         },
         {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "partId",
-          "type": "uint256"
+          "indexed": false,
+          "internalType": "uint256[4]",
+          "name": "partIds",
+          "type": "uint256[4]"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "dressed",
+          "type": "bool"
         }
       ],
-      "name": "Claimed",
+      "name": "StarterPackClaimed",
       "type": "event"
     },
     {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "partId",
-          "type": "uint256"
-        }
-      ],
-      "name": "claim",
+      "inputs": [],
+      "name": "claimPack",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -126,19 +110,6 @@
           "internalType": "contract IDIDParts",
           "name": "",
           "type": "address"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [],
-      "name": "pool",
-      "outputs": [
-        {
-          "internalType": "uint256[4]",
-          "name": "",
-          "type": "uint256[4]"
         }
       ],
       "stateMutability": "view",
