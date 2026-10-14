@@ -58,6 +58,7 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     chain: avalancheFuji,
     identity: '0x386b7Ec042659855386B25D70114C285F328eE65',
     parts: '0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267',
+    partsClaim: '0x03e5A82AFF8aA335de24c8769ed2dD49f94FdcDA',
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
     explorer: 'https://testnet.snowtrace.io',
   },
