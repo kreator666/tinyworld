@@ -4,7 +4,7 @@ import type { Equipped } from '../types'
 import { getActiveProvider } from './wallet'
 import { SLOT_TO_CATEGORY, chainParts, identityAbi, partByChainId, partsAbi } from './contracts'
 import { getActiveChain } from '../store/chainConfigStore'
-import { avalancheFuji, sepolia } from 'viem/chains'
+import { avalanche, avalancheFuji, sepolia } from 'viem/chains'
 
 // 最小 ERC20 ABI:审批中心对用户资金路径(USDC→AVAX)需要先 approve 热钱包
 const erc20Abi = [
@@ -85,6 +85,7 @@ function walletClient(account: Address) {
 
 /** 按 chainId 取链配置(用于发送后端组装的 unsigned tx 时切到对应网络) */
 function chainById(chainId: number) {
+  if (chainId === avalanche.id) return { chain: avalanche, name: 'Avalanche', rpc: 'https://avalanche-c-chain-rpc.publicnode.com', explorer: 'https://subnets.avax.network/c-chain' }
   if (chainId === avalancheFuji.id) return { chain: avalancheFuji, name: 'Fuji', rpc: 'https://api.avax-test.network/ext/bc/C/rpc', explorer: 'https://testnet.snowtrace.io' }
   if (chainId === sepolia.id) return { chain: sepolia, name: 'Sepolia', rpc: 'https://ethereum-sepolia-rpc.publicnode.com', explorer: 'https://sepolia.etherscan.io' }
   throw new Error(`不支持的链 ID: ${chainId}`)
