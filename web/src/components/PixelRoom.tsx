@@ -577,16 +577,34 @@ export default function PixelRoom({
       ctx.globalAlpha = 1
     }
 
+    // 可见性跟踪:滚出视口即暂停绘制与状态更新——低性能机器上 60fps 画布是 GPU 杀手
+    let visible = true
+    const io = new IntersectionObserver((entries) => {
+      visible = entries[0]?.isIntersecting ?? true
+    })
+    io.observe(canvas)
+
+    // 限 30fps 绘制:像素小人动画 30fps 与 60fps 观感无差,GPU/CPU 开销减半;
+    // 累积器实现,帧率无关(慢机器上不会加速/卡顿漂移)
+    let acc = 0
+    const FRAME = 1 / 30
     const loop = (now: number) => {
-      const dt = Math.min((now - last) / 1000, 1 / 30)
+      const dt = Math.min((now - last) / 1000, 0.25)
       last = now
-      update(dt)
-      draw()
+      if (visible) {
+        acc += dt
+        if (acc >= FRAME) {
+          update(acc)
+          draw()
+          acc = 0
+        }
+      }
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
     return () => {
       cancelAnimationFrame(raf)
+      io.disconnect()
       savePositions() // 卸载时兜底保存一次
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
