@@ -345,9 +345,23 @@ shutdown 检查点记录(CRC32C 重算)、其余补零,数据回到上次干净�
 | 合约 | 地址 |
 |------|------|
 | DIDParts | 0xa3fB106DD25c02bf18170d6657EdF4804bf5D924 |
-| DIDIdentity | 0xf9111CbC5562671050910858BBA702db8C44f3fE |
 | DIDReputation | 0x319202A6B09A39d6E6E04f7b6B2571358d105f6B |
 | DIDValidation | 0xfAEb8174BA2dD8eEb35A6FA9DC31E89E1317c048 |
+
+- DIDIdentity 初版 `0xf9111CbC5562671050910858BBA702db8C44f3fE` **已于 2026-10-15 作废**
+  (被大礼包 v2 的 identity v2 取代,见下);主网 DIDParts/Reputation/Validation 仍在服役
+
+### 主网大礼包 v2 + 市场(2026-10-15)
+
+| 合约 | 地址 |
+|------|------|
+| DIDIdentity v2 | 0x0928B2F5a9F03792b994940b95Ba15654835A011 |
+| StarterPartClaim v2 | 0x3510D466852a41Ed729Bbf2199b0B3743B627844 |
+| PartsMarket | 0xa5eF8B7b48f4b62c5834576b4C5CF5004B470377 |
+
+- 部署脚本统一用主网 owner key:`PRIVATE_KEY=$(cat .keys/mainnet-owner.key) npx hardhat run … --network avalanche`
+- 市场合约 minter 已授但**价格未上架**(真实币定价属产品决策,用 deploy-market.js 的 MARKET_PRICES 随时上架)
+- 链上验证: 双 minter / identity 配件白名单 / claimed 状态 ✅;服务端 chains 表 identity 与 config.market 已更新
 
 - 11 笔交易(4 部署 + 白名单 + registerPartBatch(120) + 演示铸造 + 4 笔创世铸造)均可在浏览器查:
   `https://subnets.avax.network/c-chain/tx/<txHash>`(owner 地址页可看到全部)
