@@ -98,6 +98,18 @@ function WalletEvents() {
       }
     }).catch(() => {})
 
+    // 恢复会话校验:persisted 地址必须与钱包当前账户一致,否则可能把上一个账户的身份
+    // (如已铸造的 DID)错套给新账户——不一致立即断开,强制用当前账户重新登录
+    provider.request({ method: 'eth_accounts' }).then((accs) => {
+      const acc = Array.isArray(accs) && accs[0] ? String(accs[0]).toLowerCase() : null
+      if (acc && address && acc !== address.toLowerCase()) {
+        setActiveProvider(null)
+        disconnect()
+        clear()
+        nav('/')
+      }
+    }).catch(() => {})
+
     return () => {
       provider.removeListener?.('accountsChanged', onAccountsChanged)
       provider.removeListener?.('chainChanged', onChainChanged)

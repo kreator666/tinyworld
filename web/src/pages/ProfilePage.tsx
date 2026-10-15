@@ -463,20 +463,23 @@ export default function ProfilePage() {
   }, [isSelf, connected, onTargetChain, tokenId])
 
   // 链上数据为实时权威;本地 did 镜像(铸造时写入)作为名称/简介/铸造时间及预览形象的兜底
+  // 兜底必须校验地址归属:镜像属于其他账户时(如切换钱包后的残留)不得展示,防止身份错套
+  const didBelongsToSelf = !!did && !!address && did.address.toLowerCase() === address.toLowerCase()
+  const safeDid = didBelongsToSelf ? did : null
   const hasChainEquipped = Object.values(chainEquipped).some(Boolean)
   const chainDid: DIDIdentity | null =
     isSelf && tokenId > 0
       ? {
-          name: didName || did?.name || '未命名 Agent',
-          bio: did?.bio ?? '',
+          name: didName || safeDid?.name || '未命名 Agent',
+          bio: safeDid?.bio ?? '',
           chain: active.name,
-          mintedAt: did?.mintedAt ?? '—',
+          mintedAt: safeDid?.mintedAt ?? '—',
           contract: active.identity,
           address: address ?? '0x0',
-          equipped: hasChainEquipped ? chainEquipped : (did?.equipped ?? chainEquipped),
+          equipped: hasChainEquipped ? chainEquipped : (safeDid?.equipped ?? chainEquipped),
         }
       : null
-  const view = isSelf ? (chainDid ?? did) : other
+  const view = isSelf ? (chainDid ?? safeDid) : other
 
   if (!view) {
     if (!isSelf) {
