@@ -123,6 +123,12 @@ export function describeSwapResult(
     if (!r.confirmed) return `你的取回交易已广播,链上还没确认到账,我把哈希记下了,稍后帮你盯一下。`
     return `已确认取回成交:约 ${amountInHuman} ${inSymbol}(含已累积利息)已回到你的钱包。`
   }
+  if (action === 'staking') {
+    if (r.reverted) return `刚才那笔质押没能成交:${amountInHuman} AVAX 质押为 sAVAX 的交易在链上执行失败(revert),AVAX 还在你的钱包里。要我重新组装一笔吗?`
+    if (!r.confirmed) return `你的质押交易已广播,链上还没确认到账,我把哈希记下了,稍后帮你盯一下。`
+    const got = r.amountOut != null ? formatUnits(r.amountOut, 18) : null
+    return `已确认质押成交:${amountInHuman} AVAX 已换成 ${got ?? '约等值'} sAVAX(BENQI 流动性质押)。奖励会持续累积,1 sAVAX 能兑回的 AVAX 会随时间变多;赎回需 15 天冷却 + 2 天领取窗口(v1 暂不支持,需要时告诉我,我帮你留意后续版本)。`
+  }
 
   // swap:按方向还原符号
   const outSymbol = inIsNative ? tokenSymbolOf(chainKey, params.tokenOut as Address) : cfg.defi!.nativeSymbol

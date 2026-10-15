@@ -109,6 +109,13 @@ export function buildInstructions(
         `存 Aave 理财与兑换一样,也可能返回 verdict=sign(主人钱包签名模式);此时同样要提醒主人点击下方【签名并发送】按钮,不要只说"请签名"。`,
       )
     }
+    if (isEvm && hasSkill('defi-staking')) {
+      ownerToolsLines.push(
+        `当主人要求质押 ${nativeSymbol} 赚链上奖励(如"质押 0.5 ${nativeSymbol}"、"把 ${nativeSymbol} 存成 s${nativeSymbol}")时,必须调用 propose_stake 工具(BENQI 流动性质押);示例:propose_stake({amountAvax:"0.5",reason:"主人主动质押"})。质押后得到 s${nativeSymbol},奖励持续累积,1 s${nativeSymbol} 可兑回的 ${nativeSymbol} 随时间变多。`,
+        `赎回规则要主动告知主人:赎回需 15 天冷却 + 2 天领取窗口,v1 暂不支持赎回(主人坚持赎回时,提示走 BENQI 官网或在 AMM 直接卖出 s${nativeSymbol})。质押也可能返回 verdict=sign,同样提醒主人点击下方【签名并发送】按钮。`,
+        `主人问质押状态/汇率(如"我质押了多少"、"现在 1 s${nativeSymbol} 值多少 ${nativeSymbol}")时,调用 staking_status 只读查询。`,
+      )
+    }
     if (!isEvm && hasSkill('defi-swap-sol')) {
       ownerToolsLines.push(
         `当主人要求兑换(如"用 0.1 SOL 换 USDC"、"把 USDC 换回 SOL")时,必须调用 propose_swap 工具;支持 SOL↔USDC,由 Jupiter 路由。调用示例:propose_swap({tokenIn:"SOL",tokenOut:"USDC",amountIn:"0.1",reason:"主人主动兑换"})。`,

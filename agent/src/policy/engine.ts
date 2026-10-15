@@ -11,7 +11,7 @@ import type { UnsignedTx } from '../chain/defi'
 
 export type ExecutionMode = 'hot_wallet' | 'user_wallet'
 
-export type ProposalAction = 'swap' | 'supply' | 'withdraw'
+export type ProposalAction = 'swap' | 'supply' | 'withdraw' | 'staking'
 
 /** 交易提案(defi-swap / defi-lending 生成,审批放行后按 proposal.params 原样执行) */
 export interface Proposal {
@@ -92,10 +92,14 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
   } else if (!pCfg.defi) {
     hardFail.push(`chainId=${p.chainId}(${pCfg.name})未配置 defi 合约,不支持执行`)
   } else {
-    // 协议白名单:swap 只能走目标链 DEX router;supply/withdraw 只能走目标链 Aave Pool
+    // 协议白名单:swap 只能走目标链 DEX router;supply/withdraw 只能走目标链 Aave Pool;staking 只能走目标链 BENQI 质押合约
     if (p.action === 'swap') {
       if (p.protocol.toLowerCase() !== pCfg.defi.router.toLowerCase()) {
         hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.defi.router})`)
+      }
+    } else if (p.action === 'staking') {
+      if (!pCfg.benqi || p.protocol.toLowerCase() !== pCfg.benqi.staking.toLowerCase()) {
+        hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.benqi?.staking ?? '未配置 BENQI Liquid Staking'})`)
       }
     } else if (!pCfg.aave || p.protocol.toLowerCase() !== pCfg.aave.pool.toLowerCase()) {
       hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.aave?.pool ?? '未配置 Aave'})`)

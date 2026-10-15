@@ -36,6 +36,9 @@ export interface SkillManifest {
    *  双轨过渡:表里有 disabled 行 → 技能隐藏;有 enabled 行 → 协议层视为可用(纯配置类不再回查老 cfg 字段);
    *  无行(未迁移) → 回落 chainFeature/cfg 字段老逻辑 */
   protocol?: string
+  /** 协议行是可用性的必要条件(无行即隐藏):用于"从未有老配置字段可兜底"的主网专属协议(如 BENQI 质押)。
+   *  dex/lending 这类有老 family 逻辑兜底的技能不要开,否则未 seed 的库会全链隐藏 */
+  protocolRequired?: boolean
   /** 清单层禁用(如协议程序未部署到当前环境):不出现在清单/安装/工具集,工具 execute 仍兜底提示 */
   disabled?: boolean
 }
@@ -108,6 +111,7 @@ export function isSkillAvailable(chainKey: string, manifest: SkillManifest): boo
     const status = protocolStatus(chainKey, manifest.protocol)
     if (status === 'disabled') return false // 显式停用,优先于一切老配置
     if (status === 'enabled' && !manifest.chainFeature) return true // 协议表接管的纯配置类技能
+    if (status === 'none' && manifest.protocolRequired) return false // 无协议行且无老逻辑可兜底 = 不可用(主网专属协议)
   }
   // 协议表无意见(none)或 chainFeature 类(后端就绪语义保留):老逻辑兜底
   if (manifest.solanaOnly) {

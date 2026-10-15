@@ -36,6 +36,7 @@ import { solanaConnection, type FailoverConnection } from './chain/personaSolana
 import { EXEC_CHAIN_KEY, MAINNET_EXPLORER, MAINNET_USDC_MINT, mainnetConnection, mainnetTxUrl } from './chain/solanaExec'
 import { executeProposal, recordDefiTask, describeSwapResult } from './skills/defi-swap'
 import { executeLendingProposal } from './skills/defi-lending'
+import { executeStakingProposal } from './skills/defi-staking'
 import type { Proposal } from './policy/engine'
 
 // ============================================================
@@ -697,11 +698,13 @@ app.post('/approvals/:id/approve', authRequired, async (c) => {
     await assertAgentOwnership(c, chainKey, approval.tokenId)
     if (approval.status !== 'pending') return c.json({ error: `审批单已是 ${approval.status} 状态,不可重复审批` }, 409)
     try {
-      // 按 action 分发:swap 走兑换执行器;supply/withdraw 走借贷执行器(执行链按提案 chainId 路由)
+      // 按 action 分发:swap 走兑换执行器;supply/withdraw 走借贷执行器;staking 走质押执行器(执行链按提案 chainId 路由)
       const { txHash, amountOut } =
         approval.proposal.action === 'swap'
           ? await executeProposal(chainKey, approval.tokenId, approval.proposal)
-          : await executeLendingProposal(chainKey, approval.tokenId, approval.proposal)
+          : approval.proposal.action === 'staking'
+            ? await executeStakingProposal(chainKey, approval.tokenId, approval.proposal)
+            : await executeLendingProposal(chainKey, approval.tokenId, approval.proposal)
       await resolveApproval(id, 'executed', txHash)
       // 浏览器链接按提案目标链拼接(与请求链可能不同)
       const execChainKey = chainKeyByChainId(approval.proposal.chainId) ?? chainKey
@@ -836,8 +839,8 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
     return c.json({ error: 'txHash 不能为空' }, 400)
   }
   const action = body?.proposal?.action
-  if (!action || !['swap', 'supply', 'withdraw'].includes(action)) {
-    return c.json({ error: 'proposal.action 必须是 swap / supply / withdraw' }, 400)
+  if (!action || !['swap', 'supply', 'withdraw', 'staking'].includes(action)) {
+    return c.json({ error: 'proposal.action 必须是 swap / supply / withdraw / staking' }, 400)
   }
   const proposal = body.proposal as Proposal
   try {
@@ -1045,6 +1048,7 @@ async function main() {
         ...(c.solana ? { solana: c.solana } : {}),
         ...(c.partsClaim ? { partsClaim: c.partsClaim } : {}),
         ...(c.market ? { market: c.market } : {}),
+        ...(c.benqi ? { benqi: c.benqi } : {}),
       },
     })),
   )

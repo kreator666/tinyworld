@@ -8,6 +8,7 @@ import { defiPerpDrift } from './defi-perp-drift'
 import { defiSwapRaydium } from './defi-swap-raydium'
 import { defiSwapOrca } from './defi-swap-orca'
 import { defiLending } from './defi-lending'
+import { defiStaking } from './defi-staking'
 import { ownerTuning } from './owner-tuning'
 
 // 内置技能在这里登记;新增技能只需加一行 registerSkill
@@ -20,6 +21,7 @@ registerSkill(defiPerpDrift)
 registerSkill(defiSwapRaydium)
 registerSkill(defiSwapOrca)
 registerSkill(defiLending)
+registerSkill(defiStaking)
 registerSkill(ownerTuning)
 
 export * from './registry'
