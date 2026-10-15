@@ -42,7 +42,7 @@
 
 | 页面 | 读的链上数据 | 写的链上操作 |
 |------|-------------|-------------|
-| 铸造工坊 | tokenIdOf / balanceOfBatch(显示持有态) | `DIDIdentity.mint` |
+| 铸造工坊 | tokenIdOf / balanceOfBatch(显示持有态) | `DIDIdentity.mint`;无装备选择(2026-10 起移除:选择本就不上链,装备改由新手大礼包随机发放) |
 | 资产背包 | tokenIdOf / nameOf / getEquipped / balanceOfBatch | `setApprovalForAll`(首次)+ `equip` / `unequip`、StarterPartClaim.`claim`(新手装备领取,四选一,需先有 DID) |
 | 管理员后台 | parts(id) / totalSupply(id) | `registerPart`(逐笔)+ `mintPartBatch` |
 | 个人主页 | tokenIdOf / nameOf / getEquipped(本地 did 为空时回退) | 无 |
