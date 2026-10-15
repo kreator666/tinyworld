@@ -126,7 +126,7 @@ TinyWorld 相关 server 块监听 `agent.freetoken.xin`，主要配置：
 
 - 静态文件根目录：`/opt/tinyworld/web/dist`
 - React Router 使用 hash 路由，无需服务端 fallback
-- API 反代路径：`/agents`、`/conversations`、`/skills`、`/chains`、`/approvals`、`/health`、`/auth`、`/personas` → `http://127.0.0.1:4111`（`/personas` 为 2026-10 阶段 3 新增的人格镜像端点）
+- API 反代路径：`/admin`、`/agents`、`/conversations`、`/skills`、`/chains`、`/approvals`、`/health`、`/auth`、`/personas` → `http://127.0.0.1:4111`（`/admin` 为 2026-10 动态链配置接口新增；`/personas` 为 2026-10 阶段 3 新增的人格镜像端点）
 - SSL 证书由 Certbot 管理
 
 ### 常用命令
@@ -218,6 +218,11 @@ ssh claw 'curl -s http://127.0.0.1:4111/health'
 ## 9. 注意事项
 
 - 远端 `.env` 文件是手工维护的，**不会被 Git 管理**，修改后无需重启 Nginx，但需要重启 PM2 进程生效。
+- **PGlite 库禁止双进程并发访问**：agent 服务运行时，不要再用独立 tsx 脚本直连 `agent/data` 改库
+  （两个 PGlite 实例各写各的 WAL，后写者会用旧快照覆盖，改动无声丢失——2026-10 踩过）。
+  改 chains 配置走设计好的 admin API：`node contract/scripts/admin-put-chain-config.mjs <chainKey> '<json>'`
+  （用 `.keys/mainnet-owner.key` 签 SIWE 登录拿 JWT；脚本写完库自己退出，不经服务的数据目录）。
+  脚本方式改库仅限服务停止时，且必须 `await closeDb()` 落盘后再退出。
 - 前端构建产物文件名含 hash，旧文件会残留在 `dist/assets/`，建议部署时先清空 `dist` 再复制。
 - Certbot 会自动续期 SSL 证书，一般无需手动干预；若证书异常，可执行 `certbot renew --nginx`。
 - 生产环境不要直接运行 `npm run dev`，应使用 PM2 管理；`dev` 模式仅用于本地或临时排查。
