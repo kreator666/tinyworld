@@ -205,7 +205,7 @@ export default function AdminPage() {
         <div>
           <h2 className="text-2xl font-bold">装备发行后台</h2>
           <p className="text-sm text-slate-400 mt-1">
-            在 {active.name} 上注册并铸造装备配件；当前地址：
+            在 {active.name} 上注册装备并运营发放；新装备注册是市场/大礼包上架的前提。当前地址：
             <span className="font-mono text-neon-cyan">{address?.slice(0, 6)}…{address?.slice(-4)}</span>
           </p>
         </div>
@@ -358,7 +358,12 @@ export default function AdminPage() {
           </div>
 
           <div className="glass p-5">
-            <h3 className="font-semibold mb-3">2. 按稀有度铸造本类</h3>
+            <h3 className="font-semibold mb-3">2. 按稀有度铸造本类(运营发放)</h3>
+            <p className="text-xs text-slate-400 mb-4">
+              定向铸造给指定地址,适用于<b>活动空投 / 中奖 / 补偿</b>等运营场景。
+              常规装备获取已走<b>新手大礼包</b>(免费)与<b>铸造直售市场</b>(付费),
+              请勿用本功能做大规模常规分发——它绕过市场定价与大礼包限领,会破坏经济可预测性。
+            </p>
             <div className="mb-4">
               <label className="text-xs text-slate-400">接收地址</label>
               <input
