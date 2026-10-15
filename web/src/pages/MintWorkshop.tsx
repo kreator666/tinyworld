@@ -152,7 +152,7 @@ export default function MintWorkshop() {
           <div>
             <label className="text-xs text-slate-400">选择公链</label>
             <div className="flex gap-2 mt-1">
-              <span className="flex-1 px-2 py-2 rounded-xl text-xs bg-neon-grad text-white text-center">{active.name}(测试网)</span>
+              <span className="flex-1 px-2 py-2 rounded-xl text-xs bg-neon-grad text-white text-center">{active.name}</span>
             </div>
           </div>
           <div>
