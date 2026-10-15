@@ -21,6 +21,7 @@ interface ChainConfig {
   identityAddress: string // EVM 为 0x 合约地址;Solana 为程序地址(base58)
   partsAddress: string
   partsClaim?: string // 新手装备免费领养合约地址(EVM);未部署的链不填,运行时经 /admin/chains/:key/config 写入 chains.config
+  market?: { address: string } // 装备铸造直售市场合约地址(EVM);价格一律链上为准,这里只存地址
   nativePriceId?: string // 原生币 CoinGecko id(defi-quote 技能用;缺省回落 AVAX)
   nativeGatePair?: string // 原生币 Gate.io 交易对(回退行情源)
   defi?: {
@@ -75,6 +76,7 @@ const CHAINS: Record<string, ChainConfig> = {
     explorer: 'https://testnet.snowtrace.io',
     identityAddress: '0x3ef5218e6D15b755c9bDC4298d0721b9886551eb', // 2026-10 大礼包 v2 重部署(旧 0x386b…已作废)
     partsAddress: '0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267',
+    market: { address: '0xA0323a6E825912736F2C7b7e64920c71d8d27A31' }, // 2026-10 铸造直售市场(仅上架普通装 48 件,价格链上为准)
     nativePriceId: 'avalanche-2', // defi-quote 行情技能:原生币 CoinGecko id
     nativeGatePair: 'AVAX_USDT', // Gate.io 回退源交易对
     defi: {

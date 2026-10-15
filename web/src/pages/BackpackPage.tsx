@@ -7,7 +7,8 @@ import { nftLibrary } from '../mock/data'
 import NFTCard, { rarityDot, rarityStyle } from '../components/NFTCard'
 import PaperDoll from '../components/PaperDoll'
 import { chainParts, partByChainId, SLOT_TO_CATEGORY } from '../lib/contracts'
-import { isWalletOnActiveChain, fetchStarterClaimState, claimStarterPack, explainChainError } from '../lib/chainDispatch'
+import { isWalletOnActiveChain, fetchStarterClaimState, claimStarterPack, fetchMarketPrice, buyPartFromMarket, explainChainError } from '../lib/chainDispatch'
+import { formatUnits } from 'viem'
 import { explorerAddress, explorerTx, useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay, getPartByChainId } from '../data/equipmentCatalog'
 
@@ -115,12 +116,48 @@ export default function BackpackPage() {
     }
   }
 
-  // 购买 = 链上铸造 1 份到本人地址(测试网免费 Gas,仅管理员/铸造方可执行;
-  // 普通用户暂无可用的售卖合约,点击给出提示,与铸造工坊行为一致)
+  // 市场直售价目表:链配置了 market 时一次性读全部装备的上架价(multicall 批读);未上架的不进表
+  const [marketPrices, setMarketPrices] = useState<Record<number, bigint>>({})
+  useEffect(() => {
+    setMarketPrices({})
+    if ((active.family ?? 'evm') !== 'evm' || !active.market || !connected || !onTargetChain) return
+    let cancelled = false
+    Promise.all(chainParts.map(async (p) => [p.id, await fetchMarketPrice(p.id)] as const))
+      .then((entries) => {
+        if (cancelled) return
+        const m: Record<number, bigint> = {}
+        for (const [id, price] of entries) if (price !== null) m[id] = price
+        setMarketPrices(m)
+      })
+      .catch(() => {
+        /* 价格读取失败按未上架处理,不阻塞页面 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [active.key, active.market, connected, onTargetChain])
+
+  // 购买:优先走市场直售(链上 listPriceOf 为准,精确等值支付);
+  // 未上架时管理员保留原铸造发行入口;普通用户提示市场未部署
   const doBuy = async (chainId: number, name: string) => {
     if (!address) return
+    const price = marketPrices[chainId]
+    if (price !== undefined) {
+      setActing(`buy-${chainId}`)
+      try {
+        const hash = await buyPartFromMarket(address, chainId, 1, price)
+        setLastTx(hash)
+        showToast(`已购买「${name}」×1，到背包查看`)
+        await refresh(address)
+      } catch (err) {
+        showToast(explainChainError(err))
+      } finally {
+        setActing(null)
+      }
+      return
+    }
     if (!isAdmin) {
-      showToast(`「${name}」尚未持有，购买市场合约未部署`)
+      showToast(`「${name}」尚未上架，购买市场合约未部署`)
       return
     }
     setActing(`buy-${chainId}`)
@@ -295,10 +332,20 @@ export default function BackpackPage() {
                   <button
                     className="flex-1 btn-primary !text-xs !py-1.5"
                     disabled={acting === `buy-${p.id}`}
-                    title={isAdmin ? '铸造 1 份到当前钱包' : '购买市场合约未部署'}
+                    title={
+                      marketPrices[p.id] !== undefined
+                        ? '市场直售:平台铸造 1 份到你的钱包'
+                        : isAdmin
+                          ? '铸造 1 份到当前钱包'
+                          : '该装备未上架,购买市场合约未部署'
+                    }
                     onClick={() => doBuy(p.id, p.name)}
                   >
-                    {acting === `buy-${p.id}` ? '铸造中…' : '购买'}
+                    {acting === `buy-${p.id}`
+                      ? '交易中…'
+                      : marketPrices[p.id] !== undefined
+                        ? `购买 · ${formatUnits(marketPrices[p.id], active.chain.nativeCurrency.decimals)} ${active.chain.nativeCurrency.symbol}`
+                        : '购买'}
                   </button>
                 )}
               </div>

@@ -110,6 +110,18 @@ export async function claimStarterPack(owner: string, tokenId: number): Promise<
   return evm.claimStarterPack(owner as Address, tokenId)
 }
 
+/** 市场直售单价(wei);Solana 或未配置返回 null */
+export async function fetchMarketPrice(partId: number): Promise<bigint | null> {
+  if (isSolana()) return null
+  return evm.fetchMarketPrice(partId)
+}
+
+/** 市场直售购买(Solana 不支持,抛错) */
+export async function buyPartFromMarket(owner: string, partId: number, quantity: number, value: bigint): Promise<string> {
+  if (isSolana()) throw new Error('Solana 链不支持装备市场')
+  return evm.buyPartFromMarket(owner as Address, partId, quantity, value)
+}
+
 export async function equipPart(owner: string, tokenId: number, slot: number, partChainId: number): Promise<string> {
   return isSolana() ? sol.equipPart(owner, tokenId, slot, partChainId) : evm.equipPart(owner as Address, tokenId, slot, partChainId)
 }

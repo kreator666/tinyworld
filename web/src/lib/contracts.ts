@@ -2,6 +2,7 @@ import { sepolia, avalancheFuji, avalanche, type Chain } from 'viem/chains'
 import DIDIdentityJson from '../abi/DIDIdentity.json'
 import DIDPartsJson from '../abi/DIDParts.json'
 import StarterPartClaimJson from '../abi/StarterPartClaim.json'
+import PartsMarketJson from '../abi/PartsMarket.json'
 import { toChainParts, type ChainPart } from '../data/equipmentCatalog'
 import type { ChainType } from '../types'
 
@@ -26,6 +27,8 @@ export interface ChainContracts {
   family?: 'evm' | 'solana'
   /** 新手装备免费领养合约(EVM;未部署的链不填) */
   partsClaim?: `0x${string}`
+  /** 装备铸造直售市场合约(EVM;未部署的链不填。价格一律链上 listPriceOf 为准) */
+  market?: `0x${string}`
 }
 
 // Solana devnet 的 viem 链定义:仅作占位(solana 不走 viem client),
@@ -59,6 +62,7 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     identity: '0x3ef5218e6D15b755c9bDC4298d0721b9886551eb',
     parts: '0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267',
     partsClaim: '0x3D98d0Ff048a82a387FDdfF0A4e10a1EF6FBe0f2',
+    market: '0xA0323a6E825912736F2C7b7e64920c71d8d27A31',
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
     explorer: 'https://testnet.snowtrace.io',
   },
@@ -90,6 +94,7 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
 export const identityAbi = DIDIdentityJson.abi
 export const partsAbi = DIDPartsJson.abi
 export const starterClaimAbi = StarterPartClaimJson.abi
+export const partsMarketAbi = PartsMarketJson.abi
 
 // ============================================================
 // 链上配件注册表:链上 uint256 id ↔ 本地 SVG 部件 id

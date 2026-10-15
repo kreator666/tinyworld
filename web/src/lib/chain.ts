@@ -2,7 +2,7 @@ import { createPublicClient, createWalletClient, custom, http, zeroAddress, type
 import type { EvmUnsignedTx } from './agentApi'
 import type { Equipped } from '../types'
 import { getActiveProvider } from './wallet'
-import { SLOT_TO_CATEGORY, chainParts, identityAbi, partByChainId, partsAbi, starterClaimAbi } from './contracts'
+import { SLOT_TO_CATEGORY, chainParts, identityAbi, partByChainId, partsAbi, partsMarketAbi, starterClaimAbi } from './contracts'
 import { getActiveChain } from '../store/chainConfigStore'
 import { avalanche, avalancheFuji, sepolia } from 'viem/chains'
 
@@ -286,6 +286,38 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
   })
   const receipt = await client.waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
   if (receipt.status !== 'success') throw new Error('大礼包领取交易已回滚(链上执行失败),装备未发放,可稍后重试')
+  return hash
+}
+
+/** 读取市场直售单价(wei);链未配置 market 或该装备未上架返回 null */
+export async function fetchMarketPrice(partId: number): Promise<bigint | null> {
+  const marketAddr = A().market
+  if (!marketAddr) return null
+  const price = (await readClient().readContract({
+    address: marketAddr,
+    abi: partsMarketAbi,
+    functionName: 'listPriceOf',
+    args: [BigInt(partId)],
+  })) as bigint
+  return price > 0n ? price : null
+}
+
+/** 市场直售购买:平台铸 quantity 份到用户钱包;value 须精确等于 price*quantity(不找零)。
+ *  value 由调用方按链原生币精度计算(parseUnits(price, chain.nativeCurrency.decimals)) */
+export async function buyPartFromMarket(owner: Address, partId: number, quantity: number, value: bigint): Promise<Hash> {
+  const marketAddr = A().market
+  if (!marketAddr) throw new Error('当前链未部署装备市场合约')
+  const wallet = walletClient(owner)
+  const hash = await wallet.writeContract({
+    address: marketAddr,
+    abi: partsMarketAbi,
+    functionName: 'buy',
+    args: [BigInt(partId), BigInt(quantity)],
+    value,
+    gas: 300000n,
+  })
+  const receipt = await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
+  if (receipt.status !== 'success') throw new Error('市场购买交易已回滚(可能超发/已下架/金额不符),未扣款或已退款')
   return hash
 }
 
