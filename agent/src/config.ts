@@ -101,8 +101,9 @@ const CHAINS: Record<string, ChainConfig> = {
     rpc: 'https://avalanche-c-chain-rpc.publicnode.com',
     rpcFallbacks: ['https://1rpc.io/avax/c'],
     explorer: 'https://subnets.avax.network/c-chain',
-    identityAddress: '0xf9111CbC5562671050910858BBA702db8C44f3fE',
+    identityAddress: '0x0928B2F5a9F03792b994940b95Ba15654835A011', // 2026-10 大礼包 v2 重部署(旧 0xf911…已作废)
     partsAddress: '0xa3fB106DD25c02bf18170d6657EdF4804bf5D924',
+    market: { address: '0xa5eF8B7b48f4b62c5834576b4C5CF5004B470377' }, // 铸造直售(价格未上架,owner 定)
     nativePriceId: 'avalanche-2',
     nativeGatePair: 'AVAX_USDT',
     defi: {

@@ -90,3 +90,16 @@
 - 端到端验证:`npx hardhat run scripts/e2e-fuji-starter-pack.js --network localhost`
   (需先 `npx hardhat node --fork <fuji-rpc> --fork-block-number <最新块>`,claimPack 显式 gasLimit 跳过 estimateGas——
   fork 上 estimateGas 对 blockhash 调用会挂);mainnet 未部署此功能。
+
+## 装备铸造直售市场(2026-10-15)
+
+- 合约 `PartsMarket`(P2C 铸造直售,原生币计价 chain-agnostic):owner 定价上架 `setPrice(s)`,
+  用户 `buy(id, quantity)` 精确等值付款(不找零),合约现场铸新品(稀缺性由 maxSupply 硬顶保证),
+  `withdraw` 提现。Fuji: `0xA0323a6E825912736F2C7b7e64920c71d8d27A31`(minter 权限已授)。
+- 上架:普通装 48 件(1001-1012/2001-2012/3001-3012/4001-4012)各 0.01 AVAX;稀有以上不上架。
+- **多链 native 配置**:服务端 chains.config `market:{address}`(只存地址,价格一律链上 listPriceOf 为准);
+  前端价格展示/支付值用 `active.chain.nativeCurrency`(symbol/decimals),无 AVAX/18 硬编码。
+  协议目录 seeding 新增 `market` 行(cfg.market 存在时推导)。
+- 前端:背包页购买按钮接通——上架装备显示「购买 · 0.01 AVAX」;未上架保留原提示。
+- 部署:`npx hardhat run scripts/deploy-market.js --network <net>`,支持 `MARKET_PRICES=1001:0.01,...` 批量上架。
+- 注意:PGlite 脚本写库后必须 `await closeDb()` 再退出,否则 WAL 未落盘进程退出即丢(踩过)。
