@@ -1,72 +1,33 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { Equipped, NFTCategory, ChainType, NFTItem } from '../types'
-import { nftLibrary } from '../mock/data'
-import { CHARACTERS } from '../data/characterCatalog'
+import type { Equipped } from '../types'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import PaperDoll from '../components/PaperDoll'
-import NFTCard from '../components/NFTCard'
-import { partByLocalId } from '../lib/contracts'
 import { explorerTx, useChainConfig } from '../store/chainConfigStore'
 import { checkNameAvailable, isWalletOnActiveChain } from '../lib/chainDispatch'
 
-const tabs: { key: NFTCategory; label: string; desc: string }[] = [
-  { key: 'head', label: '头部', desc: '角色头部形象(v4 角色库)' },
-  { key: 'body', label: '身体', desc: '角色身体造型(v4 角色库)' },
-  { key: 'accessory', label: '配饰', desc: '全屏背景 / 氛围 / 披风 / 光翼' },
-  { key: 'pet', label: '宠物', desc: '跟随小伙伴(显示在人物身前)' },
-]
-
-const SLOT_MAP: Record<NFTCategory, number> = { head: 0, body: 1, accessory: 2, pet: 3 }
-
 const takenNames = ['satoshi', 'vitalik', 'aiko_02', 'neonhunter'] // 未连接目标链时的本地演示兜底
+
+// 新身份铸造后的默认形象(装备由新手大礼包随机发放并自动穿戴,见资产背包)
+const DEFAULT_EQUIPPED: Equipped = { head: 'head-1', body: 'body-1', accessory: null, pet: null }
 
 type MintPhase = 'idle' | 'signing' | 'confirming' | 'done' | 'error'
 
-// 把 v4 角色库映射为 head-N / body-N 的展示项,保持与链上 part ID 一一对应
-function buildCharacterItems(): NFTItem[] {
-  return CHARACTERS.flatMap((char) => {
-    const index = char.id.split('-')[1]
-    const baseHead = nftLibrary.find((i) => i.id === `head-${index}`)
-    const baseBody = nftLibrary.find((i) => i.id === `body-${index}`)
-    const items: NFTItem[] = []
-    if (baseHead) {
-      items.push({
-        ...baseHead,
-        name: `角色 ${index}`,
-        imageUrl: char.headThumbUrl ?? char.headUrl, // 卡片用缩略图,全尺寸留给立绘/像素管线
-      })
-    }
-    if (baseBody) {
-      items.push({
-        ...baseBody,
-        name: `角色 ${index}`,
-        imageUrl: char.bodyThumbUrl ?? char.bodyUrl,
-      })
-    }
-    return items
-  })
-}
-
-// 铸造工坊:v4 角色 head/body + 装备 accessory/pet,链上交互与合约逻辑保持不变
+// 铸造工坊:只铸 DID 主身份;装备不经此页发放——新用户去资产背包开「新手大礼包」
+// (链上随机四件套 + 自动穿戴),避免"选了装备却铸不出来"的误导
 export default function MintWorkshop() {
   const active = useChainConfig((s) => s.active)
   const nav = useNavigate()
   const { connected, address, login, mintDID, showToast } = useAppStore()
-  const { tokenId, didName, equipped: chainEquipped, parts, refresh, mint, isAdmin } = useChainStore()
+  const { tokenId, didName, refresh, mint } = useChainStore()
 
-  const [tab, setTab] = useState<NFTCategory>('head')
-  const [equipped, setEquipped] = useState<Equipped>(
-    chainEquipped ?? { head: 'head-1', body: 'body-1', accessory: null, pet: null },
-  )
   const [name, setName] = useState(didName ?? '')
   const [bio, setBio] = useState('')
   const [phase, setPhase] = useState<MintPhase>('idle')
   const [txHash, setTxHash] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [onTargetChain, setOnTargetChain] = useState(false)
-  const [previewInit, setPreviewInit] = useState(false)
   // 链上名称查重结果:null = 未校验/校验中
   const [chainNameAvailable, setChainNameAvailable] = useState<boolean | null>(null)
 
@@ -99,97 +60,10 @@ export default function MintWorkshop() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, login?.chainId, active.chainId, address])
 
-  useEffect(() => {
-    if (chainEquipped) setEquipped(chainEquipped)
-  }, [chainEquipped])
-
-  // 切换钱包后重置预览初始化状态,让新钱包的持有装备能重新成为默认预览
-  useEffect(() => {
-    setPreviewInit(false)
-  }, [address])
-
-  // 初次读到链上配件时,把预览默认设为每分类第一件已持有的本地装备
-  useEffect(() => {
-    if (previewInit || !onTargetChain || parts.length === 0) return
-    const next: Equipped = { head: null, body: null, accessory: null, pet: null }
-    ;(Object.keys(SLOT_MAP) as NFTCategory[]).forEach((cat) => {
-      const slot = SLOT_MAP[cat]
-      const owned = parts.find((p) => p.slot === slot && p.balance > 0)
-      if (owned) next[cat] = owned.localId
-    })
-    // 保底默认角色
-    if (!next.head) next.head = 'head-1'
-    if (!next.body) next.body = 'body-1'
-    setEquipped(next)
-    setPreviewInit(true)
-  }, [onTargetChain, parts, previewInit])
-
   const nameTaken =
     chainNameAvailable === false ||
     (chainNameAvailable === null && name.trim().length > 0 && takenNames.includes(name.trim().toLowerCase()))
   const nameOk = name.trim().length >= 2 && !nameTaken
-
-  // v4 角色 head/body 展示项
-  const characterItems = useMemo(() => buildCharacterItems(), [])
-
-  // 装备 accessory/pet 目录;连接目标链后,对已在链上注册并有余额的装备覆盖 owned/count/chain 标记
-  const equipmentItems = useMemo(() => {
-    const base = nftLibrary.filter((i) => i.category === 'accessory' || i.category === 'pet')
-    if (!onTargetChain) return base
-    return base.map((item) => {
-      const cp = partByLocalId(item.id)
-      if (!cp) return item
-      const chain = parts.find((p) => p.id === cp.id)
-      return {
-        ...item,
-        owned: chain ? chain.balance > 0 : item.owned,
-        count: chain?.balance ?? 0,
-        chain: active.name,
-      }
-    })
-  }, [onTargetChain, parts])
-
-  // head/body 展示项同样覆盖链上持有状态
-  const characterCatalogItems = useMemo(() => {
-    if (!onTargetChain) return characterItems
-    return characterItems.map((item) => {
-      const cp = partByLocalId(item.id)
-      if (!cp) return item
-      const chain = parts.find((p) => p.id === cp.id)
-      return {
-        ...item,
-        owned: chain ? chain.balance > 0 : item.owned,
-        count: chain?.balance ?? 0,
-        chain: active.name,
-      }
-    })
-  }, [onTargetChain, parts, characterItems])
-
-  // 当前标签页要渲染的卡片
-  const categoryItems = useMemo(() => {
-    if (tab === 'head' || tab === 'body') return characterCatalogItems.filter((i) => i.category === tab)
-    return equipmentItems.filter((i) => i.category === tab)
-  }, [tab, characterCatalogItems, equipmentItems])
-
-  // 所有展示项,用于右侧“当前预览搭配”
-  const allItems = useMemo(() => [...characterCatalogItems, ...equipmentItems], [characterCatalogItems, equipmentItems])
-
-  const selectedItems = useMemo(
-    () => Object.values(equipped).map((id) => allItems.find((i) => i.id === id)).filter((i): i is NonNullable<typeof i> => !!i),
-    [equipped, allItems],
-  )
-
-  const pick = (id: string, category: NFTCategory) =>
-    setEquipped((e) => ({ ...e, [category]: e[category] === id ? null : id }))
-
-  const handleBuy = (item: NFTItem) => {
-    if (isAdmin) {
-      nav('/admin')
-      showToast(`请前往管理员后台发行「${item.name}」`)
-      return
-    }
-    showToast(`「${item.name}」尚未持有，购买市场合约未部署`)
-  }
 
   const doMint = async () => {
     if (!nameOk || !address || !onTargetChain) return
@@ -197,13 +71,13 @@ export default function MintWorkshop() {
     setErrorMsg(null)
     try {
       const hash = await mint(address, name.trim(), bio.trim())
-      setTxHash(hash)
+      setTxHash(hash as string)
       setPhase('confirming')
       // 本地镜像:让个人主页/导航继续可用
-      mintDID(name.trim(), bio.trim(), active.name, equipped)
+      mintDID(name.trim(), bio.trim(), active.name, DEFAULT_EQUIPPED)
       setPhase('done')
       setTimeout(() => {
-        showToast('🎉 Agent 身份已上链!配件可在资产背包中穿戴')
+        showToast('🎉 Agent 身份已上链!去资产背包开新手大礼包,随机 4 件装备自动穿上')
         nav('/backpack')
       }, 1400)
     } catch (err) {
@@ -215,12 +89,12 @@ export default function MintWorkshop() {
   const alreadyMinted = tokenId > 0
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6">
+    <div className="mx-auto max-w-5xl px-4 py-6">
       <h2 className="text-2xl font-bold mb-1">NFT 铸造工坊</h2>
       <p className="text-sm text-slate-400 mb-6">
         {alreadyMinted
           ? '你已铸造 Agent 主身份,可在资产背包查看链上资产'
-          : `挑选 NFT 组件预览搭配,并在 ${active.name} 测试网铸造你的 Agent 主身份`}
+          : `在 ${active.name} 铸造你的 Agent 主身份(每地址限 1 枚);装备由新手大礼包随机发放`}
       </p>
 
       {alreadyMinted && (
@@ -239,17 +113,17 @@ export default function MintWorkshop() {
         </div>
       )}
 
-      <div className="grid lg:grid-cols-[280px_1fr_300px] gap-6">
-        {/* 左栏:纸娃娃实时预览 */}
+      <div className="grid lg:grid-cols-[300px_1fr] gap-6">
+        {/* 左栏:默认形象预览 */}
         <div className="glass p-5 flex flex-col items-center">
-          <div className="text-sm text-slate-400 mb-3 self-start">实时预览</div>
-          <PaperDoll equipped={equipped} size="lg" interactive />
+          <div className="text-sm text-slate-400 mb-3 self-start">形象预览</div>
+          <PaperDoll equipped={DEFAULT_EQUIPPED} size="lg" />
           <div className="w-full mt-5 pt-4 border-t border-white/10 space-y-2 text-sm">
             <div className="flex justify-between text-slate-400">
               <span>网络</span><span className="font-mono text-neon-cyan">{onTargetChain ? active.name : `未连接 ${active.name}`}</span>
             </div>
-            <div className="flex justify-between text-slate-400">
-              <span>已选组件</span><span>{selectedItems.length} 件</span>
+            <div className="text-xs text-slate-500 leading-relaxed">
+              头部 / 身体 / 配饰 / 宠物 4 个槽位将由「新手大礼包」链上随机发放,开箱即自动穿戴,无需挑选。
             </div>
             <button
               className="btn-primary w-full mt-2"
@@ -263,55 +137,7 @@ export default function MintWorkshop() {
           </div>
         </div>
 
-        {/* 中栏:模块化组件库 */}
-        <div className="glass p-5">
-          <div className="flex gap-2 mb-1 flex-wrap">
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                className={`px-4 py-2 rounded-xl text-sm transition ${
-                  tab === t.key ? 'bg-neon-grad text-white shadow-neon-purple' : 'glass text-slate-300 hover:border-neon-purple/50'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-slate-500 mb-4">
-            {onTargetChain
-              ? `${tabs.find((t) => t.key === tab)?.desc}(已连接 ${active.name}: 显示链上持有状态)`
-              : `${tabs.find((t) => t.key === tab)?.desc}(演示目录,连接钱包后显示链上持有状态)`}
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {categoryItems.map((i) => (
-              <NFTCard
-                key={i.id}
-                item={i}
-                selected={equipped[tab] === i.id}
-                onClick={() => pick(i.id, tab)}
-                actions={
-                  !i.owned && onTargetChain ? (
-                    <button
-                      className="btn-primary !px-2 !py-1 text-[10px]"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleBuy(i)
-                      }}
-                    >
-                      {isAdmin ? '去发行' : '购买'}
-                    </button>
-                  ) : undefined
-                }
-              />
-            ))}
-          </div>
-          <p className="text-xs text-slate-500 mt-4">
-            💡 选择组件仅影响当前预览;铸造后可在资产背包中把已持有的配件穿到 Agent 上
-          </p>
-        </div>
-
-        {/* 右栏:铸造参数 + 预览搭配 */}
+        {/* 右栏:铸造参数 */}
         <div className="glass p-5 space-y-4 h-fit">
           <div>
             <label className="text-xs text-slate-400">Agent 名称(链上永久,不可重复)</label>
@@ -330,27 +156,13 @@ export default function MintWorkshop() {
             </div>
           </div>
           <div>
-            <label className="text-xs text-slate-400">铸造数量</label>
-            <div className="input mt-1 text-slate-500 text-xs">1 份专属 Agent 主身份(每地址限 1 枚)</div>
-          </div>
-          {/* 当前预览搭配 */}
-          <div className="border-t border-white/10 pt-3">
-            <label className="text-xs text-slate-400">当前预览搭配</label>
-            <div className="mt-1.5 space-y-1.5">
-              {selectedItems.length === 0 && <p className="text-xs text-slate-500">未选择任何配件</p>}
-              {selectedItems.map((i) => (
-                <div key={i.id} className="flex items-center justify-between text-xs">
-                  <span className="text-slate-300">{i.emoji} {i.name}</span>
-                  <span className={i.owned ? 'text-emerald-400' : 'text-slate-500'}>
-                    {i.owned ? `✓ 已持有${i.count && i.count > 1 ? ` ×${i.count}` : ''}` : '未持有'}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <label className="text-xs text-slate-400">铸造内容</label>
+            <div className="input mt-1 text-slate-500 text-xs">1 枚专属 Agent 主身份(装备由新手大礼包随机发放,不在本页选择)</div>
           </div>
           <div className="border-t border-white/10 pt-3">
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              确认铸造后钱包会弹出真实交易,仅消耗 ${active.name} 测试 Gas。配件需先在资产背包中持有,才能通过链上“穿戴”挂到 Agent 上。
+              确认铸造后钱包会弹出真实交易,仅消耗 {active.name} 测试 Gas。铸好后到资产背包开「新手大礼包」:
+              从每个槽位的前 8 件装备中各随机 1 件,一笔交易发放并自动穿上(每地址限领一次)。
             </p>
           </div>
           <button
@@ -371,7 +183,7 @@ export default function MintWorkshop() {
               <>
                 <div className="text-5xl">🎉</div>
                 <p className="mt-3 font-semibold">Agent 身份已上链</p>
-                <p className="text-xs text-slate-400 mt-1">正在跳转资产背包…</p>
+                <p className="text-xs text-slate-400 mt-1">正在跳转资产背包开大礼包…</p>
               </>
             ) : (
               <>
