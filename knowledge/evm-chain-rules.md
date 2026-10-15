@@ -57,6 +57,14 @@
 - 红线:禁止做大规模常规分发——绕过市场定价与大礼包限领,破坏经济可预测性(后台页面已写此警告)。
 - 页面定位:register 是高频(出新装备必用);mintPartBatch 是低频运营工具。
 
+## 4.5 BENQI 流动性质押(主网专属,2026-10-15)
+
+- 合约(双用途:质押逻辑+sAVAX 代币同一地址,官方文档+链上双源核实):`0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE`(主网)。
+- 机制:`submit()` payable 即时铸 sAVAX(无最小额);赎回 `redeem()` 两段式——**15 天冷却 + 2 天领取窗口**过期重排;AMM 卖出可即时退出。
+- 技能 `defi-staking`(主网专属,protocolRequired):`propose_stake`(报价→策略引擎→双模式执行)+ `staking_status`(只读);赎回工具未开放(v2 配 ticket 追踪+到期提醒)。
+- 真实 e2e:0.1 AVAX → 0.077508555 sAVAX,与链上报价分毫不差(tx `0x8e01…d575`)。
+- 不在默认安装清单(主网资产操作,手动安装)。
+
 ## 5. 身份层规则(DIDIdentity v2)
 
 - 每地址限 1 枚、名称唯一(大小写不敏感,burn 后名字永久保留)、默认 Soulbound 锁定。
@@ -73,7 +81,7 @@ chain_protocols 表: (chain_key, protocol_key, kind, config JSONB, enabled, upda
 ```
 
 - **DB 是权威**:`seedChains` 启动 upsert(固有列覆盖更新,**config 列只在 INSERT 时写**——存量库的 config 变更必须走 admin API);`registry.ts` 启动时 `applyDbChains`(支持 DB-only 新链免重启热注册)+ `applyDbChainConfigs`(config overlay 深合并 defi/aave/solana)。
-- **协议注册表**:协议 key 约定 `dex`/`lending`/`market`/`starter-claim`/`jupiter`/`meteora`/`drift`;启动时对无行的链从 ChainConfig 自动 seeding(幂等,尊重人工停用)。
+- **协议注册表**:协议 key 约定 `dex`/`lending`/`market`/`starter-claim`/`benqi-staking`/`jupiter`/`meteora`/`drift`;启动时对无行的链从 ChainConfig 自动 seeding(幂等,尊重人工停用)。主网专属协议的技能 manifest 需 `protocolRequired: true`(无协议行即隐藏,防止回落 family 逻辑误显示)。
 - **技能 gating 三态优先级**:协议表 disabled 行 > enabled 行(接管) > 无行(回落老配置检查)。
 - 前端:`GET /chains` 组装两层(chains + protocols)返回;本地 `contracts.ts` 只作服务不可达时的兜底。
 - native token:前端展示/支付一律 `active.chain.nativeCurrency`;服务端估值用 `nativePriceId/nativeGatePair` 行情源。
