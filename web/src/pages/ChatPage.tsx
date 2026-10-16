@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import ChatBubble from '../components/ChatBubble'
+import PixelRoom from '../components/PixelRoom'
 import { chatWithAgent, getInbox } from '../lib/agentApi'
-import { fetchMintedAgents, isWalletOnActiveChain, type MintedAgent } from '../lib/chainDispatch'
+import { fetchAgentPublic, fetchMintedAgents, isWalletOnActiveChain, type MintedAgent } from '../lib/chainDispatch'
 import { useChainConfig } from '../store/chainConfigStore'
 
 // 页面 5:消息聊天界面 —— 纯社交,只列别人的链上 Agent;自己的 Agent 在 /assistant 助手页
@@ -36,18 +37,45 @@ export default function ChatPage() {
   }, [activeChain.key])
 
   // 会话列表从链上读取:只列别人的 Agent(自己的 Agent 有专属助手页,不进社交列表)
+  // 同时读取每个 Agent 的公开信息(装备),用于像素小人展示
   useEffect(() => {
     if (!connected || !onTargetChain) return
     setLoadingAgents(true)
     fetchMintedAgents()
-      .then((list) => {
+      .then(async (list) => {
         list.forEach((a) => agentsRef.current.set(a.tokenId, a))
-        list.filter((a) => a.tokenId !== myTokenId).forEach((a) => upsertChainSession(a, false))
+        const others = list.filter((a) => a.tokenId !== myTokenId)
+        await Promise.all(
+          others.map(async (a) => {
+            try {
+              const pub = await fetchAgentPublic(a.tokenId)
+              upsertChainSession({ ...a, equipped: pub.equipped }, false)
+            } catch {
+              upsertChainSession(a, false)
+            }
+          }),
+        )
       })
       .catch((e) => console.warn('读取链上 Agent 列表失败:', e))
       .finally(() => setLoadingAgents(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, onTargetChain, myTokenId, activeChain.key])
+
+  // 从其他入口(如个人主页"和 Agent 聊")进入的会话可能没有装备信息,按需补拉
+  useEffect(() => {
+    if (!connected || !onTargetChain || !active?.agentTokenId || active.peerEquipped) return
+    let cancelled = false
+    fetchAgentPublic(active.agentTokenId)
+      .then((pub) => {
+        if (cancelled) return
+        upsertChainSession({ tokenId: pub.tokenId, name: pub.name, owner: pub.owner, equipped: pub.equipped }, false)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, onTargetChain, active?.agentTokenId, active?.peerEquipped])
 
   // 收件箱轮询:其他 Agent 主动发来/回复的消息,按发送方落进对应会话
   useEffect(() => {
@@ -172,83 +200,103 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* 右:聊天窗口 */}
+        {/* 右:像素小屋 + 聊天窗口 */}
         {active ? (
-          <div className="glass flex flex-col overflow-hidden">
-            {/* 顶部栏 */}
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10">
-              <span className="text-2xl">{active.peerEmoji}</span>
-              <div className="min-w-0">
-                <div className="font-medium text-sm">{active.peerName}</div>
-                <div className="text-[11px] text-slate-500 font-mono">{active.peerAddress}</div>
-              </div>
-              {/* 真人 / AI 切换 */}
-              <div className="ml-auto flex items-center glass !rounded-full p-1 text-xs">
-                <button
-                  onClick={() => switchChatMode(active.id, 'human')}
-                  className={`px-3 py-1 rounded-full transition ${active.mode === 'human' ? 'bg-neon-grad text-white' : 'text-slate-400'}`}
-                >
-                  真人
-                </button>
-                <button
-                  onClick={() => switchChatMode(active.id, 'ai')}
-                  className={`px-3 py-1 rounded-full transition ${active.mode === 'ai' ? 'bg-neon-grad text-white' : 'text-slate-400'}`}
-                >
-                  🤖 Agent
-                </button>
-              </div>
-              {active.agentTokenId != null && (
-                <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => nav(`/profile/${active.agentTokenId}`)}>主页</button>
-              )}
-              <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => setShowAIInfo(true)}>AI 设定</button>
-              <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={exportChat}>导出</button>
-            </div>
-
-            {/* 消息流 */}
-            <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-              {active.mode === 'ai' && (
-                <div className="text-center">
-                  <span className="tag !text-[10px] border-neon-cyan/40 text-neon-cyan">
-                    🤖 当前由对方的 Agent({active.aiTag})代为交流
-                  </span>
+          <div className="flex flex-col gap-2 min-h-0">
+            {active.mode === 'ai' && active.peerEquipped && (
+              <PixelRoom
+                key={`chat-room-${active.id}`}
+                className="shrink-0"
+                heightClass="h-28 md:h-32"
+                dollHeight={80}
+                status={typingChatId === active.id ? 'thinking' : 'idle'}
+                storageKey={`pixel-room:chat-${active.id}`}
+                inhabitants={[
+                  {
+                    id: `peer-${active.id}`,
+                    equipped: active.peerEquipped,
+                    label: active.peerName,
+                    lines: [`你好呀,我是 ${active.peerName} 的 Agent~`, '有什么可以帮你的吗?', '随便聊聊也可以哦'],
+                  },
+                ]}
+              />
+            )}
+            <div className="glass flex flex-col flex-1 overflow-hidden">
+              {/* 顶部栏 */}
+              <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10">
+                <span className="text-2xl">{active.peerEmoji}</span>
+                <div className="min-w-0">
+                  <div className="font-medium text-sm">{active.peerName}</div>
+                  <div className="text-[11px] text-slate-500 font-mono">{active.peerAddress}</div>
                 </div>
-              )}
-              {active.messages.map((m) => <ChatBubble key={m.id} msg={m} />)}
-              {typingChatId === active.id && (
-                <div className="text-xs text-slate-500 animate-pulse">🤖 对方正在输入…</div>
-              )}
-            </div>
-
-            {/* 底部输入区 */}
-            <div className="border-t border-white/10 p-3">
-              {showNFT && (
-                <div className="mb-2 glass p-2 max-h-32 overflow-y-auto grid grid-cols-4 gap-2">
-                  {inventory.map((i) => (
-                    <button
-                      key={i.id}
-                      className="glass p-2 text-center hover:border-neon-purple/60 transition"
-                      onClick={() => { sendMessage(active.id, '', 'nft', i.id); setShowNFT(false) }}
-                      title={`发送 ${i.name}`}
-                    >
-                      <div className="text-xl">{i.emoji}</div>
-                      <div className="text-[9px] text-slate-400 truncate">{i.name}</div>
-                    </button>
-                  ))}
-                  {inventory.length === 0 && <div className="col-span-4 text-xs text-slate-500 text-center py-2">背包为空</div>}
+                {/* 真人 / AI 切换 */}
+                <div className="ml-auto flex items-center glass !rounded-full p-1 text-xs">
+                  <button
+                    onClick={() => switchChatMode(active.id, 'human')}
+                    className={`px-3 py-1 rounded-full transition ${active.mode === 'human' ? 'bg-neon-grad text-white' : 'text-slate-400'}`}
+                  >
+                    真人
+                  </button>
+                  <button
+                    onClick={() => switchChatMode(active.id, 'ai')}
+                    className={`px-3 py-1 rounded-full transition ${active.mode === 'ai' ? 'bg-neon-grad text-white' : 'text-slate-400'}`}
+                  >
+                    🤖 Agent
+                  </button>
                 </div>
-              )}
-              <div className="flex items-center gap-2">
-                <button className="btn-ghost !px-3 !py-2 text-sm" onClick={() => setShowNFT((v) => !v)} title="发送我的装备 NFT">
-                  🎒 NFT
-                </button>
-                <input
-                  className="input flex-1"
-                  placeholder="发送消息…"
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && send()}
-                />
-                <button className="btn-primary !py-2" onClick={send}>发送</button>
+                {active.agentTokenId != null && (
+                  <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => nav(`/profile/${active.agentTokenId}`)}>主页</button>
+                )}
+                <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => setShowAIInfo(true)}>AI 设定</button>
+                <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={exportChat}>导出</button>
+              </div>
+
+              {/* 消息流 */}
+              <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+                {active.mode === 'ai' && (
+                  <div className="text-center">
+                    <span className="tag !text-[10px] border-neon-cyan/40 text-neon-cyan">
+                      🤖 当前由对方的 Agent({active.aiTag})代为交流
+                    </span>
+                  </div>
+                )}
+                {active.messages.map((m) => <ChatBubble key={m.id} msg={m} />)}
+                {typingChatId === active.id && (
+                  <div className="text-xs text-slate-500 animate-pulse">🤖 对方正在输入…</div>
+                )}
+              </div>
+
+              {/* 底部输入区 */}
+              <div className="border-t border-white/10 p-3">
+                {showNFT && (
+                  <div className="mb-2 glass p-2 max-h-32 overflow-y-auto grid grid-cols-4 gap-2">
+                    {inventory.map((i) => (
+                      <button
+                        key={i.id}
+                        className="glass p-2 text-center hover:border-neon-purple/60 transition"
+                        onClick={() => { sendMessage(active.id, '', 'nft', i.id); setShowNFT(false) }}
+                        title={`发送 ${i.name}`}
+                      >
+                        <div className="text-xl">{i.emoji}</div>
+                        <div className="text-[9px] text-slate-400 truncate">{i.name}</div>
+                      </button>
+                    ))}
+                    {inventory.length === 0 && <div className="col-span-4 text-xs text-slate-500 text-center py-2">背包为空</div>}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <button className="btn-ghost !px-3 !py-2 text-sm" onClick={() => setShowNFT((v) => !v)} title="发送我的装备 NFT">
+                    🎒 NFT
+                  </button>
+                  <input
+                    className="input flex-1"
+                    placeholder="发送消息…"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && send()}
+                  />
+                  <button className="btn-primary !py-2" onClick={send}>发送</button>
+                </div>
               </div>
             </div>
           </div>

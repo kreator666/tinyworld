@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { Equipped } from '../types'
+import type { AgentStatus, Equipped } from '../types'
 import { getPixelDoll, drawPixelDoll, PIXEL_SIZE } from '../game/pixelate'
 
 // 像素小屋:电子宠物式的像素小人随机走动,点击弹跳 + 冒人设气泡
@@ -15,8 +15,6 @@ export interface RoomInhabitant {
   label?: string // 头顶常驻小名牌(气泡出现时短暂让位)
   isSelf?: boolean // 自己的 Agent 高亮:名牌加 ⭐、脚下光环换霓虹青
 }
-
-export type AgentStatus = 'idle' | 'thinking' | 'waiting-sign' | 'signing' | 'confirming' | 'happy'
 
 interface PixelRoomProps {
   inhabitants: RoomInhabitant[]

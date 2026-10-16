@@ -55,7 +55,7 @@ interface AppState {
   switchChatMode: (id: string, mode: 'human' | 'ai') => void
   sendMessage: (sessionId: string, text: string, kind?: 'text' | 'nft', nftId?: string) => void
   appendPeerMessage: (sessionId: string, text: string) => void
-  upsertChainSession: (agent: { tokenId: number; name: string; owner: string }, selfAgent: boolean) => string
+  upsertChainSession: (agent: { tokenId: number; name: string; owner: string; equipped?: Equipped }, selfAgent: boolean) => string
   ensureChatWith: (peerName: string, peerAddress: string, peerEmoji: string, mode: 'human' | 'ai', aiTag: string, opts?: { selfAgent?: boolean; agentTokenId?: number }) => string
   // 全局提示
   toast: string | null
@@ -135,7 +135,12 @@ export const useAppStore = create<AppState>()(
           set((s) => ({
             chats: s.chats.map((c) =>
               c.id === existing.id
-                ? { ...c, agentTokenId: agent.tokenId, selfAgent: selfAgent || c.selfAgent }
+                ? {
+                    ...c,
+                    agentTokenId: agent.tokenId,
+                    selfAgent: selfAgent || c.selfAgent,
+                    peerEquipped: agent.equipped ?? c.peerEquipped,
+                  }
                 : c,
             ),
           }))
@@ -151,6 +156,7 @@ export const useAppStore = create<AppState>()(
           online: false,
           selfAgent,
           agentTokenId: agent.tokenId,
+          peerEquipped: agent.equipped,
           messages: [],
         }
         set((s) => ({ chats: [...s.chats, session], activeChatId: s.activeChatId ?? id }))

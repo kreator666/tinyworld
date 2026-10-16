@@ -14,7 +14,8 @@ import {
   type UnsignedTx,
 } from '../lib/agentApi'
 import { sendTransactions } from '../lib/chainDispatch'
-import PixelRoom, { type AgentStatus } from '../components/PixelRoom'
+import PixelRoom from '../components/PixelRoom'
+import type { AgentStatus } from '../types'
 
 /** 消息文本渲染:把 URL 变成可点击链接(链上确认消息里的浏览器明细等) */
 function renderMessageContent(content: string) {

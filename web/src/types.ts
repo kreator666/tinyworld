@@ -40,6 +40,9 @@ export interface DIDIdentity {
   equipped: Equipped
 }
 
+// 像素小屋/像素化展示共用的 Agent 状态语义
+export type AgentStatus = 'idle' | 'thinking' | 'waiting-sign' | 'signing' | 'confirming' | 'happy'
+
 export interface AIProfile {
   template: string // 人设模板
   personality: string // 自定义性格
@@ -75,6 +78,7 @@ export interface ChatSession {
   messages: Message[]
   selfAgent?: boolean // true = 自己的 Agent(走真实 agent/ 服务,不跑 mock 回复)
   agentTokenId?: number // 链上 Agent 的 tokenId(会话列表从链上读取时写入)
+  peerEquipped?: Equipped // 对方 Agent 的链上装备(用于像素小人展示)
 }
 
 export interface PlazaUser {
