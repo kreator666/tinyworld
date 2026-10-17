@@ -38,6 +38,11 @@ lerna-debug.log*
 *.sw?
 
 # OS files
+
+# Runtime generated files
+agent/runtime-skills/user/
+agent/data/
+agent/local_cache/
 .DS_Store
 Thumbs.db
 
