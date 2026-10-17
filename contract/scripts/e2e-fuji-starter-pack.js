@@ -6,7 +6,9 @@ require("dotenv").config();
 const { ethers } = require("hardhat");
 
 const PARTS = "0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267";
-const IDENTITY = "0x3ef5218e6D15b755c9bDC4298d0721b9886551eb";
+const IDENTITY = "0x38FE7970A66E98C6a1611951d1E7f5f510feE821"; // DIDIdentity v3 (PERMISSION_SKILL)
+// TODO: StarterPartClaim 仍指向旧 identity,本脚本在新 identity 下无法完成 claim 自动穿戴,
+//       如需跑通请先用新 identity 重新部署 StarterPartClaim 并更新 CLAIM 地址。
 const CLAIM = "0x3D98d0Ff048a82a387FDdfF0A4e10a1EF6FBe0f2";
 
 const RANGES = [

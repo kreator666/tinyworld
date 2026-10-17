@@ -79,9 +79,9 @@
 
 ### 大礼包 v2(2026-10-15):随机四件套 + 自动穿戴
 
-- **Fuji 当前权威地址**:DIDIdentity v2 `0x3ef5218e6D15b755c9bDC4298d0721b9886551eb`、
-  StarterPartClaim v2 `0x3D98d0Ff048a82a387FDdfF0A4e10a1EF6FBe0f2`(DIDParts 不变 0x884d…0267)。
-  旧 identity(0x386b…/0x15dC…)与旧 claim(0x03e5…/0x0DAb…)全部作废,minter 权限已撤销。
+- **Fuji 当前权威地址**:DIDIdentity v3 `0x38FE7970A66E98C6a1611951d1E7f5f510feE821`、
+  DIDParts `0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267`。StarterPartClaim v2 仍指向旧 identity,如需配合新 identity 需重新部署。
+  旧 identity(0x386b…/0x15dC…/0x3ef5…)与旧 claim(0x03e5…/0x0DAb…)全部作废,minter 权限已撤销。
 - DIDIdentity v2 语义变化:`equip` 放宽为 owner 或授权 operator(getApproved 单 token /
   isApprovedForAll),新增 `equipBatch` 一笔穿 4 槽;`unequip` 仍仅 owner。
 - `claimPack()`:从每槽前 8 件(1001-1008 等)各随机 1 件(blockhash 伪随机)铸造并自动穿戴;

@@ -3,7 +3,7 @@
 require("dotenv").config();
 const { ethers } = require("hardhat");
 
-const IDENTITY = "0x386b7Ec042659855386B25D70114C285F328eE65";
+const IDENTITY = "0x38FE7970A66E98C6a1611951d1E7f5f510feE821";
 const PARTS = "0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267";
 
 const identityAbi = require("../artifacts/src/DIDIdentity.sol/DIDIdentity.json").abi;

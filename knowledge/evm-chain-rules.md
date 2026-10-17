@@ -11,11 +11,11 @@
 | 合约 | Fuji (43113) | 主网 (43114) | 职责 |
 |------|-------------|-------------|------|
 | DIDParts | `0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267` | `0xa3fB106DD25c02bf18170d6657EdF4804bf5D924` | 装备 ERC-1155:注册表 + 铸造 + maxSupply 硬顶 |
-| DIDIdentity v2 | `0x3ef5218e6D15b755c9bDC4298d0721b9886551eb` | `0x0928B2F5a9F03792b994940b95Ba15654835A011` | DID ERC-721:身份 + 四槽穿戴托管 |
-| StarterPartClaim v2 | `0x3D98d0Ff048a82a387FDdfF0A4e10a1EF6FBe0f2` | `0x3510D466852a41Ed729Bbf2199b0B3743B627844` | 新手大礼包:随机四件 + 自动穿戴 |
+| DIDIdentity v3 | `0x38FE7970A66E98C6a1611951d1E7f5f510feE821` | `0xd04268d288b4981A40285e99fd42374D71f10949` | DID ERC-721:身份 + 四槽穿戴托管 + PERMISSION_SKILL |
+| StarterPartClaim v2 | `0x3D98d0Ff048a82a387FDdfF0A4e10a1EF6FBe0f2` | `0x3510D466852a41Ed729Bbf2199b0B3743B627844` | 新手大礼包(仍指向旧 identity,如需配合新 identity 需重新部署) |
 | PartsMarket | `0xA0323a6E825912736F2C7b7e64920c71d8d27A31` | `0xa5eF8B7b48f4b62c5834576b4C5CF5004B470377` | 铸造直售(原生币计价,价格未上主网) |
 
-**已作废(勿交互)**:Fuji 旧 identity `0x386b…`/`0x15dC…`、旧 claim `0x03e5…`/`0x0DAb…`;主网旧 identity `0xf9111CbC…f3fE`。
+**已作废(勿交互)**:Fuji 旧 identity `0x386b…`/`0x15dC…`/`0x3ef5…`、旧 claim `0x03e5…`/`0x0DAb…`;主网旧 identity `0xf9111CbC…f3fE`/`0x0928…`。
 主网另有 DIDReputation `0x319202A6…` / DIDValidation `0xfAEb8174…`(服役中,与装备经济无关)。
 
 ## 2. 权限模型(minter 体系)
