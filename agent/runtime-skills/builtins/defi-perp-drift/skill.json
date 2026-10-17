@@ -1,0 +1,20 @@
+{
+  "id": "defi-perp-drift",
+  "name": "Drift 永续",
+  "version": "1.1.0",
+  "description": "⚠️ 暂停服务:Drift 官方部署(devnet 与主网)已事实下线(最近数百笔交易全部被程序拒绝,Drift 已迁移至 Velocity 新程序),入金/开仓/平仓会失败;仅 drift_status 市场查询可用。待接入 Velocity 或 Drift 恢复后自动恢复。原本功能:主网永续交易,Circle USDC 保证金,单笔入金/名义额有硬顶",
+  "tools": [
+    "drift_deposit",
+    "drift_withdraw",
+    "drift_open",
+    "drift_close",
+    "drift_status"
+  ],
+  "permissions": [],
+  "scope": "owner",
+  "solanaOnly": true,
+  "protocol": "drift",
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

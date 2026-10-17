@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { parseUnits } from 'viem'
-import { getDb } from '../../db'
+import { getDb } from '../../../src/db'
 import {
   driftCalcBaseAmount,
   driftClosePosition,
@@ -14,9 +14,9 @@ import {
   driftWithdraw,
   isDriftConfigured,
   resolvePerpMarketIndex,
-} from '../../chain/drift'
-import { EXEC_CHAIN_KEY, MAX_PERP_DEPOSIT_USDC, MAX_PERP_NOTIONAL_USD, mainnetTxUrl } from '../../chain/solanaExec'
-import type { SkillDef } from '../registry'
+} from '../../../src/chain/drift'
+import { EXEC_CHAIN_KEY, MAX_PERP_DEPOSIT_USDC, MAX_PERP_NOTIONAL_USD, mainnetTxUrl } from '../../../src/chain/solanaExec'
+import type { SkillDef } from '../../../src/skills/registry'
 
 // ============================================================
 // 内置技能 defi-perp-drift:Solana 主网真实永续交易(Drift Protocol)。

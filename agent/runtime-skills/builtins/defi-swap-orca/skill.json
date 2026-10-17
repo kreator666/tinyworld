@@ -1,0 +1,17 @@
+{
+  "id": "defi-swap-orca",
+  "name": "Orca 兑换",
+  "version": "1.0.0",
+  "description": "经 Orca Whirlpool 在 Solana 上兑换 SOL↔USDC(当前不可用:Orca 程序未部署到 devnet,自托管部署后可重新启用)",
+  "tools": [
+    "propose_swap"
+  ],
+  "permissions": [],
+  "scope": "owner",
+  "solanaOnly": true,
+  "protocol": "orca",
+  "disabled": true,
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

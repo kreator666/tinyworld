@@ -1,0 +1,12 @@
+{
+  "id": "skill-creator",
+  "name": "技能生成器",
+  "version": "0.1.0",
+  "description": "允许 Agent owner 通过自然语言描述自动生成并安装 Python 技能(一期仅 owner 可用,二期由链上 PERMISSION_SKILL 控制)",
+  "tools": ["create_skill"],
+  "permissions": [],
+  "scope": "owner",
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
-import { getEquipment, getWalletAssets, loadPersona, isValidAddress } from '../../chain/persona'
-import { getNativePriceUsd } from '../../core/price'
-import { getChainContext } from '../../chain/registry'
-import type { SkillDef } from '../registry'
+import { getEquipment, getWalletAssets, loadPersona, isValidAddress } from '../../../src/chain/persona'
+import { getNativePriceUsd } from '../../../src/core/price'
+import { getChainContext } from '../../../src/chain/registry'
+import type { SkillDef } from '../../../src/skills/registry'
 
 // ============================================================
 // 内置技能 defi-quote(只读,无需链上权限):

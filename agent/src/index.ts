@@ -20,7 +20,7 @@ import { applyDbChainConfigs, applyDbChains } from './chain/registry'
 import { appendAssistantMessage } from './core/conversation'
 import { waitForTxReceipt, parseSwapAmountOut } from './chain/defi'
 import { ALL_CHAINS } from './config'
-import { SkillError, getInstalledSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill, ensureDefaultSkills, refreshProtocolCache } from './skills'
+import { SkillError, getInstalledSkills, getInstalledUserSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill, deleteUserSkill, ensureDefaultSkills, refreshProtocolCache, loadSkills, reloadSkills, removeUserSkillDir } from './skills'
 import { seedChainProtocols } from './skills/protocolSeeding'
 import { startScheduler, stopScheduler } from './core/scheduler'
 import { getInbox, recordSocialMessage } from './core/social'
@@ -34,9 +34,9 @@ import { broadcastSignedTx } from './chain/defi'
 import { SOL_MINT, usdcMintOf } from './chain/jupiter'
 import { solanaConnection, type FailoverConnection } from './chain/personaSolana'
 import { EXEC_CHAIN_KEY, MAINNET_EXPLORER, MAINNET_USDC_MINT, mainnetConnection, mainnetTxUrl } from './chain/solanaExec'
-import { executeProposal, recordDefiTask, describeSwapResult } from './skills/defi-swap'
-import { executeLendingProposal } from './skills/defi-lending'
-import { executeStakingProposal } from './skills/defi-staking'
+import { executeProposal, recordDefiTask, describeSwapResult } from '../runtime-skills/builtins/defi-swap'
+import { executeLendingProposal } from '../runtime-skills/builtins/defi-lending'
+import { executeStakingProposal } from '../runtime-skills/builtins/defi-staking'
 import type { Proposal } from './policy/engine'
 
 // ============================================================
@@ -588,6 +588,44 @@ app.delete('/agents/:tokenId/skills/:skillId', authRequired, async (c) => {
 })
 
 // ============================================================
+// 用户自定义技能管理(由 skill-creator 生成,仅 owner 可查看/删除)
+// ============================================================
+
+// 列出当前 Agent 已安装的用户生成技能
+app.get('/agents/:tokenId/user-skills', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const skills = await getInstalledUserSkills(chainKey, tokenId)
+    return c.json({ tokenId, skills })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 删除用户自定义技能:从 DB 卸载、删除物理目录、重载技能表并清空 Agent 缓存
+app.delete('/agents/:tokenId/user-skills/:skillId', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  const skillId = c.req.param('skillId')
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const removed = await deleteUserSkill(chainKey, tokenId, skillId)
+    if (!removed) return c.json({ error: `未找到用户技能 ${skillId}` }, 404)
+    removeUserSkillDir(skillId)
+    await reloadSkills()
+    await syncSkillsToDb()
+    invalidateAgent(chainKey, tokenId)
+    return c.json({ ok: true, skillId })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// ============================================================
 // 多对话管理(我的 Agent 助手页;社交场景的 /agents/:tokenId/chat 保留不动)
 // ============================================================
 
@@ -1064,6 +1102,8 @@ async function main() {
     await addAdmin(config.adminAddress, 'bootstrap')
     console.log(`[admin] 已引导首个管理员: ${config.adminAddress}`)
   }
+  // 从 runtime-skills/ 目录加载内置技能与用户技能,再同步清单到 DB
+  await loadSkills()
   await syncSkillsToDb()
   startScheduler() // M3:心跳驱动自主社交
   serve({ fetch: app.fetch, port: config.port }, (info) => {

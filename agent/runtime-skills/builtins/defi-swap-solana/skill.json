@@ -1,0 +1,17 @@
+{
+  "id": "defi-swap-solana",
+  "name": "Solana 兑换",
+  "version": "1.1.0",
+  "description": "经 Jupiter 在 Solana 上兑换 SOL↔USDC。执行模式遵循 Agent 设置:hot_wallet(agent 热钱包执行)/ user_wallet(默认,主人 Phantom 签名,前端广播)",
+  "tools": [
+    "propose_swap"
+  ],
+  "permissions": [],
+  "scope": "owner",
+  "solanaOnly": true,
+  "chainFeature": "jupiterApi",
+  "protocol": "jupiter",
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

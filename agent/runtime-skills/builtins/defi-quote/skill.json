@@ -1,0 +1,16 @@
+{
+  "id": "defi-quote",
+  "name": "行情查询",
+  "version": "0.2.0",
+  "description": "查链上资产、查自己的装备、查原生币美元价格(只读)",
+  "tools": [
+    "get_native_price",
+    "get_my_equipment",
+    "get_wallet_assets"
+  ],
+  "permissions": [],
+  "scope": "owner",
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

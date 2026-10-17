@@ -16,6 +16,12 @@ import { isMeteoraPoolConfigured } from '../chain/meteora'
 
 export type AnyTool = ReturnType<typeof createTool>
 
+/** 技能运行时类型 */
+export type SkillRuntime = 'typescript' | 'python' | 'mcp'
+
+/** 技能来源 */
+export type SkillSource = 'builtin' | 'user'
+
 /** 技能清单(对应设计文档里的 skill.json;M2 直接以 TS 对象维护) */
 export interface SkillManifest {
   id: string
@@ -41,6 +47,12 @@ export interface SkillManifest {
   protocolRequired?: boolean
   /** 清单层禁用(如协议程序未部署到当前环境):不出现在清单/安装/工具集,工具 execute 仍兜底提示 */
   disabled?: boolean
+  /** 技能运行时类型:typescript=同进程 TS 技能;python=MCP stdio Python 技能;mcp=外部 MCP server */
+  runtime?: SkillRuntime
+  /** 入口文件(相对技能目录),缺省 index.ts / index.py / server.ts */
+  entry?: string
+  /** 技能来源:builtin=系统内置;user=用户通过聊天生成 */
+  source?: SkillSource
 }
 
 export interface SkillDef {
@@ -62,6 +74,14 @@ const builtins = new Map<string, SkillDef>()
 
 export function registerSkill(def: SkillDef): void {
   builtins.set(def.manifest.id, def)
+}
+
+export function unregisterSkill(skillId: string): boolean {
+  return builtins.delete(skillId)
+}
+
+export function clearSkills(): void {
+  builtins.clear()
 }
 
 // ============================================================
@@ -133,7 +153,7 @@ export function listSkills(chainKey: string): SkillManifest[] {
  *  (自 2026-09-25 起拒绝所有用户交易,101 InstructionFallbackNotFound,任何公共 SDK
  *  都一样;Drift 已迁移至闭源 Velocity 程序)。自动装上会让用户对话时必踩链上错误;
  *  待接入 Velocity 或链侧恢复后再加入,届时可手动安装测试(读操作仍可用)。 */
-export const DEFAULT_SKILL_IDS = ['social-greeter', 'defi-quote', 'defi-swap', 'defi-lending', 'defi-swap-meteora', 'owner-tuning']
+export const DEFAULT_SKILL_IDS = ['social-greeter', 'defi-quote', 'defi-swap', 'defi-lending', 'defi-swap-meteora', 'owner-tuning', 'skill-creator']
 
 /**
  * 确保默认技能已安装(幂等):比对 DB 里现有安装记录,只补缺口。
@@ -185,6 +205,19 @@ export async function getInstalledSkills(chainKey: string, tokenId: number): Pro
     `SELECT s.id, s.name, s.version FROM agent_skills a
      JOIN skills s ON s.id = a.skill_id
      WHERE a.chain_key = $1 AND a.token_id = $2
+     ORDER BY a.installed_at`,
+    [chainKey, tokenId],
+  )
+  return res.rows
+}
+
+/** 该 Agent 已安装的“用户自定义”技能(source='user') */
+export async function getInstalledUserSkills(chainKey: string, tokenId: number): Promise<InstalledSkill[]> {
+  const db = await getDb()
+  const res = await db.query<InstalledSkill>(
+    `SELECT s.id, s.name, s.version FROM agent_skills a
+     JOIN skills s ON s.id = a.skill_id
+     WHERE a.chain_key = $1 AND a.token_id = $2 AND s.manifest->>'source' = 'user'
      ORDER BY a.installed_at`,
     [chainKey, tokenId],
   )
@@ -260,6 +293,27 @@ export async function uninstallSkill(chainKey: string, tokenId: number, skillId:
     skillId,
   ])
   return res.rows.length > 0
+}
+
+/**
+ * 删除用户自定义技能:校验它确实是 source='user' 且已安装,从 DB 卸载并从内存注册表移除。
+ * 返回 false 表示该 Agent 未安装此技能;抛 SkillError 表示不是用户技能(禁止删除内置技能)。
+ */
+export async function deleteUserSkill(chainKey: string, tokenId: number, skillId: string): Promise<boolean> {
+  const db = await getDb()
+  const res = await db.query<{ source: string }>(
+    `SELECT s.manifest->>'source' as source FROM agent_skills a
+     JOIN skills s ON s.id = a.skill_id
+     WHERE a.chain_key = $1 AND a.token_id = $2 AND a.skill_id = $3`,
+    [chainKey, tokenId, skillId],
+  )
+  if (res.rows.length === 0) return false
+  if (res.rows[0].source !== 'user') {
+    throw new SkillError(`技能 ${skillId} 是系统内置技能,不能通过此接口删除`, 400)
+  }
+  await uninstallSkill(chainKey, tokenId, skillId)
+  unregisterSkill(skillId)
+  return true
 }
 
 /** 该 Agent 当前可用的工具 = 已安装技能的工具合并,并按对话模式过滤

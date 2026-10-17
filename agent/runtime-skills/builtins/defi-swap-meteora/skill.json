@@ -1,0 +1,17 @@
+{
+  "id": "defi-swap-meteora",
+  "name": "Meteora 兑换",
+  "version": "1.2.0",
+  "description": "经 Meteora DLMM 在 Solana 主网真实兑换 SOL↔USDC(小金额)。执行模式遵循 Agent 设置:hot_wallet(agent 主网热钱包执行)/ user_wallet(默认,主人 Phantom 签名,前端广播)",
+  "tools": [
+    "propose_swap"
+  ],
+  "permissions": [],
+  "scope": "owner",
+  "solanaOnly": true,
+  "chainFeature": "meteoraPool",
+  "protocol": "meteora",
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

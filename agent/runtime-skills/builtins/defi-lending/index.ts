@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { formatEther, formatUnits, parseEther, parseUnits, type Address } from 'viem'
-import { getDb } from '../../db'
+import { getDb } from '../../../src/db'
 import {
   getATokenBalance,
   getLendingWalletAddress,
@@ -18,19 +18,19 @@ import {
   withdrawNative,
   nativeGateway,
   type ReserveInfo,
-} from '../../chain/aave'
-import { buildUnsignedErc20Approve } from '../../chain/defi'
-import { getNativeBalance, getTokenBalance, hasAgentKey } from '../../chain/defi'
-import { getChainContext, chainKeyByChainId } from '../../chain/registry'
-import { getNativePriceUsd } from '../../core/price'
-import { getSwapMode } from '../../core/settings'
-import { createApproval } from '../../core/approvals'
-import { evaluateProposal, type Proposal } from '../../policy/engine'
-import { setPendingSignAction } from '../../core/agent'
-import { loadPersona } from '../../chain/persona'
+} from '../../../src/chain/aave'
+import { buildUnsignedErc20Approve } from '../../../src/chain/defi'
+import { getNativeBalance, getTokenBalance, hasAgentKey } from '../../../src/chain/defi'
+import { getChainContext, chainKeyByChainId } from '../../../src/chain/registry'
+import { getNativePriceUsd } from '../../../src/core/price'
+import { getSwapMode } from '../../../src/core/settings'
+import { createApproval } from '../../../src/core/approvals'
+import { evaluateProposal, type Proposal } from '../../../src/policy/engine'
+import { setPendingSignAction } from '../../../src/core/agent'
+import { loadPersona } from '../../../src/chain/persona'
 import { recordDefiTask } from '../defi-swap'
-import type { UnsignedTx } from '../../chain/defi'
-import type { SkillDef } from '../registry'
+import type { UnsignedTx } from '../../../src/chain/defi'
+import type { SkillDef } from '../../../src/skills/registry'
 
 // ============================================================
 // 内置技能 defi-lending(M4+):Aave v3 借贷理财

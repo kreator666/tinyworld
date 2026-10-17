@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
-import { addOwnerFact, FACT_CATEGORIES, listOwnerFacts, removeOwnerFact } from '../../core/ownerFacts'
-import { invalidateAgent } from '../../core/agent'
-import type { SkillDef } from '../registry'
+import { addOwnerFact, FACT_CATEGORIES, listOwnerFacts, removeOwnerFact } from '../../../src/core/ownerFacts'
+import { invalidateAgent } from '../../../src/core/agent'
+import type { SkillDef } from '../../../src/skills/registry'
 
 // ============================================================
 // 内置技能 owner-tuning(M5 调教,scope=owner 仅主人对话):

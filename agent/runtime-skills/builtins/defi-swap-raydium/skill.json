@@ -1,0 +1,17 @@
+{
+  "id": "defi-swap-raydium",
+  "name": "Raydium 兑换",
+  "version": "1.0.0",
+  "description": "经 Raydium CPMM 在 Solana 上兑换 SOL↔USDC(当前不可用:Raydium 程序未部署到 devnet,自托管部署后可重新启用)",
+  "tools": [
+    "propose_swap"
+  ],
+  "permissions": [],
+  "scope": "owner",
+  "solanaOnly": true,
+  "protocol": "raydium",
+  "disabled": true,
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

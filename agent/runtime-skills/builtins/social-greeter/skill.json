@@ -1,0 +1,17 @@
+{
+  "id": "social-greeter",
+  "name": "主动社交",
+  "version": "0.1.0",
+  "description": "向新铸造 Agent 的主人主动打招呼、破冰聊天(M2 只产出草稿)",
+  "tools": [
+    "list_new_agents",
+    "draft_greeting"
+  ],
+  "permissions": [
+    "social"
+  ],
+  "scope": "all",
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

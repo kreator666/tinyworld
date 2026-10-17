@@ -1,0 +1,16 @@
+{
+  "id": "owner-tuning",
+  "name": "主人调教",
+  "version": "0.1.0",
+  "description": "与主人聊天中学习主人的喜好、习惯和个人信息(带隐私分级:可对外/概略/仅主人),主人可查看或要求遗忘;学到的特点会在社交对话中自然体现,敏感信息(全名、精确地址等)不会对外泄露。",
+  "tools": [
+    "remember_owner_fact",
+    "list_owner_facts",
+    "forget_owner_fact"
+  ],
+  "permissions": [],
+  "scope": "owner",
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

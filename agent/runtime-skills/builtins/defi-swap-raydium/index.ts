@@ -2,16 +2,16 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { parseUnits } from 'viem'
-import { getDb } from '../../db'
-import { SOL_MINT, usdcMintOf } from '../../chain/jupiter'
-import { quoteOrcaSwap } from '../../chain/orca'
-import type { SkillDef } from '../registry'
+import { getDb } from '../../../src/db'
+import { SOL_MINT, usdcMintOf } from '../../../src/chain/jupiter'
+import { quoteRaydiumSwap } from '../../../src/chain/raydium'
+import type { SkillDef } from '../../../src/skills/registry'
 
 // ============================================================
-// 内置技能 defi-swap-orca(当前整体禁用)
-// Orca Whirlpool 程序未部署到 devnet(devnet 定期清理已移除),清单层 disabled=true 隐藏,
-// 工具 execute 兜底返回"未部署"提示。报价函数 quoteOrcaSwap 与下方执行链路保留,
-// 日后若自托管部署 Orca 程序,撤销 disabled 并恢复 enabled 判定即可重新启用。
+// 内置技能 defi-swap-raydium(当前整体禁用)
+// Raydium CPMM 程序未部署到 devnet(devnet 定期清理已移除),清单层 disabled=true 隐藏,
+// 工具 execute 兜底返回"未部署"提示。报价函数 quoteRaydiumSwap 与下方执行链路保留,
+// 日后若自托管部署 Raydium 程序,撤销 disabled 并恢复 enabled 判定即可重新启用。
 // ============================================================
 
 const SLIPPAGE_BPS = 100
@@ -36,13 +36,13 @@ async function recordDefiTask(
 }
 
 function makeProposeSwap(chainKey: string, tokenId: number) {
-  // Orca Whirlpool 程序未部署到 devnet(devnet 定期清理已移除),技能整体禁用;
-  // 若日后自托管部署 Orca 程序,把这里改回按 usdcMint/agentSolanaKey 判定即可重新启用
+  // Raydium CPMM 程序未部署到 devnet(devnet 定期清理已移除),技能整体禁用;
+  // 若日后自托管部署 Raydium 程序,把这里改回按 usdcMint/agentSolanaKey 判定即可重新启用
   const enabled = false
-  const disabledReason = 'Orca Whirlpool 程序未部署到 devnet(devnet 定期清理已移除),暂不可用;devnet 兑换请使用 Meteora 技能'
+  const disabledReason = 'Raydium CPMM 程序未部署到 devnet(devnet 定期清理已移除),暂不可用;devnet 兑换请使用 Meteora 技能'
   return createTool({
     id: 'propose_swap',
-    description: '发起一笔 Orca Whirlpool 兑换(SOL↔USDC)。当前 devnet 不可用:Orca 程序已被清理。',
+    description: '发起一笔 Raydium CPMM 兑换(SOL↔USDC)。当前 devnet 不可用:Raydium 程序已被清理。',
     inputSchema: z.object({
       tokenIn: z.enum(['SOL', 'USDC']).describe('支付币种:SOL 或 USDC'),
       tokenOut: z.enum(['SOL', 'USDC']).describe('目标币种:SOL 或 USDC'),
@@ -63,7 +63,7 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
         const amountIn = parseUnits(context.amountIn, DECIMALS[tokenIn])
         if (amountIn <= 0n) return { result: '执行失败:amountIn 必须大于 0' }
 
-        const quote = await quoteOrcaSwap(
+        const quote = await quoteRaydiumSwap(
           chainKey,
           mintOf(chainKey, tokenIn),
           mintOf(chainKey, tokenOut),
@@ -76,10 +76,10 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
           chainKey,
           tokenId,
           { action: 'swap', params: { tokenIn, tokenOut, amountIn: amountIn.toString() }, reason: context.reason },
-          { txHash: 'orca-devnet-stub', amountOut },
+          { txHash: 'raydium-devnet-stub', amountOut },
         )
         return {
-          result: `Orca devnet 报价成功:${context.amountIn} ${tokenIn} → 约 ${amountOut} ${tokenOut}(池子 ${quote.poolId ?? 'unknown'})。注意:devnet 流动性有限,真实执行功能待完善。`,
+          result: `Raydium devnet 报价成功:${context.amountIn} ${tokenIn} → 约 ${amountOut} ${tokenOut}(池子 ${quote.poolId ?? 'unknown'})。注意:devnet 流动性有限,真实执行功能待完善。`,
         }
       } catch (e) {
         return { result: `执行失败:${e instanceof Error ? e.message : String(e)}` }
@@ -88,12 +88,12 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
   })
 }
 
-export const defiSwapOrca: SkillDef = {
+export const defiSwapRaydium: SkillDef = {
   manifest: {
-    id: 'defi-swap-orca',
-    name: 'Orca 兑换',
+    id: 'defi-swap-raydium',
+    name: 'Raydium 兑换',
     version: '1.0.0',
-    description: '经 Orca Whirlpool 在 Solana 上兑换 SOL↔USDC(当前不可用:Orca 程序未部署到 devnet,自托管部署后可重新启用)',
+    description: '经 Raydium CPMM 在 Solana 上兑换 SOL↔USDC(当前不可用:Raydium 程序未部署到 devnet,自托管部署后可重新启用)',
     tools: ['propose_swap'],
     permissions: [],
     scope: 'owner',

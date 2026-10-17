@@ -1,0 +1,18 @@
+{
+  "id": "defi-swap",
+  "name": "兑换执行",
+  "version": "0.4.0",
+  "description": "AVAX↔USDC、AVAX↔USDT 白名单兑换(USDT 仅 Fuji)。支持两种执行模式:hot_wallet(Agent 热钱包自动执行);user_wallet(Agent 组装交易,主人钱包签名,Agent 广播)。",
+  "tools": [
+    "propose_swap"
+  ],
+  "permissions": [
+    "defi"
+  ],
+  "scope": "owner",
+  "evmOnly": true,
+  "protocol": "dex",
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

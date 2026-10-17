@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
-import { getDb } from '../../db'
-import { listRecentAgents, loadPersona } from '../../chain/persona'
-import { complete } from '../../core/llm'
-import type { SkillDef } from '../registry'
+import { getDb } from '../../../src/db'
+import { listRecentAgents, loadPersona } from '../../../src/chain/persona'
+import { complete } from '../../../src/core/llm'
+import type { SkillDef } from '../../../src/skills/registry'
 
 // ============================================================
 // 内置技能 social-greeter(需要链上 social 权限):

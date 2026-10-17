@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { formatEther, formatUnits, parseEther, parseUnits, type Address } from 'viem'
-import { getDb } from '../../db'
+import { getDb } from '../../../src/db'
 import {
   broadcastSignedTx,
   buildUnsignedErc20Approve,
@@ -15,15 +15,15 @@ import {
   hasAgentKey,
   quoteSwap,
   type UnsignedTx,
-} from '../../chain/defi'
-import { getChainContext, chainKeyByChainId } from '../../chain/registry'
-import { getNativePriceUsd } from '../../core/price'
-import { createApproval } from '../../core/approvals'
-import { evaluateProposal, type Proposal } from '../../policy/engine'
-import { getSwapMode } from '../../core/settings'
-import { setPendingSignAction } from '../../core/agent'
-import { loadPersona } from '../../chain/persona'
-import type { SkillDef } from '../registry'
+} from '../../../src/chain/defi'
+import { getChainContext, chainKeyByChainId } from '../../../src/chain/registry'
+import { getNativePriceUsd } from '../../../src/core/price'
+import { createApproval } from '../../../src/core/approvals'
+import { evaluateProposal, type Proposal } from '../../../src/policy/engine'
+import { getSwapMode } from '../../../src/core/settings'
+import { setPendingSignAction } from '../../../src/core/agent'
+import { loadPersona } from '../../../src/chain/persona'
+import type { SkillDef } from '../../../src/skills/registry'
 
 // ============================================================
 // 内置技能 defi-swap(M4+):两个方向
