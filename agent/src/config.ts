@@ -75,7 +75,7 @@ const CHAINS: Record<string, ChainConfig> = {
     chainId: 43113,
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
     explorer: 'https://testnet.snowtrace.io',
-    identityAddress: '0x3ef5218e6D15b755c9bDC4298d0721b9886551eb', // 2026-10 大礼包 v2 重部署(旧 0x386b…已作废)
+    identityAddress: '0x38FE7970A66E98C6a1611951d1E7f5f510feE821', // 2026-10 PERMISSION_SKILL 重部署
     partsAddress: '0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267',
     market: { address: '0xA0323a6E825912736F2C7b7e64920c71d8d27A31' }, // 2026-10 铸造直售市场(仅上架普通装 48 件,价格链上为准)
     nativePriceId: 'avalanche-2', // defi-quote 行情技能:原生币 CoinGecko id
@@ -102,7 +102,7 @@ const CHAINS: Record<string, ChainConfig> = {
     rpc: 'https://avalanche-c-chain-rpc.publicnode.com',
     rpcFallbacks: ['https://1rpc.io/avax/c'],
     explorer: 'https://subnets.avax.network/c-chain',
-    identityAddress: '0x0928B2F5a9F03792b994940b95Ba15654835A011', // 2026-10 大礼包 v2 重部署(旧 0xf911…已作废)
+    identityAddress: '0xd04268d288b4981A40285e99fd42374D71f10949', // 2026-10 PERMISSION_SKILL 重部署
     partsAddress: '0xa3fB106DD25c02bf18170d6657EdF4804bf5D924',
     // BENQI Liquid Staking:官方文档 docs.benqi.fi/resources/contracts/liquid-staking + 主网 RPC 双源核实(2026-10)
     // 质押合约与 sAVAX 代币是同一双用途合约(submit() payable 铸 sAVAX;redeem 进 15 天冷却)
