@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IDIDIdentity} from "./interfaces/IDIDIdentity.sol";
 
 /// @title DIDReputation
@@ -8,7 +11,7 @@ import {IDIDIdentity} from "./interfaces/IDIDIdentity.sol";
 /// - 反馈按 (agentId, clientAddress) 分桶存储，feedbackIndex 为桶内序号
 /// - endpoint / feedbackURI / feedbackHash 只发事件不落存储（省 gas）；读链由事件索引承担
 /// - 提交者不能是 agent owner 或其授权 operator（防自评）
-contract DIDReputation {
+contract DIDReputation is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice 单条反馈（ERC-8004 Feedback 结构；endpoint/feedbackURI/feedbackHash 事件专用）
     struct Feedback {
         int128 value;
@@ -23,7 +26,7 @@ contract DIDReputation {
 
     uint8 public constant MAX_VALUE_DECIMALS = 18;
 
-    IDIDIdentity public immutable identityRegistry;
+    IDIDIdentity public identityRegistry;
 
     /// @dev agentId => client => 反馈桶
     mapping(uint256 => mapping(address => Feedback[])) private _feedbacks;
@@ -54,9 +57,17 @@ contract DIDReputation {
         uint256 indexed agentId, address indexed clientAddress, uint128 indexed feedbackIndex, string responseURI, bytes32 responseHash
     );
 
-    constructor(address identityRegistry_) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address identityRegistry_) public initializer {
+        __Ownable_init(msg.sender);
         identityRegistry = IDIDIdentity(identityRegistry_);
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     // ==================================================================
     // 写路径（giveFeedback 保持轻量：一次 push + 一次事件）
@@ -233,4 +244,7 @@ contract DIDReputation {
     function _strEq(string storage a, string memory b) internal view returns (bool) {
         return keccak256(bytes(a)) == keccak256(bytes(b));
     }
+
+    /// @dev 存储槽位保留，未来追加状态变量时避免布局冲突
+    uint256[50] private __gap;
 }

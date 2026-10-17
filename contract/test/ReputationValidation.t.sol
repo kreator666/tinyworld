@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {BaseTest} from "./Base.t.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {DIDReputation} from "../src/DIDReputation.sol";
 import {DIDValidation} from "../src/DIDValidation.sol";
 
@@ -16,8 +17,24 @@ contract ReputationValidationTest is BaseTest {
     function setUp() public override {
         super.setUp();
         tokenId = _mintDID(alice, "alice");
-        reputation = new DIDReputation(address(identity));
-        validation = new DIDValidation(address(identity));
+
+        DIDReputation reputationImpl = new DIDReputation();
+        reputation = DIDReputation(
+            address(
+                new ERC1967Proxy(
+                    address(reputationImpl), abi.encodeCall(DIDReputation.initialize, (address(identity)))
+                )
+            )
+        );
+
+        DIDValidation validationImpl = new DIDValidation();
+        validation = DIDValidation(
+            address(
+                new ERC1967Proxy(
+                    address(validationImpl), abi.encodeCall(DIDValidation.initialize, (address(identity)))
+                )
+            )
+        );
     }
 
     // ---------- Reputation ----------

@@ -75,9 +75,10 @@ const CHAINS: Record<string, ChainConfig> = {
     chainId: 43113,
     rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
     explorer: 'https://testnet.snowtrace.io',
-    identityAddress: '0x38FE7970A66E98C6a1611951d1E7f5f510feE821', // 2026-10 PERMISSION_SKILL 重部署
-    partsAddress: '0x884dA9E2E1681Ada159e5DA0ddBb19bc858E0267',
-    market: { address: '0xA0323a6E825912736F2C7b7e64920c71d8d27A31' }, // 2026-10 铸造直售市场(仅上架普通装 48 件,价格链上为准)
+    identityAddress: '0xd6eB40E8D9e333f2b721bBd419c6CB40B55325Dd', // 2026-10 UUPS 代理
+    partsAddress: '0x0E14D4227D7775F4f4Ee9f4493826D5c4eb81a4b',
+    partsClaim: '0x940d4F7edaCB067f780Da2e59177772D73Aa751B',
+    market: { address: '0x16140ee819539639f434FC32DfdEf392103B0703' }, // 2026-10 UUPS 代理
     nativePriceId: 'avalanche-2', // defi-quote 行情技能:原生币 CoinGecko id
     nativeGatePair: 'AVAX_USDT', // Gate.io 回退源交易对
     defi: {
@@ -102,12 +103,13 @@ const CHAINS: Record<string, ChainConfig> = {
     rpc: 'https://avalanche-c-chain-rpc.publicnode.com',
     rpcFallbacks: ['https://1rpc.io/avax/c'],
     explorer: 'https://subnets.avax.network/c-chain',
-    identityAddress: '0xd04268d288b4981A40285e99fd42374D71f10949', // 2026-10 PERMISSION_SKILL 重部署
-    partsAddress: '0xa3fB106DD25c02bf18170d6657EdF4804bf5D924',
+    identityAddress: '0x72A1Ae8dD45f87c597d2C2450f7f200c81fc463c', // 2026-10 UUPS 代理
+    partsAddress: '0xb21652D0E6B3225d83B3aEB86f2185b8A6519976',
+    partsClaim: '0x827350934d7632a9f7b14BeB2fB6716b61D1bD7b',
     // BENQI Liquid Staking:官方文档 docs.benqi.fi/resources/contracts/liquid-staking + 主网 RPC 双源核实(2026-10)
     // 质押合约与 sAVAX 代币是同一双用途合约(submit() payable 铸 sAVAX;redeem 进 15 天冷却)
     benqi: { staking: '0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE', sAvax: '0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE' },
-    market: { address: '0xa5eF8B7b48f4b62c5834576b4C5CF5004B470377' }, // 铸造直售(价格未上架,owner 定)
+    market: { address: '0x57720BEb1Bf1fe0Fa896CBdb2f683098d4fDaB61' }, // 2026-10 UUPS 代理
     nativePriceId: 'avalanche-2',
     nativeGatePair: 'AVAX_USDT',
     defi: {

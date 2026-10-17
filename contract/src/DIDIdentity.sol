@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {ERC721Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {IDIDIdentity} from "./interfaces/IDIDIdentity.sol";
 import {IDIDParts} from "./interfaces/IDIDParts.sol";
@@ -25,15 +27,17 @@ import {Slots} from "./libraries/Slots.sol";
 /// - AI Agent 扩展点：操作员授权（权限位）、人格配置链上指针（URI + 内容哈希）、模块注册表；
 ///   未来 AI 模块以独立合约经注册表接入，核心合约零改动（ERC-6551 TBA 对 ERC-721 天然可用）
 contract DIDIdentity is
-    ERC721,
-    Ownable,
-    ReentrancyGuard,
+    Initializable,
+    ERC721Upgradeable,
+    OwnableUpgradeable,
+    ReentrancyGuardTransient,
+    UUPSUpgradeable,
     IERC1155Receiver,
     IERC4906,
     IDIDIdentity,
     IERC5192,
     IERC8004Identity,
-    EIP712
+    EIP712Upgradeable
 {
     /// @dev AI 操作员权限位：更新人格配置
     uint256 public constant PERMISSION_PERSONA = 1 << 0;
@@ -74,6 +78,9 @@ contract DIDIdentity is
     /// @dev ERC-8004：agentId => agent 钱包地址（转账时自动清零）
     mapping(uint256 => address) private _agentWallet;
 
+    /// @dev 存储槽位保留，未来追加状态变量时避免布局冲突
+    uint256[50] private __gap;
+
     /// @dev ERC-8004 保留 metadataKey：只能通过带签名的 setAgentWallet 设置
     string public constant AGENT_WALLET_KEY = "agentWallet";
 
@@ -109,14 +116,24 @@ contract DIDIdentity is
     event PersonaUpdated(uint256 indexed tokenId, string uri, bytes32 contentHash);
     event ModuleRegistered(bytes32 indexed moduleId, address indexed impl);
 
-    constructor(string memory name_, string memory symbol_, string memory baseTokenURI_, string memory contractURI_)
-        ERC721(name_, symbol_)
-        Ownable(msg.sender)
-        EIP712("DIDAI", "1")
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(string memory name_, string memory symbol_, string memory baseTokenURI_, string memory contractURI_)
+        public
+        initializer
     {
+        __ERC721_init(name_, symbol_);
+        __Ownable_init(msg.sender);
+        __EIP712_init("DIDAI", "1");
+
         _baseTokenURI = baseTokenURI_;
         _contractURI = contractURI_;
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     // ==================================================================
     // 身份铸造
@@ -474,7 +491,7 @@ contract DIDIdentity is
     // ERC-165
     // ==================================================================
 
-    function supportsInterface(bytes4 interfaceId) public view override(ERC721, IERC165) returns (bool) {
+    function supportsInterface(bytes4 interfaceId) public view override(ERC721Upgradeable, IERC165) returns (bool) {
         return interfaceId == type(IERC5192).interfaceId // 0xb45a3c0e
             || interfaceId == type(IERC4906).interfaceId // 0x49064906
             || interfaceId == type(IERC8004Identity).interfaceId // ERC-8004 Identity Registry

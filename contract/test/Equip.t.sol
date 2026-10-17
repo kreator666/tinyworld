@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {BaseTest} from "./Base.t.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {DIDIdentity} from "../src/DIDIdentity.sol";
 import {IDIDIdentity} from "../src/interfaces/IDIDIdentity.sol";
 import {DIDParts} from "../src/DIDParts.sol";
@@ -95,7 +96,14 @@ contract EquipTest is BaseTest {
     }
 
     function test_equip_unapprovedCollection_reverts() public {
-        DIDParts parts2 = new DIDParts("https://example/{id}.json");
+        DIDParts parts2Impl = new DIDParts();
+        DIDParts parts2 = DIDParts(
+            address(
+                new ERC1967Proxy(
+                    address(parts2Impl), abi.encodeCall(DIDParts.initialize, ("https://example/{id}.json"))
+                )
+            )
+        );
         parts2.registerPart(HEAD_1, Slots.HEAD, 0, 100);
         parts2.mintPart(alice, HEAD_1, 1);
         vm.prank(alice);
@@ -193,7 +201,14 @@ contract EquipTest is BaseTest {
 
     /// 非白名单 1155 直接打入合约会被拒收（防垃圾 token 卡死）
     function test_direct1155Transfer_fromUnapprovedCollection_reverts() public {
-        DIDParts parts2 = new DIDParts("https://example/{id}.json");
+        DIDParts parts2Impl = new DIDParts();
+        DIDParts parts2 = DIDParts(
+            address(
+                new ERC1967Proxy(
+                    address(parts2Impl), abi.encodeCall(DIDParts.initialize, ("https://example/{id}.json"))
+                )
+            )
+        );
         parts2.registerPart(HEAD_1, Slots.HEAD, 0, 100);
         parts2.mintPart(alice, HEAD_1, 1);
 

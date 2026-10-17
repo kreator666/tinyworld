@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IDIDParts} from "./interfaces/IDIDParts.sol";
 import {IDIDIdentity} from "./interfaces/IDIDIdentity.sol";
 
@@ -11,11 +14,9 @@ import {IDIDIdentity} from "./interfaces/IDIDIdentity.sol";
 /// - 由 owner 授予 DIDParts minter 权限后代铸;用户自签、自付 gas
 /// - 自动穿戴:identity 经 getApproved 授权本合约后,低层 call equipBatch 尝试一键穿上;
 ///   未授权/未批准托管时穿戴失败不 revert(装备已在用户钱包,前端引导手动穿)
-/// - 本合约无 owner、无升级、无其他写函数,即使被滥用也只会铸造池内 32 个 id,
-///   且受 DIDParts 的 maxSupply 硬顶约束
-contract StarterPartClaim {
-    IDIDParts public immutable parts;
-    IDIDIdentity public immutable identity;
+contract StarterPartClaim is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+    IDIDParts public parts;
+    IDIDIdentity public identity;
 
     /// @notice 每槽随机池大小:起始 id 起连续 RANGE 件
     uint256 private constant RANGE = 8;
@@ -27,10 +28,18 @@ contract StarterPartClaim {
 
     event StarterPackClaimed(address indexed account, uint256[4] partIds, bool dressed);
 
-    constructor(address parts_, address identity_) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address parts_, address identity_) public initializer {
+        __Ownable_init(msg.sender);
         parts = IDIDParts(parts_);
         identity = IDIDIdentity(identity_);
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     /// @notice 领取新手大礼包:随机 4 件套铸到用户钱包,并尝试自动穿到 DID 上
     function claimPack() external {
@@ -71,4 +80,6 @@ contract StarterPartClaim {
     function _slotBases() internal pure returns (uint256[4] memory) {
         return [uint256(1001), uint256(2001), uint256(3001), uint256(4001)];
     }
+
+    uint256[50] private __gap;
 }

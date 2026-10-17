@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IDIDParts} from "./interfaces/IDIDParts.sol";
 
 /// @title PartsMarket
 /// @notice 装备铸造直售市场(P2C):平台铸新品卖给用户,原生币计价(chain-agnostic,不绑定任何链),
 /// maxSupply 硬顶由 DIDParts.mintPart 内部保证(总量超限整笔回滚),天然防超卖。
 /// 价格一律链上为准(listPriceOf);owner 上架/改价/下架/提款,买家精确等值支付(不找零,防误付)。
-contract PartsMarket {
-    IDIDParts public immutable parts;
-    address public owner;
+contract PartsMarket is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+    IDIDParts public parts;
 
     /// @notice partId => 原生币 wei 单价;0 = 未上架
     mapping(uint256 id => uint256 price) public listPrice;
@@ -25,15 +27,17 @@ contract PartsMarket {
     event PriceUpdated(uint256 indexed id, uint256 price);
     event Sold(address indexed buyer, uint256 indexed id, uint256 quantity, uint256 price);
 
-    constructor(address parts_) {
-        parts = IDIDParts(parts_);
-        owner = msg.sender;
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
     }
 
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner(msg.sender);
-        _;
+    function initialize(address parts_) public initializer {
+        __Ownable_init(msg.sender);
+        parts = IDIDParts(parts_);
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     // ------------------------------------------------------------------
     // 管理:上架/改价/下架
@@ -74,7 +78,7 @@ contract PartsMarket {
     /// @notice 提取合约全部销售所得到 owner
     function withdraw() external onlyOwner {
         uint256 amount = address(this).balance;
-        (bool ok,) = owner.call{value: amount}("");
+        (bool ok,) = payable(owner()).call{value: amount}("");
         if (!ok) revert TransferFailed();
     }
 
@@ -83,9 +87,6 @@ contract PartsMarket {
         return listPrice[id];
     }
 
-    /// @notice 转让管理权(对齐 OZ Ownable 语义,当前环境用不到多签,保留口子)
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert NotOwner(newOwner);
-        owner = newOwner;
-    }
+    /// @dev 存储槽位保留，未来追加状态变量时避免布局冲突
+    uint256[50] private __gap;
 }

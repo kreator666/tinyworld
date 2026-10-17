@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IDIDIdentity} from "./interfaces/IDIDIdentity.sol";
 
 /// @title DIDValidation
@@ -8,7 +11,7 @@ import {IDIDIdentity} from "./interfaces/IDIDIdentity.sol";
 /// - validationRequest 由 agent owner/operator 发起，指定 validator
 /// - validationResponse 仅原请求的 validator 可提交，可多次调用更新结论
 /// - 以 requestHash 为索引串联请求与响应（response 字段 0=未响应，1=通过，2=否决）
-contract DIDValidation {
+contract DIDValidation is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice 单条验证记录（请求 + 最新响应）
     struct Validation {
         uint256 agentId;
@@ -22,7 +25,7 @@ contract DIDValidation {
         string tag;
     }
 
-    IDIDIdentity public immutable identityRegistry;
+    IDIDIdentity public identityRegistry;
 
     /// @dev requestHash => 验证记录
     mapping(bytes32 => Validation) private _validations;
@@ -43,9 +46,17 @@ contract DIDValidation {
         bytes32 indexed requestHash, uint8 response, string responseURI, bytes32 responseHash, string tag
     );
 
-    constructor(address identityRegistry_) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address identityRegistry_) public initializer {
+        __Ownable_init(msg.sender);
         identityRegistry = IDIDIdentity(identityRegistry_);
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     // ==================================================================
     // 写路径
@@ -151,4 +162,7 @@ contract DIDValidation {
     function getIdentityRegistry() external view returns (address) {
         return address(identityRegistry);
     }
+
+    /// @dev 存储槽位保留，未来追加状态变量时避免布局冲突
+    uint256[50] private __gap;
 }

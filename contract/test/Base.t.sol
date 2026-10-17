@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {DIDIdentity} from "../src/DIDIdentity.sol";
 import {DIDParts} from "../src/DIDParts.sol";
 import {Slots} from "../src/libraries/Slots.sol";
@@ -30,12 +31,31 @@ abstract contract BaseTest is Test {
     uint256 internal constant RARITY_LEGENDARY = 3;
 
     function setUp() public virtual {
-        parts = new DIDParts("https://api.didaiverse.example/parts/{id}.json");
-        identity = new DIDIdentity(
-            "DID AI Verse Identity",
-            "DIDAI",
-            "https://api.didaiverse.example/metadata/did/",
-            "https://api.didaiverse.example/metadata/contract.json"
+        DIDParts partsImpl = new DIDParts();
+        parts = DIDParts(
+            address(
+                new ERC1967Proxy(
+                    address(partsImpl),
+                    abi.encodeCall(DIDParts.initialize, ("https://api.didaiverse.example/parts/{id}.json"))
+                )
+            )
+        );
+        DIDIdentity identityImpl = new DIDIdentity();
+        identity = DIDIdentity(
+            payable(
+                new ERC1967Proxy(
+                    address(identityImpl),
+                    abi.encodeCall(
+                        DIDIdentity.initialize,
+                        (
+                            "DID AI Verse Identity",
+                            "DIDAI",
+                            "https://api.didaiverse.example/metadata/did/",
+                            "https://api.didaiverse.example/metadata/contract.json"
+                        )
+                    )
+                )
+            )
         );
         identity.setCollectionApproved(address(parts), true);
 

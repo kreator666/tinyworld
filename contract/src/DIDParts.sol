@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
-import {ERC1155Supply} from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Supply.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {ERC1155Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC1155/ERC1155Upgradeable.sol";
+import {ERC1155SupplyUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC1155/extensions/ERC1155SupplyUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IDIDParts} from "./interfaces/IDIDParts.sol";
 import {Slots} from "./libraries/Slots.sol";
 
 /// @title DIDParts
 /// @notice 纸娃娃配件 NFT（ERC-1155）：头部 / 身体 / 配饰 / 宠物。
 /// 同款配件可多份持有与交易；每个配件注册时绑定插槽、稀有度与最大供应量。
-contract DIDParts is ERC1155, ERC1155Supply, Ownable, IDIDParts {
+contract DIDParts is Initializable, ERC1155Upgradeable, ERC1155SupplyUpgradeable, OwnableUpgradeable, UUPSUpgradeable, IDIDParts {
     /// @notice 稀有度：0 普通 / 1 稀有 / 2 史诗 / 3 传说（展示语义，链上不做额外约束）
     struct PartInfo {
         uint8 slot;
@@ -41,7 +43,17 @@ contract DIDParts is ERC1155, ERC1155Supply, Ownable, IDIDParts {
         _;
     }
 
-    constructor(string memory baseURI) ERC1155(baseURI) Ownable(msg.sender) {}
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(string memory baseURI) public initializer {
+        __ERC1155_init(baseURI);
+        __Ownable_init(msg.sender);
+    }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     // ------------------------------------------------------------------
     // 管理
@@ -141,8 +153,10 @@ contract DIDParts is ERC1155, ERC1155Supply, Ownable, IDIDParts {
 
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values)
         internal
-        override(ERC1155, ERC1155Supply)
+        override(ERC1155Upgradeable, ERC1155SupplyUpgradeable)
     {
         super._update(from, to, ids, values);
     }
+
+    uint256[50] private __gap;
 }
