@@ -23,6 +23,8 @@ interface IDIDIdentity is IERC721 {
 
     function PERMISSION_SOCIAL() external view returns (uint256);
 
+    function PERMISSION_SKILL() external view returns (uint256);
+
     // ---- 身份铸造 ----
     function mint(string calldata name, string calldata profileURI) external returns (uint256 tokenId);
 

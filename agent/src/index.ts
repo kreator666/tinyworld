@@ -27,7 +27,7 @@ import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
 import { createNonce, verifyLogin, signJwt, AuthError, isValidAddress } from './core/auth'
 import { readPersonaMirror, writePersonaMirror } from './core/personaMirror'
-import { authRequired, adminRequired, assertAgentOwnership } from './middleware/auth'
+import { authRequired, adminRequired, assertAgentOwnership, assertAgentSkillAccess } from './middleware/auth'
 import { getAgentStats } from './core/stats'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
@@ -37,6 +37,7 @@ import { EXEC_CHAIN_KEY, MAINNET_EXPLORER, MAINNET_USDC_MINT, mainnetConnection,
 import { executeProposal, recordDefiTask, describeSwapResult } from '../runtime-skills/builtins/defi-swap'
 import { executeLendingProposal } from '../runtime-skills/builtins/defi-lending'
 import { executeStakingProposal } from '../runtime-skills/builtins/defi-staking'
+import { generateSkill, installGeneratedSkill } from '../runtime-skills/builtins/skill-creator/generator'
 import type { Proposal } from './policy/engine'
 
 // ============================================================
@@ -588,7 +589,7 @@ app.delete('/agents/:tokenId/skills/:skillId', authRequired, async (c) => {
 })
 
 // ============================================================
-// 用户自定义技能管理(由 skill-creator 生成,仅 owner 可查看/删除)
+// 用户自定义技能管理(由 skill-creator 生成;owner 或被链上授予 PERMISSION_SKILL 的用户可管理)
 // ============================================================
 
 // 列出当前 Agent 已安装的用户生成技能
@@ -597,9 +598,34 @@ app.get('/agents/:tokenId/user-skills', authRequired, async (c) => {
   if (tokenId === null) return
   try {
     const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
-    await assertAgentOwnership(c, chainKey, tokenId)
+    await assertAgentSkillAccess(c, chainKey, tokenId)
     const skills = await getInstalledUserSkills(chainKey, tokenId)
     return c.json({ tokenId, skills })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 通过聊天/表单描述需求,自动生成并安装一个 Python 技能
+app.post('/agents/:tokenId/user-skills', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  const body = await c.req.json<{ description?: string }>().catch(() => null)
+  const description = body?.description?.trim()
+  if (!description) return c.json({ error: 'description 不能为空' }, 400)
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentSkillAccess(c, chainKey, tokenId)
+    const createdBy = c.get('address')
+    const generated = await generateSkill(description, chainKey, tokenId, createdBy)
+    await installGeneratedSkill(generated, chainKey, tokenId)
+    invalidateAgent(chainKey, tokenId)
+    return c.json({
+      ok: true,
+      skillId: generated.skillId,
+      name: generated.name,
+      note: `已生成并安装技能 ${generated.name}。该技能只能读取/处理信息,禁止转账或修改链上状态,且仅当前 Agent 可用。`,
+    })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -612,7 +638,7 @@ app.delete('/agents/:tokenId/user-skills/:skillId', authRequired, async (c) => {
   const skillId = c.req.param('skillId')
   try {
     const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
-    await assertAgentOwnership(c, chainKey, tokenId)
+    await assertAgentSkillAccess(c, chainKey, tokenId)
     const removed = await deleteUserSkill(chainKey, tokenId, skillId)
     if (!removed) return c.json({ error: `未找到用户技能 ${skillId}` }, 404)
     removeUserSkillDir(skillId)

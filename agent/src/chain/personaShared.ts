@@ -6,8 +6,9 @@ import type { AIProfile } from '../types'
 // 两边导出完全相同的公开接口;此处只放与链无关的部分。
 // ============================================================
 
-// 权限位(与合约 DIDIdentity / Solana AgentPermission 的 PERMISSION_* 常量一致:bit1=social)
+// 权限位(与合约 DIDIdentity / Solana AgentPermission 的 PERMISSION_* 常量一致:bit0=persona,bit1=social,bit2=skill)
 export const PERMISSION_SOCIAL = 2n
+export const PERMISSION_SKILL = 4n
 
 // 链上无人格时的兜底人格(与前端 web/src/store/appStore.ts 的 defaultAIProfile 一致)
 export const defaultAIProfile: AIProfile = {

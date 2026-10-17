@@ -35,7 +35,14 @@ export interface PythonHostOptions {
   pythonCmd?: string // 缺省 python3,Windows 可回退 python
   timeoutMs?: number // 单次调用超时,缺省 30s
   env?: Record<string, string>
+  /** 进程最大存活时间,缺省 5 分钟 */
+  lifetimeMs?: number
+  /** 进程最大内存(POSIX 有效),缺省 64MB */
+  maxMemoryBytes?: number
 }
+
+const DEFAULT_LIFETIME_MS = 5 * 60 * 1000
+const DEFAULT_MAX_MEMORY_BYTES = 64 * 1024 * 1024
 
 export class PythonSkillHost {
   private proc: ChildProcess | null = null
@@ -45,6 +52,7 @@ export class PythonSkillHost {
   private pending = new Map<string, PendingCall>()
   private callSeq = 0
   private started = false
+  private lifetimeTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private opts: PythonHostOptions) {}
 
@@ -59,12 +67,24 @@ export class PythonSkillHost {
     if (!existsSync(entry)) throw new Error(`Python 技能入口不存在: ${entry}`)
 
     const python = this.opts.pythonCmd ?? (process.platform === 'win32' ? 'python' : 'python3')
-    this.proc = spawn(python, [entry], {
+    // resourceLimits 在 POSIX 上可限制内存,Windows 平台被忽略;用 any 绕过旧版 Node 类型声明
+    const spawnOpts: any = {
       cwd: this.opts.skillDir,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, ...(this.opts.env ?? {}) },
-    })
+      resourceLimits: {
+        maxMemory: this.opts.maxMemoryBytes ?? DEFAULT_MAX_MEMORY_BYTES,
+      },
+    }
+    this.proc = spawn(python, [entry], spawnOpts)
     this.started = true
+
+    // 进程最长存活 5 分钟,到点强制回收(POSIX 上 resourceLimits 也会限制内存)
+    const lifetimeMs = this.opts.lifetimeMs ?? DEFAULT_LIFETIME_MS
+    this.lifetimeTimer = setTimeout(() => {
+      console.warn(`[python-skill] 进程存活超过 ${lifetimeMs}ms,强制停止`)
+      this.stop()
+    }, lifetimeMs)
 
     this.proc.stdout?.on('data', (chunk: Buffer) => this.onData(chunk.toString('utf-8')))
     this.proc.stderr?.on('data', (chunk: Buffer) => {
@@ -92,6 +112,10 @@ export class PythonSkillHost {
 
   /** 关闭子进程 */
   stop(): void {
+    if (this.lifetimeTimer) {
+      clearTimeout(this.lifetimeTimer)
+      this.lifetimeTimer = null
+    }
     if (!this.proc || this.proc.killed) return
     try {
       this.proc.stdin?.end()
@@ -163,6 +187,10 @@ export class PythonSkillHost {
   private onProcessExit(code: number | null): void {
     if (code !== 0 && code !== null) {
       console.warn(`[python-skill] 子进程异常退出,代码: ${code}`)
+    }
+    if (this.lifetimeTimer) {
+      clearTimeout(this.lifetimeTimer)
+      this.lifetimeTimer = null
     }
     this.ready = false
     this.started = false

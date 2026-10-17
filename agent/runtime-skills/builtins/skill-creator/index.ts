@@ -1,12 +1,7 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
-import { getUserSkillDir } from '../../../src/skills/loader'
-import { installSkill, syncSkillsToDb } from '../../../src/skills/registry'
 import type { SkillDef } from '../../../src/skills/registry'
-import { generateSkill } from './generator'
-import { reloadSkills } from '../../../src/skills'
+import { generateSkill, installGeneratedSkill } from './generator'
 
 // ============================================================
 // 内置技能 skill-creator(M5):
@@ -14,8 +9,6 @@ import { reloadSkills } from '../../../src/skills'
 // 一期权限:仅当前 Agent 的 owner 可使用(通过 scope='owner' 限制);
 // 二期改由链上 PERMISSION_SKILL 权限位控制。
 // ============================================================
-
-let seq = 0
 
 function makeCreateSkillTool(chainKey: string, tokenId: number) {
   return createTool({
@@ -38,16 +31,8 @@ function makeCreateSkillTool(chainKey: string, tokenId: number) {
         return { ok: false, error: '描述不能为空' }
       }
       try {
-        const generated = await generateSkill(context.description.trim(), ++seq)
-        const dir = getUserSkillDir(generated.skillId)
-        mkdirSync(dir, { recursive: true })
-        writeFileSync(join(dir, 'skill.json'), JSON.stringify(generated.skillJson, null, 2) + '\n')
-        writeFileSync(join(dir, 'index.py'), generated.pythonCode)
-
-        // 重新加载技能并安装到当前 Agent
-        await reloadSkills()
-        await syncSkillsToDb()
-        await installSkill(chainKey, tokenId, generated.skillId)
+        const generated = await generateSkill(context.description.trim(), chainKey, tokenId)
+        await installGeneratedSkill(generated, chainKey, tokenId)
 
         return {
           ok: true,

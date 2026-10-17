@@ -2,7 +2,8 @@ import { createMiddleware } from 'hono/factory'
 import type { Context } from 'hono'
 import { verifyJwt, isAgentOwner, AuthError } from '../core/auth'
 import { isAdmin } from '../db'
-import { resolveChainKey } from '../chain/registry'
+import { resolveChainKey, getChainContext } from '../chain/registry'
+import { PERMISSION_SKILL, getAgentPermissions } from '../chain/persona'
 
 // ============================================================
 // Hono 认证中间件:从 Authorization: Bearer <jwt> 提取地址并写入上下文
@@ -70,4 +71,19 @@ export async function assertAgentOwnership(c: Context, chainKey: string, tokenId
   if (!address) throw new AuthError('未登录', 401)
   const ok = await isAgentOwner(chainKey, tokenId, address)
   if (!ok) throw new AuthError('你不是该 Agent 的主人', 403)
+}
+
+/** 校验是否为 Agent 主人,或被链上授予了 PERMISSION_SKILL 权限的地址 */
+export async function assertAgentSkillAccess(c: Context, chainKey: string, tokenId: number): Promise<void> {
+  const address = c.get('address')
+  if (!address) throw new AuthError('未登录', 401)
+  if (await isAgentOwner(chainKey, tokenId, address)) return
+  // Solana 暂不开放 skill 授权
+  if (getChainContext(chainKey).family === 'solana') {
+    throw new AuthError('Solana 暂不开放自定义 skill 授权', 403)
+  }
+  const perms = await getAgentPermissions(chainKey, tokenId, address)
+  if ((perms & PERMISSION_SKILL) === 0n) {
+    throw new AuthError('你没有为该 Agent 管理自定义技能的权限', 403)
+  }
 }

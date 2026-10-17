@@ -53,6 +53,10 @@ export interface SkillManifest {
   entry?: string
   /** 技能来源:builtin=系统内置;user=用户通过聊天生成 */
   source?: SkillSource
+  /** 用户技能的所属 Agent(仅限 source='user');防止被其他 Agent 安装/调用 */
+  ownerAgent?: { chainKey: string; tokenId: number }
+  /** 用户技能的创建者钱包地址(审计用) */
+  createdBy?: string
 }
 
 export interface SkillDef {
@@ -141,9 +145,11 @@ export function isSkillAvailable(chainKey: string, manifest: SkillManifest): boo
   return true
 }
 
-/** 全部可安装技能(清单);Solana 链下隐藏 evmOnly 技能 */
+/** 全部可安装技能(清单);Solana 链下隐藏 evmOnly 技能;用户自定义技能不在这里列出(按 Agent 隔离) */
 export function listSkills(chainKey: string): SkillManifest[] {
-  return [...builtins.values()].map((d) => d.manifest).filter((m) => isSkillAvailable(chainKey, m))
+  return [...builtins.values()]
+    .map((d) => d.manifest)
+    .filter((m) => m.source !== 'user' && isSkillAvailable(chainKey, m))
 }
 
 /** 随 Agent 运行时默认启用的一组内置技能(新 Agent 首次装载时自动安装,无需主人手动装)。
@@ -246,6 +252,13 @@ export interface InstallResult {
 export async function installSkill(chainKey: string, tokenId: number, skillId: string): Promise<InstallResult> {
   const def = builtins.get(skillId)
   if (!def) throw new SkillError(`未知技能: ${skillId}`)
+  // 用户自定义技能只能安装到生成它的 Agent
+  if (def.manifest.source === 'user') {
+    const owner = def.manifest.ownerAgent
+    if (!owner || owner.chainKey !== chainKey || owner.tokenId !== tokenId) {
+      throw new SkillError(`用户自定义技能只能安装到生成它的 Agent`, 403)
+    }
+  }
   if (!isSkillAvailable(chainKey, def.manifest)) {
     throw new SkillError(`技能 ${skillId} 在当前链 ${getChainContext(chainKey).cfg.name} 不可用(链家族或链配置不满足技能要求)`, 400)
   }
@@ -331,6 +344,14 @@ export async function getToolsFor(
   for (const { skill_id } of res.rows) {
     const def = builtins.get(skill_id)
     if (!def) continue // DB 里有但代码未注册(比如版本回滚),跳过
+    // 用户自定义技能严格按 Agent 隔离,防止被其他 Agent 的工具集加载
+    if (def.manifest.source === 'user') {
+      const owner = def.manifest.ownerAgent
+      if (!owner || owner.chainKey !== chainKey || owner.tokenId !== tokenId) {
+        console.warn(`[skills] ${chainKey}#${tokenId} 跳过非本 Agent 的用户技能 ${skill_id}`)
+        continue
+      }
+    }
     if (!isSkillAvailable(chainKey, def.manifest)) {
       // 已安装但当前链配置不满足(如缺 AGENT_SOLANA_PRIVATE_KEY):工具不加载,打日志便于排查"装了技能却不生效"
       console.warn(`[skills] ${chainKey}#${tokenId} 已安装技能 ${skill_id} 因链配置不满足被跳过(工具不加载)`)

@@ -6,6 +6,7 @@ import { getChainContext } from './registry'
 import { getPublicClient } from './clients'
 import {
   PERMISSION_SOCIAL,
+  PERMISSION_SKILL,
   PersonaError,
   defaultAIProfile,
   personaCache,
@@ -20,6 +21,7 @@ import {
 // 保证两处导出完全相同的接口与 instanceof 语义
 export {
   PERMISSION_SOCIAL,
+  PERMISSION_SKILL,
   PersonaError,
   defaultAIProfile,
   personaCache,
@@ -103,6 +105,13 @@ const identityAbi = [
       { name: '', type: 'uint256' },
       { name: '', type: 'address' },
     ],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'PERMISSION_SKILL',
+    stateMutability: 'view',
+    inputs: [],
     outputs: [{ name: '', type: 'uint256' }],
   },
   {

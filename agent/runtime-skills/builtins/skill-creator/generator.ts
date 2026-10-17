@@ -1,6 +1,9 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { complete } from '../../../src/core/llm'
+import { getUserSkillDir } from '../../../src/skills/loader'
+import { installSkill, syncSkillsToDb } from '../../../src/skills/registry'
+import { reloadSkills } from '../../../src/skills'
 
 // ============================================================
 // 用户技能代码生成器(M5):
@@ -30,7 +33,14 @@ function toSkillId(raw: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 32) || 'custom-skill'
+    .slice(0, 24) || 'custom-skill'
+}
+
+/** 生成唯一 skill id,避免跨 Agent/跨会话冲突 */
+function makeSkillId(chainKey: string, tokenId: number, description: string): string {
+  const base = `${chainKey}-${tokenId}-${toSkillId(description)}-${Date.now()}`
+  // 目录名安全:去掉可能的多余连字符并截断
+  return base.replace(/-+/g, '-').slice(0, 64)
 }
 
 /** 用 LLM 从用户描述中同时提取元数据和 Python 实现 */
@@ -91,9 +101,14 @@ ${description}
 }
 
 /** 生成完整技能包 */
-export async function generateSkill(description: string, seq: number): Promise<GeneratedSkill> {
+export async function generateSkill(
+  description: string,
+  chainKey: string,
+  tokenId: number,
+  createdBy?: string,
+): Promise<GeneratedSkill> {
   const meta = await extractSkillSpec(description)
-  const skillId = `${toSkillId(description)}-${seq}`
+  const skillId = makeSkillId(chainKey, tokenId, description)
 
   const inputSchema: Record<string, unknown> =
     meta.inputSchema && typeof meta.inputSchema === 'object' && meta.inputSchema.type === 'object'
@@ -117,6 +132,8 @@ export async function generateSkill(description: string, seq: number): Promise<G
     runtime: 'python',
     entry: 'index.py',
     source: 'user',
+    ownerAgent: { chainKey, tokenId },
+    ...(createdBy ? { createdBy } : {}),
   }
 
   return {
@@ -129,4 +146,19 @@ export async function generateSkill(description: string, seq: number): Promise<G
     pythonCode,
     skillJson,
   }
+}
+
+/** 将生成好的技能落盘、热重载并安装到指定 Agent */
+export async function installGeneratedSkill(
+  generated: GeneratedSkill,
+  chainKey: string,
+  tokenId: number,
+): Promise<void> {
+  const dir = getUserSkillDir(generated.skillId)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'skill.json'), JSON.stringify(generated.skillJson, null, 2) + '\n')
+  writeFileSync(join(dir, 'index.py'), generated.pythonCode)
+  await reloadSkills()
+  await syncSkillsToDb()
+  await installSkill(chainKey, tokenId, generated.skillId)
 }

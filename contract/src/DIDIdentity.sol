@@ -39,6 +39,8 @@ contract DIDIdentity is
     uint256 public constant PERMISSION_PERSONA = 1 << 0;
     /// @dev AI 操作员权限位：社交行为（预留给未来模块使用）
     uint256 public constant PERMISSION_SOCIAL = 1 << 1;
+    /// @dev AI 操作员权限位：为当前 Agent 创建/管理自定义 skill
+    uint256 public constant PERMISSION_SKILL = 1 << 2;
 
     uint256 private constant MAX_NAME_LENGTH = 64;
 
