@@ -55,8 +55,11 @@ export const useChainConfig = create<ChainConfigState>((set, get) => ({
           rpc: remote.rpc,
           explorer: remote.explorer,
           family: (remote.family as 'evm' | 'solana' | undefined) ?? local.family,
-          // 新手装备领养合约地址走 chains.config JSONB(与 defi/aave 同通道;/admin PUT 写入);后端未配置时保留本地兜底
+          // 新手装备领养与市场合约地址走 chains.config JSONB;后端未配置时保留本地兜底
           partsClaim: (remote.config?.partsClaim as `0x${string}` | undefined) ?? local.partsClaim,
+          market: remote.config?.market?.address
+            ? (remote.config.market.address as `0x${string}`)
+            : local.market,
         }
       })
       set((s) => ({
