@@ -340,38 +340,80 @@ shutdown 检查点记录(CRC32C 重算)、其余补零,数据回到上次干净�
 
 ## 11. Avalanche C-Chain 主网部署记录(2026-10-13)
 
-四个合约由 owner 热钱包 `0x784D68dB62448cDeBC5599ba7f8b2FbB59174018` 部署(chainId 43114):
+早期四个合约由 owner 热钱包 `0x784D68dB62448cDeBC5599ba7f8b2FbB59174018` 部署(chainId 43114),**全部已作废**,仅作历史记录:
+
+| 合约 | 地址(作废) |
+|------|------|
+| DIDParts | ~~0xa3fB106DD25c02bf18170d6657EdF4804bf5D924~~ |
+| DIDReputation | ~~0x319202A6B09A39d6E6E04f7b6B2571358d105f6B~~ |
+| DIDValidation | ~~0xfAEb8174BA2dD8eEb35A6FA9DC31E89E1317c048~~ |
+
+- DIDIdentity 初版 `0xf9111CbC5562671050910858BBA702db8C44f3fE`、v2 `0x0928B2F5a9F03792b994940b95Ba15654835A011`、v3 `0xd04268d288b4981A40285e99fd42374D71f10949` **均已作废**,
+  当前服役为 UUPS 代理 `0x72A1Ae8dD45f87c597d2C2450f7f200c81fc463c`(见第 12 节)。
+
+### 主网 DIDIdentity v3 + 市场(2026-10-17,已作废)
 
 | 合约 | 地址 |
 |------|------|
-| DIDParts | 0xa3fB106DD25c02bf18170d6657EdF4804bf5D924 |
-| DIDReputation | 0x319202A6B09A39d6E6E04f7b6B2571358d105f6B |
-| DIDValidation | 0xfAEb8174BA2dD8eEb35A6FA9DC31E89E1317c048 |
+| DIDIdentity v3 | ~~0xd04268d288b4981A40285e99fd42374D71f10949~~ |
+| DIDParts | ~~0xa3fB106DD25c02bf18170d6657EdF4804bf5D924~~ |
+| PartsMarket | ~~0xa5eF8B7b48f4b62c5834576b4C5CF5004B470377~~ |
+| StarterPartClaim v2 | ~~0x3510D466852a41Ed729Bbf2199b0B3743B627844~~ |
 
-- DIDIdentity 初版 `0xf9111CbC5562671050910858BBA702db8C44f3fE` 与 v2 `0x0928B2F5a9F03792b994940b95Ba15654835A011` **均已作废**,
-  当前服役为 DIDIdentity v3 `0xd04268d288b4981A40285e99fd42374D71f10949`;主网 DIDParts/Reputation/Validation 仍在服役
+> 以上地址已于 2026-10-17 再次重部署为 UUPS 代理（见下节），状态已清空，请勿再使用。
 
-### 主网 DIDIdentity v3 + 市场(2026-10-17)
+## 12. UUPS 代理重部署（2026-10-17）
 
-| 合约 | 地址 |
-|------|------|
-| DIDIdentity v3 | 0xd04268d288b4981A40285e99fd42374D71f10949 |
-| DIDParts | 0xa3fB106DD25c02bf18170d6657EdF4804bf5D924 |
-| PartsMarket | 0xa5eF8B7b48f4b62c5834576b4C5CF5004B470377 |
-| StarterPartClaim v2 | 0x3510D466852a41Ed729Bbf2199b0B3743B627844(仍指向旧 identity,需重新部署) |
+全部 6 个合约改为 OpenZeppelin UUPS 可升级代理模式，由 owner 热钱包 `0x784D68dB62448cDeBC5599ba7f8b2FbB59174018` 部署。
 
-- 部署脚本统一用主网 owner key:`PRIVATE_KEY=$(cat .keys/mainnet-owner.key) npx hardhat run … --network avalanche`
-- 市场合约 minter 已授但**价格未上架**(真实币定价属产品决策,用 deploy-market.js 的 MARKET_PRICES 随时上架)
-- 链上验证: 双 minter / identity 配件白名单 / claimed 状态 ✅;服务端 chains 表 identity 与 config.market 已更新
+### Avalanche C-Chain 主网（chainId 43114）
 
-- 11 笔交易(4 部署 + 白名单 + registerPartBatch(120) + 演示铸造 + 4 笔创世铸造)均可在浏览器查:
-  `https://subnets.avax.network/c-chain/tx/<txHash>`(owner 地址页可看到全部)
-- 创世铸造:每槽 普通12×200 + 稀有9×50 + 史诗6×20 + 传说3×5 = 2985 份,全部在 owner 钱包
-- 主网 owner 私钥在 `contract/.keys/mainnet-owner.key`(已 gitignore,严禁入库/打印)
-- defi 配置(LFJ V1 Router / WAVAX / USDC / USDT / Aave Pool+Gateway)来源:
-  LFJ 官方文档 developers.lfj.gg、Aave address book(bgd-labs)、Circle 官网;注意 USDC 正确地址是
-  `0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E`(尾号易记错,以 address book 为准)
-- 链配置已下沉 chains 表(DB 权威);主网条目随代码 config.ts 种子写入
+| 合约 | Proxy 地址 | 说明 |
+|------|------------|------|
+| DIDIdentity | `0x72A1Ae8dD45f87c597d2C2450f7f200c81fc463c` | 身份 NFT 代理 |
+| DIDParts | `0xb21652D0E6B3225d83B3aEB86f2185b8A6519976` | 装备 ERC-1155 代理 |
+| StarterPartClaim | `0x827350934d7632a9f7b14BeB2fB6716b61D1bD7b` | 新手礼包代理 |
+| PartsMarket | `0x57720BEb1Bf1fe0Fa896CBdb2f683098d4fDaB61` | 装备直售市场代理 |
+| DIDReputation | `0x6Bf68fDe79ae6A88e9Bb9b7267fE12F6AF416507` | 声誉代理 |
+| DIDValidation | `0x398d20BDD90f9aECd1d9fbAD830375E2CDB2A8eA` | 验证代理 |
+
+### Avalanche Fuji 测试网（chainId 43113）
+
+| 合约 | Proxy 地址 | 说明 |
+|------|------------|------|
+| DIDIdentity | `0xd6eB40E8D9e333f2b721bBd419c6CB40B55325Dd` | 身份 NFT 代理 |
+| DIDParts | `0x0E14D4227D7775F4f4Ee9f4493826D5c4eb81a4b` | 装备 ERC-1155 代理 |
+| StarterPartClaim | `0x940d4F7edaCB067f780Da2e59177772D73Aa751B` | 新手礼包代理 |
+| PartsMarket | `0x16140ee819539639f434FC32DfdEf392103B0703` | 装备直售市场代理 |
+| DIDReputation | `0x85ABE9143c5179f34eF6B7342f2710Ab2D8D7CeD` | 声誉代理 |
+| DIDValidation | `0x7aeeA97dD7169437CC47AF55279dF9092266eC4b` | 验证代理 |
+
+### 部署后链上初始化
+
+- `DIDIdentity.setCollectionApproved(DIDPartsProxy, true)`
+- `DIDParts.setMinter(StarterPartClaimProxy, true)`
+- `DIDParts.setMinter(PartsMarketProxy, true)`
+- 两链各 `registerPartBatch` 注册 120 件装备（头/身/配饰/宠物 各 30 件）
+- 两链各创世铸造 11,940 份装备到 owner
+- 两链各上架 48 件普通装，单价 `0.01 AVAX`
+
+### 配置更新
+
+- `agent/src/config.ts` 已更新
+- `web/src/lib/contracts.ts` 已更新
+- 数据库 `chains` 表已更新（identity/parts/config.market/config.partsClaim）
+- 数据库 `chain_protocols` 表已更新（market / starter-claim 地址）
+- `web/src/abi/` 下 ABI 已同步为最新编译产物
+
+### 升级方式
+
+后续升级只需：
+1. 修改 implementation 源码
+2. 部署新 implementation
+3. owner 调用 proxy 的 `upgradeToAndCall(newImplementation, "")`
+
+状态保留在 proxy 上。
+
 
 ### 动态链/协议配置(2026-10-14 改造,admin 接口)
 
