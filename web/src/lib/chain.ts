@@ -159,6 +159,11 @@ async function ensureWalletChain(): Promise<void> {
   await ensureChain(targetChainId)
 }
 
+/** 取下一个 nonce(pending 包含已签名未确认交易),避免多笔连续签名时 MetaMask 复用旧 nonce */
+async function nextNonce(owner: Address): Promise<number> {
+  return Number(await readClient().getTransactionCount({ address: owner, blockTag: 'pending' }))
+}
+
 /** 按 chainId 取链配置(用于发送后端组装的 unsigned tx 时切到对应网络) */
 function chainById(chainId: number) {
   if (chainId === avalanche.id) return { chain: avalanche, name: 'Avalanche', rpc: 'https://avalanche-c-chain-rpc.publicnode.com', explorer: 'https://subnets.avax.network/c-chain' }
@@ -331,6 +336,7 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
         functionName: 'setApprovalForAll',
         args: [A().identity, true],
         gas: 100000n,
+        nonce: await nextNonce(owner),
       })
       console.log('[claimStarterPack] setApprovalForAll tx=', approveHash)
       await withRpcRetry(
@@ -368,6 +374,7 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
         functionName: 'approve',
         args: [claimAddr, BigInt(tokenId)],
         gas: 100000n,
+        nonce: await nextNonce(owner),
       })
       console.log('[claimStarterPack] approve(identity) tx=', approveHash)
       await withRpcRetry(
@@ -383,6 +390,7 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
       abi: starterClaimAbi,
       functionName: 'claimPack',
       gas: 800000n,
+      nonce: await nextNonce(owner),
     })
     console.log('[claimStarterPack] claimPack tx=', hash)
     const receipt = await withRpcRetry(
