@@ -3,6 +3,25 @@ import { getDb } from '../db'
 import { chainKeyByChainId, getChainContext } from '../chain/registry'
 import type { UnsignedTx } from '../chain/defi'
 
+/** GMX 抵押品白名单:从该链所有市场的 longToken/shortToken 推导。
+ *  动态 import 避免 policy → gmx 的循环依赖;链未配置 GMX 或读失败时返回空数组。 */
+async function buildGmxCollateralWhitelist(chainKey: string): Promise<string[]> {
+  const cfg = getChainContext(chainKey).cfg
+  if (!cfg.gmx) return []
+  try {
+    const { getMarketsWithMeta } = await import('../chain/gmx')
+    const markets = await getMarketsWithMeta(chainKey)
+    const set = new Set<string>()
+    for (const m of markets) {
+      set.add(m.longToken.toLowerCase())
+      set.add(m.shortToken.toLowerCase())
+    }
+    return [...set].filter((a) => a !== '0x0000000000000000000000000000000000000000')
+  } catch {
+    return []
+  }
+}
+
 // ============================================================
 // 策略引擎(M4,设计文档 §7.2):所有链上写操作的必经关卡
 // 规则与阈值:单笔限额 / 日累计限额 / 协议白名单 / 代币白名单 / 冷却 / 熔断
@@ -11,7 +30,7 @@ import type { UnsignedTx } from '../chain/defi'
 
 export type ExecutionMode = 'hot_wallet' | 'user_wallet'
 
-export type ProposalAction = 'swap' | 'supply' | 'withdraw' | 'staking' | 'unstake' | 'claim_stake'
+export type ProposalAction = 'swap' | 'supply' | 'withdraw' | 'staking' | 'unstake' | 'claim_stake' | 'gmx_order'
 
 /** 交易提案(defi-swap / defi-lending 生成,审批放行后按 proposal.params 原样执行) */
 export interface Proposal {
@@ -94,6 +113,7 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
   } else {
     // 协议白名单:swap 只能走目标链 DEX router;supply/withdraw 只能走目标链 Aave Pool;
     // staking/unstake/claim_stake 只能走目标链 BENQI 质押合约
+    // gmx_order 只能走目标链 GMX ExchangeRouter
     if (p.action === 'swap') {
       if (p.protocol.toLowerCase() !== pCfg.defi.router.toLowerCase()) {
         hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.defi.router})`)
@@ -101,6 +121,10 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
     } else if (p.action === 'staking' || p.action === 'unstake' || p.action === 'claim_stake') {
       if (!pCfg.benqi || p.protocol.toLowerCase() !== pCfg.benqi.staking.toLowerCase()) {
         hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.benqi?.staking ?? '未配置 BENQI Liquid Staking'})`)
+      }
+    } else if (p.action === 'gmx_order') {
+      if (!pCfg.gmx || p.protocol.toLowerCase() !== pCfg.gmx.exchangeRouter.toLowerCase()) {
+        hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.gmx?.exchangeRouter ?? '未配置 GMX'})`)
       }
     } else if (!pCfg.aave || p.protocol.toLowerCase() !== pCfg.aave.pool.toLowerCase()) {
       hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.aave?.pool ?? '未配置 Aave'})`)
@@ -110,6 +134,7 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
     // - swap: 只能走 DEX 基础代币(wNative/USDC/USDT)
     // - supply/withdraw: 只能从 Aave 资产配置列表出
     // - staking/unstake/claim_stake: DEX 基础代币 + sAVAX(unstake 时)
+    // - gmx_order: 只能从 GMX 市场的 longToken/shortToken 出
     const swapWhitelist = [pCfg.defi.wNative, pCfg.defi.usdc, pCfg.defi.usdt]
       .filter((a) => a !== '0x0000000000000000000000000000000000000000')
       .map((a) => a.toLowerCase())
@@ -120,12 +145,15 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
       p.action === 'unstake' && pCfg.benqi
         ? [...swapWhitelist, pCfg.benqi.sAvax.toLowerCase()]
         : swapWhitelist
+    const gmxWhitelist = await buildGmxCollateralWhitelist(pChainKey!)
 
     let whitelist: string[]
     if (p.action === 'swap') {
       whitelist = swapWhitelist
     } else if (p.action === 'supply' || p.action === 'withdraw') {
       whitelist = lendingWhitelist
+    } else if (p.action === 'gmx_order') {
+      whitelist = gmxWhitelist
     } else {
       whitelist = stakingWhitelist
     }

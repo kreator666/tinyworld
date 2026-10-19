@@ -2,11 +2,12 @@
   "id": "defi-perp-gmx",
   "name": "GMX V2 永续交易",
   "version": "0.1.0",
-  "description": "GMX V2 去中心化永续/现货交易:查询市场、查询仓位、标记价格(只读)。下单功能后续开放。支持多链,当前已配置 Avalanche/Arbitrum。",
+  "description": "GMX V2 去中心化永续/现货交易:查询市场、查询仓位、标记价格,以及提交 MarketIncrease/MarketDecrease 订单(开仓/平仓)。支持多链,当前已配置 Avalanche/Arbitrum。",
   "tools": [
     "gmx_markets",
     "gmx_position",
-    "gmx_price"
+    "gmx_price",
+    "propose_gmx_order"
   ],
   "permissions": [
     "defi"

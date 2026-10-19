@@ -110,6 +110,13 @@ export function buildInstructions(
         `存 Aave 理财与兑换一样,也可能返回 verdict=sign(主人钱包签名模式);此时同样要提醒主人点击下方【签名并发送】按钮,不要只说"请签名"。`,
       )
     }
+    if (isEvm && hasSkill('defi-perp-gmx')) {
+      ownerToolsLines.push(
+        `当主人要求查看 GMX V2 永续市场/仓位/价格时,调用 gmx_markets / gmx_position / gmx_price 只读查询。`,
+        `当主人要求在 GMX 开平仓(如"开 100 USD AVAX 多单"、"平掉 AVAX 空单")时,必须调用 propose_gmx_order 工具;示例:propose_gmx_order({marketSymbol:"AVAX",side:"LONG",orderType:"market_increase",sizeUsd:"100",collateralSymbol:"AVAX",collateralAmount:"0.5",reason:"主人主动开仓"})。`,
+        `GMX 下单也可能返回 verdict=sign(主人钱包签名模式);此时同样要提醒主人点击下方【签名并发送】按钮。`,
+      )
+    }
     if (isEvm && hasSkill('defi-staking')) {
       ownerToolsLines.push(
         `当主人要求质押 ${nativeSymbol} 赚链上奖励(如"质押 0.5 ${nativeSymbol}"、"把 ${nativeSymbol} 存成 s${nativeSymbol}")时,必须调用 propose_stake 工具(BENQI 流动性质押);示例:propose_stake({amountAvax:"0.5",reason:"主人主动质押"})。质押后得到 s${nativeSymbol},奖励持续累积,1 s${nativeSymbol} 可兑回的 ${nativeSymbol} 随时间变多。`,
