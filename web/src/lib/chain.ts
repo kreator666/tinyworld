@@ -147,6 +147,18 @@ function walletClient(account: Address) {
   return createWalletClient({ account: getAddress(account), chain: A().chain, transport: custom(provider) })
 }
 
+/** 确保钱包当前链与目标链一致;多笔签名流程中用户可能手动切链,每笔写前校验 */
+async function ensureWalletChain(): Promise<void> {
+  const provider = getActiveProvider()
+  if (!provider) throw new Error('未检测到已连接的钱包,请先连接')
+  const targetChainId = A().chainId
+  const chainIdHex = (await provider.request({ method: 'eth_chainId' })) as string
+  const currentChainId = Number.parseInt(chainIdHex, 16)
+  if (currentChainId === targetChainId) return
+  console.warn(`[ensureWalletChain] wallet on ${currentChainId}, expected ${targetChainId}, switching...`)
+  await ensureChain(targetChainId)
+}
+
 /** 按 chainId 取链配置(用于发送后端组装的 unsigned tx 时切到对应网络) */
 function chainById(chainId: number) {
   if (chainId === avalanche.id) return { chain: avalanche, name: 'Avalanche', rpc: 'https://avalanche-c-chain-rpc.publicnode.com', explorer: 'https://subnets.avax.network/c-chain' }
@@ -298,6 +310,7 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
   if (!claimAddr) throw new Error('当前链未部署新手装备领养合约')
   const client = readClient()
   const wallet = walletClient(owner)
+  console.log('[claimStarterPack] chainId=', A().chainId, 'parts=', A().parts, 'identity=', A().identity, 'claim=', claimAddr)
 
   try {
     // ① 配件托管授权:identity 需要能把配件从用户钱包拉走托管
@@ -311,6 +324,7 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
       'isApprovedForAll(parts)',
     ))
     if (!custodial) {
+      await ensureWalletChain()
       const approveHash = await wallet.writeContract({
         address: A().parts,
         abi: partsAbi,
@@ -318,6 +332,7 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
         args: [A().identity, true],
         gas: 100000n,
       })
+      console.log('[claimStarterPack] setApprovalForAll tx=', approveHash)
       await withRpcRetry(
         () => client.waitForTransactionReceipt({ hash: approveHash, timeout: TX_RECEIPT_TIMEOUT }),
         'wait setApprovalForAll',
@@ -346,6 +361,7 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
       ),
     ])
     if (singleApproved.toLowerCase() !== claimAddr.toLowerCase() && !operatorApproved) {
+      await ensureWalletChain()
       const approveHash = await wallet.writeContract({
         address: A().identity,
         abi: identityAbi,
@@ -353,6 +369,7 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
         args: [claimAddr, BigInt(tokenId)],
         gas: 100000n,
       })
+      console.log('[claimStarterPack] approve(identity) tx=', approveHash)
       await withRpcRetry(
         () => client.waitForTransactionReceipt({ hash: approveHash, timeout: TX_RECEIPT_TIMEOUT }),
         'wait approve(identity)',
@@ -360,12 +377,14 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
     }
 
     // ③ claimPack:铸 4 件 + 尝试自动穿戴(穿戴失败不 revert,装备留在钱包可手动穿)
+    await ensureWalletChain()
     const hash = await wallet.writeContract({
       address: claimAddr,
       abi: starterClaimAbi,
       functionName: 'claimPack',
       gas: 800000n,
     })
+    console.log('[claimStarterPack] claimPack tx=', hash)
     const receipt = await withRpcRetry(
       () => client.waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT }),
       'wait claimPack',
@@ -853,6 +872,9 @@ export function explainChainError(err: unknown): string {
   if (/insufficient funds/i.test(msg)) return '钱包测试币余额不足,请先领取测试币'
   if (/rate limit|rate-limit|too many requests|请求过于频繁/i.test(msg)) {
     return '当前 RPC 节点被限流,请切换钱包网络节点后再试。Fuji 建议: https://avalanche-fuji-c-chain-rpc.publicnode.com 或 https://rpc.ankr.com/avalanche_fuji'
+  }
+  if (/0xa86a|0xa869|chain id|chainId|mismatch/i.test(msg)) {
+    return '钱包当前网络与页面所选链不一致,请先在 MetaMask 切换到页面显示的链,或刷新页面后重试'
   }
   return `链上操作失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`
 }
