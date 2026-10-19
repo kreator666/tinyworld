@@ -12,7 +12,7 @@ process.env.AGENT_DATA_DIR = DATA_DIR
 const { initSchema, closeDb, listChains, loadChainConfigsFromDb, listChainProtocols, upsertChainProtocol } = await import('../src/db')
 const { applyDbChains, applyDbChainConfigs } = await import('../src/chain/registry')
 const { seedChainProtocols } = await import('../src/skills/protocolSeeding')
-const { ensureDefaultSkills, installSkill, uninstallSkill, getInstalledSkills, getInstalledManifests, getToolsFor, syncSkillsToDb, refreshProtocolCache } =
+const { ensureDefaultSkills, installSkill, uninstallSkill, getInstalledSkills, getInstalledManifests, getToolsFor, syncSkillsToDb, refreshProtocolCache, loadSkills } =
   await import('../src/skills')
 
 function assert(cond: unknown, msg: string): void {
@@ -33,6 +33,7 @@ applyDbChains(await listChains())
 applyDbChainConfigs(await loadChainConfigsFromDb())
 await seedChainProtocols()
 refreshProtocolCache(await listChainProtocols())
+await loadSkills()
 await syncSkillsToDb()
 
 // 1. 默认安装:EVM 链装 defi-swap/defi-lending,不装 solanaOnly 的 meteora;Solana 链相反

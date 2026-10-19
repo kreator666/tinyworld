@@ -186,6 +186,27 @@ export async function initSchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS approvals_token_idx ON approvals (token_id, created_at);
 
+    -- BENQI Liquid Staking 赎回 ticket 跟踪(M5+):requestUnlock 后写入,
+    -- 冷却/领取窗口/过期状态由 check_unstake 工具根据链上数据刷新
+    CREATE TABLE IF NOT EXISTS benqi_unlock_requests (
+      id TEXT PRIMARY KEY,
+      chain_key TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      owner TEXT NOT NULL,
+      request_tx_hash TEXT NOT NULL,
+      unlock_index INTEGER,
+      shares NUMERIC(78,0) NOT NULL,
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      claimable_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      claimed_at TIMESTAMPTZ,
+      claim_tx_hash TEXT,
+      overdue_returned_at TIMESTAMPTZ,
+      overdue_tx_hash TEXT,
+      status TEXT NOT NULL DEFAULT 'cooling' CHECK (status IN ('cooling', 'claimable', 'claimed', 'expired_returned'))
+    );
+    CREATE INDEX IF NOT EXISTS benqi_unlock_owner_idx ON benqi_unlock_requests (chain_key, token_id, owner, status);
+
     -- Agent 级设置(M4):兑换执行模式等可由主人调整的开关
     CREATE TABLE IF NOT EXISTS agent_settings (
       token_id NUMERIC(20,0) PRIMARY KEY,

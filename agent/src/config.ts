@@ -23,6 +23,14 @@ interface ChainConfig {
   partsClaim?: string // 新手装备免费领养合约地址(EVM);未部署的链不填,运行时经 /admin/chains/:key/config 写入 chains.config
   market?: { address: string } // 装备铸造直售市场合约地址(EVM);价格一律链上为准,这里只存地址
   benqi?: { staking: string; sAvax: string } // BENQI Liquid Staking(仅 Avalanche 主网部署,无 Fuji);staking 与 sAVAX 为同一双用途合约
+  gmx?: {
+    // GMX V2 永续/现货;参考 https://docs.gmx.io/docs/api/contracts/addresses/
+    exchangeRouter: string
+    orderVault: string
+    reader: string
+    dataStore: string
+    router: string
+  }
   nativePriceId?: string // 原生币 CoinGecko id(defi-quote 技能用;缺省回落 AVAX)
   nativeGatePair?: string // 原生币 Gate.io 交易对(回退行情源)
   defi?: {
@@ -109,6 +117,14 @@ const CHAINS: Record<string, ChainConfig> = {
     // BENQI Liquid Staking:官方文档 docs.benqi.fi/resources/contracts/liquid-staking + 主网 RPC 双源核实(2026-10)
     // 质押合约与 sAVAX 代币是同一双用途合约(submit() payable 铸 sAVAX;redeem 进 15 天冷却)
     benqi: { staking: '0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE', sAvax: '0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE' },
+    // GMX V2:官方文档 contract addresses,2026-10 核实
+    gmx: {
+      exchangeRouter: '0xc002Db96E682FFF6675966F959677285a0C45Efa',
+      orderVault: '0xD3D60D22d415aD43b7e64b510D86A30f19B1B12C',
+      reader: '0xa34320a507493C71Fe35E982e496F7C5d1a7fa02',
+      dataStore: '0x2F0b22339414ADeD7D5F06f9D604c7fF5b2fe3f6',
+      router: '0x820F5FfC5b525cD4d88Cd91aCf2c28F16530Cc68',
+    },
     market: { address: '0x57720BEb1Bf1fe0Fa896CBdb2f683098d4fDaB61' }, // 2026-10 UUPS 代理
     nativePriceId: 'avalanche-2',
     nativeGatePair: 'AVAX_USDT',

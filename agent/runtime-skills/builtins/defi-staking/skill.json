@@ -1,10 +1,13 @@
 {
   "id": "defi-staking",
-  "name": "AVAX 流动性质押",
-  "version": "0.1.0",
-  "description": "BENQI Liquid Staking:质押 AVAX 得 sAVAX,持续累积验证者奖励且可随时转让/抵押。sAVAX 汇率随奖励增长。执行模式跟随「兑换执行模式」设置。赎回(15 天冷却 + 2 天领取窗口)v1 不开放,仅支持质押与只读查询。",
+  "name": "AVAX 流动性质押与赎回",
+  "version": "0.2.0",
+  "description": "BENQI Liquid Staking:质押 AVAX 得 sAVAX,持续累积验证者奖励;支持完整赎回闭环:propose_unstake 发起赎回(15 天冷却)、check_unstake 查询状态、claim_unstake 领取 AVAX 或退回过期 sAVAX。执行模式跟随「兑换执行模式」设置。",
   "tools": [
     "propose_stake",
+    "propose_unstake",
+    "check_unstake",
+    "claim_unstake",
     "staking_status"
   ],
   "permissions": [

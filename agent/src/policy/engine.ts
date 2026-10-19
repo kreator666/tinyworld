@@ -11,7 +11,7 @@ import type { UnsignedTx } from '../chain/defi'
 
 export type ExecutionMode = 'hot_wallet' | 'user_wallet'
 
-export type ProposalAction = 'swap' | 'supply' | 'withdraw' | 'staking'
+export type ProposalAction = 'swap' | 'supply' | 'withdraw' | 'staking' | 'unstake' | 'claim_stake'
 
 /** 交易提案(defi-swap / defi-lending 生成,审批放行后按 proposal.params 原样执行) */
 export interface Proposal {
@@ -92,12 +92,13 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
   } else if (!pCfg.defi) {
     hardFail.push(`chainId=${p.chainId}(${pCfg.name})未配置 defi 合约,不支持执行`)
   } else {
-    // 协议白名单:swap 只能走目标链 DEX router;supply/withdraw 只能走目标链 Aave Pool;staking 只能走目标链 BENQI 质押合约
+    // 协议白名单:swap 只能走目标链 DEX router;supply/withdraw 只能走目标链 Aave Pool;
+    // staking/unstake/claim_stake 只能走目标链 BENQI 质押合约
     if (p.action === 'swap') {
       if (p.protocol.toLowerCase() !== pCfg.defi.router.toLowerCase()) {
         hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.defi.router})`)
       }
-    } else if (p.action === 'staking') {
+    } else if (p.action === 'staking' || p.action === 'unstake' || p.action === 'claim_stake') {
       if (!pCfg.benqi || p.protocol.toLowerCase() !== pCfg.benqi.staking.toLowerCase()) {
         hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.benqi?.staking ?? '未配置 BENQI Liquid Staking'})`)
       }
@@ -106,9 +107,14 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
     }
 
     // 代币白名单(按目标链):WNative + USDC + USDT(未配置的零地址自动过滤)
-    const whitelist = [pCfg.defi.wNative, pCfg.defi.usdc, pCfg.defi.usdt]
+    // BENQI 赎回类 action 额外允许 sAVAX 作为 tokenIn
+    const baseWhitelist = [pCfg.defi.wNative, pCfg.defi.usdc, pCfg.defi.usdt]
       .filter((a) => a !== '0x0000000000000000000000000000000000000000')
       .map((a) => a.toLowerCase())
+    const whitelist =
+      p.action === 'unstake' && pCfg.benqi
+        ? [...baseWhitelist, pCfg.benqi.sAvax.toLowerCase()]
+        : baseWhitelist
     if (p.params.tokenIn !== 'native' && !whitelist.includes(p.params.tokenIn.toLowerCase())) {
       hardFail.push(`tokenIn 不在白名单: ${p.params.tokenIn}`)
     }

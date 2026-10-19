@@ -84,7 +84,7 @@ export async function recordDefiTask(
   chainKey: string,
   tokenId: number,
   proposal: Proposal,
-  result: { txHash: string; amountOut: string; usdValue: number | null },
+  result: { txHash: string; amountOut: string; usdValue: number | null; [key: string]: unknown },
   status: 'done' | 'failed' = 'done',
 ) {
   const db = await getDb()

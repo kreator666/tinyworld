@@ -33,6 +33,7 @@ export function deriveProtocolRows(chainKey: string): SeedRow[] {
   if (cfg.partsClaim) push('starter-claim', 'claim', { address: cfg.partsClaim })
   if (cfg.market) push('market', 'market', { address: cfg.market.address })
   if (cfg.benqi) push('benqi-staking', 'staking', { staking: cfg.benqi.staking, sAvax: cfg.benqi.sAvax })
+  if (cfg.gmx) push('gmx-perp', 'perp', cfg.gmx as unknown as Record<string, unknown>)
   if (cfg.solana?.jupiterApiUrl) push('jupiter', 'swap-solana', { apiUrl: cfg.solana.jupiterApiUrl })
   if (ctx.family === 'solana') {
     if (isMeteoraPoolConfigured()) push('meteora', 'swap-solana', { poolAddress: meteoraPoolAddress().toBase58() })
