@@ -74,6 +74,13 @@ const poolAbi = [
     ],
     outputs: [{ name: '', type: 'uint256' }],
   },
+  {
+    type: 'function',
+    name: 'ADDRESSES_PROVIDER',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
 ] as const
 
 // WrappedTokenGateway:原生币存取(Fuji 上对应 AVAX)
@@ -99,6 +106,33 @@ const gatewayAbi = [
       { name: 'to', type: 'address' },
     ],
     outputs: [],
+  },
+] as const
+
+const addressesProviderAbi = [
+  {
+    type: 'function',
+    name: 'getPriceOracle',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+] as const
+
+const oracleAbi = [
+  {
+    type: 'function',
+    name: 'getAssetPrice',
+    stateMutability: 'view',
+    inputs: [{ name: 'asset', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'BASE_CURRENCY_UNIT',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
   },
 ] as const
 
@@ -157,6 +191,33 @@ export interface ReserveInfo {
   aToken: Address
   /** 供给端年化(APY,小数形式如 0.0321 = 3.21%),来自 currentLiquidityRate */
   supplyApy: number
+}
+
+/** 读取 Aave 官方 Price Oracle 对指定资产的 USD 报价(价格精度由 BASE_CURRENCY_UNIT 决定,通常是 1e8)。
+ *  该价格与 Aave 清算/利率计算同源,可直接用于策略引擎估值,无需外部 CoinGecko。 */
+export async function getAssetPriceUsd(chainKey: string, asset: Address): Promise<number> {
+  const { cfg } = getChainContext(chainKey)
+  const client = clientFor(chainKey)
+  const pool = cfg.aave!.pool
+
+  const addressesProvider = (await client.readContract({
+    address: pool,
+    abi: poolAbi,
+    functionName: 'ADDRESSES_PROVIDER',
+  })) as Address
+
+  const oracle = (await client.readContract({
+    address: addressesProvider,
+    abi: addressesProviderAbi,
+    functionName: 'getPriceOracle',
+  })) as Address
+
+  const [price, baseCurrencyUnit] = (await Promise.all([
+    client.readContract({ address: oracle, abi: oracleAbi, functionName: 'getAssetPrice', args: [asset] }),
+    client.readContract({ address: oracle, abi: oracleAbi, functionName: 'BASE_CURRENCY_UNIT' }),
+  ])) as [bigint, bigint]
+
+  return Number(price) / Number(baseCurrencyUnit)
 }
 
 /** 读取资产的 aToken 地址与当前供给 APY */

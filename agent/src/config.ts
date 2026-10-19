@@ -44,6 +44,15 @@ interface ChainConfig {
   aave?: {
     pool: `0x${string}` // Aave v3 Pool(地址来自 Aave 官方 address book)
     gateway?: `0x${string}` // WrappedTokenGateway(原生币存取;Aave address book WETH_GATEWAY,按链不同)
+    /** 该链 Aave Pool 支持的资产列表;defi-lending skill 与策略引擎白名单均从这里推导。
+     *  isNative=true 表示该资产走 gateway depositETH/withdrawETH( symbol 通常显示为原生币如 AVAX/ETH)。
+     *  未配置时 lending skill 会回落到 [wNative, usdc] 以保持向后兼容。 */
+    assets?: Array<{
+      symbol: string
+      address: `0x${string}`
+      decimals: number
+      isNative?: boolean
+    }>
   }
   // Solana 家族专属:稳定币 mint 与 Jupiter 兑换 API(测试网需自托管 quote API,见运维手册)
   solana?: {
@@ -141,6 +150,14 @@ const CHAINS: Record<string, ChainConfig> = {
       // Aave 官方 address book AaveV3Avalanche:POOL / WETH_GATEWAY
       pool: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
       gateway: '0x2825cE5921538d17cc15Ae00a8B24fF759C6CDaE',
+      // Avalanche Aave v3 流动性 Top 5 reserve assets(地址+精度均经主网 RPC 核实)
+      assets: [
+        { symbol: 'AVAX', address: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7', decimals: 18, isNative: true }, // WAVAX,存取走 gateway
+        { symbol: 'BTC.b', address: '0x152b9d0FdC40C096757F570A51E494bd4b943E50', decimals: 8 },
+        { symbol: 'USDC', address: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', decimals: 6 },
+        { symbol: 'sAVAX', address: '0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE', decimals: 18 },
+        { symbol: 'USDt', address: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', decimals: 6 },
+      ],
     },
   },
   // Solana devnet:Anchor 程序 tinyworld(Soulbound DID + 装备,Token-2022)

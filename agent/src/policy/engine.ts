@@ -106,15 +106,30 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
       hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.aave?.pool ?? '未配置 Aave'})`)
     }
 
-    // 代币白名单(按目标链):WNative + USDC + USDT(未配置的零地址自动过滤)
-    // BENQI 赎回类 action 额外允许 sAVAX 作为 tokenIn
-    const baseWhitelist = [pCfg.defi.wNative, pCfg.defi.usdc, pCfg.defi.usdt]
+    // 代币白名单按 action 解耦:
+    // - swap: 只能走 DEX 基础代币(wNative/USDC/USDT)
+    // - supply/withdraw: 只能从 Aave 资产配置列表出
+    // - staking/unstake/claim_stake: DEX 基础代币 + sAVAX(unstake 时)
+    const swapWhitelist = [pCfg.defi.wNative, pCfg.defi.usdc, pCfg.defi.usdt]
       .filter((a) => a !== '0x0000000000000000000000000000000000000000')
       .map((a) => a.toLowerCase())
-    const whitelist =
+    const lendingWhitelist = (pCfg.aave?.assets ?? [])
+      .map((a) => a.address.toLowerCase())
+      .filter((a) => a !== '0x0000000000000000000000000000000000000000')
+    const stakingWhitelist =
       p.action === 'unstake' && pCfg.benqi
-        ? [...baseWhitelist, pCfg.benqi.sAvax.toLowerCase()]
-        : baseWhitelist
+        ? [...swapWhitelist, pCfg.benqi.sAvax.toLowerCase()]
+        : swapWhitelist
+
+    let whitelist: string[]
+    if (p.action === 'swap') {
+      whitelist = swapWhitelist
+    } else if (p.action === 'supply' || p.action === 'withdraw') {
+      whitelist = lendingWhitelist
+    } else {
+      whitelist = stakingWhitelist
+    }
+
     if (p.params.tokenIn !== 'native' && !whitelist.includes(p.params.tokenIn.toLowerCase())) {
       hardFail.push(`tokenIn 不在白名单: ${p.params.tokenIn}`)
     }
