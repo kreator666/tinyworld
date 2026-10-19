@@ -73,7 +73,7 @@ const CHAINS: Record<string, ChainConfig> = {
     family: 'evm',
     name: 'Fuji',
     chainId: 43113,
-    rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
+    rpc: 'https://avalanche-fuji-c-chain-rpc.publicnode.com',
     explorer: 'https://testnet.snowtrace.io',
     identityAddress: '0xd6eB40E8D9e333f2b721bBd419c6CB40B55325Dd', // 2026-10 UUPS 代理
     partsAddress: '0x0E14D4227D7775F4f4Ee9f4493826D5c4eb81a4b',

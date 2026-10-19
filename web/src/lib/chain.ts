@@ -34,6 +34,43 @@ const RARITY_LABELS = ['普通', '稀有', '史诗', '传说'] as const
 // 交易回执等待超时:测试网 60s 未确认即报错返回,避免前端弹窗永久挂起
 const TX_RECEIPT_TIMEOUT = 60_000
 
+// 公共 RPC fallback:主配置限流/故障时自动轮换,改善测试网体验
+const RPC_FALLBACKS: Record<number, string[]> = {
+  [avalancheFuji.id]: [
+    'https://avalanche-fuji-c-chain-rpc.publicnode.com',
+    'https://api.avax-test.network/ext/bc/C/rpc',
+  ],
+  [avalanche.id]: [
+    'https://avalanche-c-chain-rpc.publicnode.com',
+    'https://1rpc.io/avax/c',
+  ],
+  [sepolia.id]: [
+    'https://ethereum-sepolia-rpc.publicnode.com',
+  ],
+}
+
+const RPC_RETRY_DELAY = [800, 1600, 3200] as const
+
+function isRateLimitError(err: unknown): boolean {
+  const msg = String(err).toLowerCase()
+  return msg.includes('rate limit') || msg.includes('rate-limit') || msg.includes('too many requests') || msg.includes('request timeout')
+}
+
+async function withRpcRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  let lastErr: unknown
+  for (let i = 0; i < RPC_RETRY_DELAY.length; ++i) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastErr = err
+      if (!isRateLimitError(err) && i === 0) throw err
+      console.warn(`[rpc retry] ${label} failed, retry ${i + 1}/${RPC_RETRY_DELAY.length}`, err)
+      await new Promise((r) => setTimeout(r, RPC_RETRY_DELAY[i]))
+    }
+  }
+  throw lastErr
+}
+
 export interface ChainPartAsset {
   id: number // 链上 id
   localId: string // 本地部件 id
@@ -68,13 +105,40 @@ export interface AdminMintConfig {
   amounts: bigint[]
 }
 
-function readClient() {
-  const provider = getActiveProvider()
+function createHttpReadClient(url: string) {
   return createPublicClient({
     chain: A().chain,
-    transport: provider ? custom(provider) : http(A().rpc),
+    transport: http(url, { retryCount: 1, retryDelay: 800 }),
     batch: { multicall: true },
   })
+}
+
+function readClient() {
+  const provider = getActiveProvider()
+  if (provider) {
+    return createPublicClient({
+      chain: A().chain,
+      transport: custom(provider),
+      batch: { multicall: true },
+    })
+  }
+  return createHttpReadClient(A().rpc)
+}
+
+/** 无钱包时按链 ID 尝试多个公共 RPC,构造第一个可用的 public client */
+async function fallbackReadClient() {
+  const cfg = A()
+  const urls = RPC_FALLBACKS[cfg.chainId] ?? [cfg.rpc]
+  for (const url of urls) {
+    const client = createHttpReadClient(url)
+    try {
+      await client.getBlockNumber()
+      return client
+    } catch (err) {
+      console.warn(`[fallback rpc] ${url} unavailable, trying next`, err)
+    }
+  }
+  throw new Error(`所有公共 RPC 均不可用: ${urls.join(', ')}`)
 }
 
 function walletClient(account: Address) {
@@ -86,7 +150,7 @@ function walletClient(account: Address) {
 /** 按 chainId 取链配置(用于发送后端组装的 unsigned tx 时切到对应网络) */
 function chainById(chainId: number) {
   if (chainId === avalanche.id) return { chain: avalanche, name: 'Avalanche', rpc: 'https://avalanche-c-chain-rpc.publicnode.com', explorer: 'https://subnets.avax.network/c-chain' }
-  if (chainId === avalancheFuji.id) return { chain: avalancheFuji, name: 'Fuji', rpc: 'https://api.avax-test.network/ext/bc/C/rpc', explorer: 'https://testnet.snowtrace.io' }
+  if (chainId === avalancheFuji.id) return { chain: avalancheFuji, name: 'Fuji', rpc: 'https://avalanche-fuji-c-chain-rpc.publicnode.com', explorer: 'https://testnet.snowtrace.io' }
   if (chainId === sepolia.id) return { chain: sepolia, name: 'Sepolia', rpc: 'https://ethereum-sepolia-rpc.publicnode.com', explorer: 'https://sepolia.etherscan.io' }
   throw new Error(`不支持的链 ID: ${chainId}`)
 }
@@ -235,58 +299,88 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
   const client = readClient()
   const wallet = walletClient(owner)
 
-  // ① 配件托管授权:identity 需要能把配件从用户钱包拉走托管
-  const custodial = (await client.readContract({
-    address: A().parts,
-    abi: partsAbi,
-    functionName: 'isApprovedForAll',
-    args: [owner, A().identity],
-  })) as boolean
-  if (!custodial) {
-    const approveHash = await wallet.writeContract({
-      address: A().parts,
-      abi: partsAbi,
-      functionName: 'setApprovalForAll',
-      args: [A().identity, true],
-      gas: 100000n,
-    })
-    await client.waitForTransactionReceipt({ hash: approveHash, timeout: TX_RECEIPT_TIMEOUT })
-  }
+  try {
+    // ① 配件托管授权:identity 需要能把配件从用户钱包拉走托管
+    const custodial = (await withRpcRetry(
+      () => client.readContract({
+        address: A().parts,
+        abi: partsAbi,
+        functionName: 'isApprovedForAll',
+        args: [owner, A().identity],
+      }) as Promise<boolean>,
+      'isApprovedForAll(parts)',
+    ))
+    if (!custodial) {
+      const approveHash = await wallet.writeContract({
+        address: A().parts,
+        abi: partsAbi,
+        functionName: 'setApprovalForAll',
+        args: [A().identity, true],
+        gas: 100000n,
+      })
+      await withRpcRetry(
+        () => client.waitForTransactionReceipt({ hash: approveHash, timeout: TX_RECEIPT_TIMEOUT }),
+        'wait setApprovalForAll',
+      )
+    }
 
-  // ② identity 授权领取合约代为换装:getApproved 单 token 或 isApprovedForAll 任一即可
-  const singleApproved = (await client.readContract({
-    address: A().identity,
-    abi: identityAbi,
-    functionName: 'getApproved',
-    args: [BigInt(tokenId)],
-  })) as Address
-  const operatorApproved = (await client.readContract({
-    address: A().identity,
-    abi: identityAbi,
-    functionName: 'isApprovedForAll',
-    args: [owner, claimAddr],
-  })) as boolean
-  if (singleApproved.toLowerCase() !== claimAddr.toLowerCase() && !operatorApproved) {
-    const approveHash = await wallet.writeContract({
-      address: A().identity,
-      abi: identityAbi,
-      functionName: 'approve',
-      args: [claimAddr, BigInt(tokenId)],
-      gas: 100000n,
-    })
-    await client.waitForTransactionReceipt({ hash: approveHash, timeout: TX_RECEIPT_TIMEOUT })
-  }
+    // ② identity 授权领取合约代为换装:getApproved 单 token 或 isApprovedForAll 任一即可
+    const [singleApproved, operatorApproved] = await Promise.all([
+      withRpcRetry(
+        () => client.readContract({
+          address: A().identity,
+          abi: identityAbi,
+          functionName: 'getApproved',
+          args: [BigInt(tokenId)],
+        }) as Promise<Address>,
+        'getApproved(identity)',
+      ),
+      withRpcRetry(
+        () => client.readContract({
+          address: A().identity,
+          abi: identityAbi,
+          functionName: 'isApprovedForAll',
+          args: [owner, claimAddr],
+        }) as Promise<boolean>,
+        'isApprovedForAll(identity)',
+      ),
+    ])
+    if (singleApproved.toLowerCase() !== claimAddr.toLowerCase() && !operatorApproved) {
+      const approveHash = await wallet.writeContract({
+        address: A().identity,
+        abi: identityAbi,
+        functionName: 'approve',
+        args: [claimAddr, BigInt(tokenId)],
+        gas: 100000n,
+      })
+      await withRpcRetry(
+        () => client.waitForTransactionReceipt({ hash: approveHash, timeout: TX_RECEIPT_TIMEOUT }),
+        'wait approve(identity)',
+      )
+    }
 
-  // ③ claimPack:铸 4 件 + 尝试自动穿戴(穿戴失败不 revert,装备留在钱包可手动穿)
-  const hash = await wallet.writeContract({
-    address: claimAddr,
-    abi: starterClaimAbi,
-    functionName: 'claimPack',
-    gas: 800000n,
-  })
-  const receipt = await client.waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
-  if (receipt.status !== 'success') throw new Error('大礼包领取交易已回滚(链上执行失败),装备未发放,可稍后重试')
-  return hash
+    // ③ claimPack:铸 4 件 + 尝试自动穿戴(穿戴失败不 revert,装备留在钱包可手动穿)
+    const hash = await wallet.writeContract({
+      address: claimAddr,
+      abi: starterClaimAbi,
+      functionName: 'claimPack',
+      gas: 800000n,
+    })
+    const receipt = await withRpcRetry(
+      () => client.waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT }),
+      'wait claimPack',
+    )
+    if (receipt.status !== 'success') throw new Error('大礼包领取交易已回滚(链上执行失败),装备未发放,可稍后重试')
+    return hash
+  } catch (err) {
+    if (isRateLimitError(err)) {
+      throw new Error(
+        '当前 RPC 节点请求过于频繁被限流,请切换到更稳定的节点后再试。' +
+        'Fuji 建议: https://avalanche-fuji-c-chain-rpc.publicnode.com 或 https://rpc.ankr.com/avalanche_fuji',
+      )
+    }
+    throw err
+  }
 }
 
 /** 读取市场直售单价(wei);链未配置 market 或该装备未上架返回 null */
@@ -757,6 +851,9 @@ export function explainChainError(err: unknown): string {
   if (/NotAuthorized/.test(msg)) return '没有权限修改该 Agent 的人格配置'
   if (/NothingEquipped/.test(msg)) return '该插槽没有装备中的配件'
   if (/insufficient funds/i.test(msg)) return '钱包测试币余额不足,请先领取测试币'
+  if (/rate limit|rate-limit|too many requests|请求过于频繁/i.test(msg)) {
+    return '当前 RPC 节点被限流,请切换钱包网络节点后再试。Fuji 建议: https://avalanche-fuji-c-chain-rpc.publicnode.com 或 https://rpc.ankr.com/avalanche_fuji'
+  }
   return `链上操作失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`
 }
 

@@ -63,7 +63,7 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     parts: '0x0E14D4227D7775F4f4Ee9f4493826D5c4eb81a4b',
     partsClaim: '0x940d4F7edaCB067f780Da2e59177772D73Aa751B',
     market: '0x16140ee819539639f434FC32DfdEf392103B0703',
-    rpc: 'https://api.avax-test.network/ext/bc/C/rpc',
+    rpc: 'https://avalanche-fuji-c-chain-rpc.publicnode.com',
     explorer: 'https://testnet.snowtrace.io',
   },
   // Avalanche C-Chain 主网(2026-10 UUPS 代理重部署,chainId 43114)
