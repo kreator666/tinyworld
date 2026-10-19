@@ -357,3 +357,37 @@ agent/
 - 已验证:存储层增删查+隐私分级(scripts/verify-owner-facts.ts)、工具装配与 scope 隔离(社交模式零泄露)、默认技能自动安装
 
 **后续(待定)**:跨链(M5a 起,见 knowledge/avax-cross-chain-agent-integration.md)、 TraderJoe V2 报价源、社交记忆是否进情景记忆
+
+---
+
+## 附录 A: 多链架构决策(不可退回到单链思维)
+
+> 2026-10 再次强调:Agent 服务是**单进程多链**架构。`TARGET_CHAIN` 环境变量只决定**不带 `X-Chain-Key` 请求头时的回落默认链**,并不意味着服务只加载一条链。
+
+### A.1 核心事实
+
+1. **启动时注册所有链**: `agent/src/config.ts` 中的 `ALL_CHAINS`(sepolia / fuji / avalanche / solana-devnet)在启动时全部注册进 `chain/registry`,`chains` 表也会从 `ALL_CHAINS` 自动 seeding。
+2. **请求级链分派**: 每次请求通过 `X-Chain-Key` 头选择目标链;空/缺失时回落到 `TARGET_CHAIN` 对应的默认链。见 `chain/registry.ts` 的 `resolveChainKey()`。
+3. **技能按链家族可用**:
+   - EVM-only 技能(`defi-swap`、`defi-lending`、BENQI 质押、GMX perp 等)只在 `family='evm'` 的链上加载。
+   - Solana-only 技能(`defi-swap-solana`、`defi-swap-meteora`、drift 等)只在 `family='solana'` 的链上加载。
+   - 同一 Skill 的 `makeTools(chainKey, tokenId)` 会在运行时按请求链重新构造,工具闭包绑定的是当前链上下文。
+4. **默认链 ≠ 唯一链**: 生产环境 `TARGET_CHAIN=solana-devnet` 时,服务仍然可以处理 `X-Chain-Key: avalanche` 的 Aave 请求;不应通过改 `TARGET_CHAIN` 来"启用"某条链。
+
+### A.2 新增一条链的正确流程
+
+1. 在 `agent/src/config.ts` 的 `ALL_CHAINS` 中新增链配置(含 `defi` / `aave` / `benqi` / `gmx` 等协议地址)。
+2. 如协议类型此前未在 `chain_protocols` 表出现过,启动时会自动 seeding(`protocolSeeding.ts` 从 `ChainConfig` 推导)。
+3. 前端在 `CONTRACTS_BY_KEY` / `chainConfigStore` 中补充该链即可切换。
+4. 不需要重启后改默认链,也不需要为每条链单独部署一个服务进程。
+
+### A.3 常见反模式(禁止)
+
+- ❌ "Avalanche Aave 要生效,得把 `TARGET_CHAIN` 改成 avalanche"。
+- ❌ "这条链的 DeFi 技能没生效,是不是默认链不对"。
+- ❌ "部署时只确认默认链的 health 就够了"。
+
+正确做法:
+- ✅ 确认请求是否带了正确的 `X-Chain-Key`。
+- ✅ 确认该链的 `chain_protocols` 表中对应协议是 `enabled`。
+- ✅ 确认该 Agent 在目标链上已安装对应技能(`agent_skills` 表按 `chain_key` 隔离)。
