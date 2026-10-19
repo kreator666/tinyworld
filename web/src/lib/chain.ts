@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, custom, http, zeroAddress, type Address, type Hash } from 'viem'
+import { createPublicClient, createWalletClient, custom, http, zeroAddress, getAddress, type Address, type Hash } from 'viem'
 import type { EvmUnsignedTx } from './agentApi'
 import type { Equipped } from '../types'
 import { getActiveProvider } from './wallet'
@@ -144,7 +144,7 @@ async function fallbackReadClient() {
 function walletClient(account: Address) {
   const provider = getActiveProvider()
   if (!provider) throw new Error('未检测到已连接的钱包,请先连接')
-  return createWalletClient({ account, chain: A().chain, transport: custom(provider) })
+  return createWalletClient({ account: getAddress(account), chain: A().chain, transport: custom(provider) })
 }
 
 /** 按 chainId 取链配置(用于发送后端组装的 unsigned tx 时切到对应网络) */
