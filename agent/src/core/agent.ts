@@ -329,20 +329,25 @@ export async function runAgentTurn(
   // 社交模式下不应产生签名交易(工具集已被过滤),这里再加一道保险。
   let action: SignTxAction | undefined
   if (mode === 'owner') {
-    // 1) 优先从 propose_swap/propose_supply 工具设置的侧信道取(最可靠,不依赖 Mastra 返回结构)
-    // 2) 兜底从 Mastra 返回的 toolResults 提取
+    // 1) 优先从 propose_swap/propose_gmx_order 等工具设置的侧信道取(最可靠,不依赖 Mastra 返回结构)
+    // 2) 兜底从 Mastra 返回的 toolResults 提取:只要工具返回 verdict=sign 且带 unsignedTxs 就视为签名请求
     action = takePendingSignAction(chainKey, persona.tokenId)
     if (!action) {
       const toolResults = ((res as unknown as { toolResults?: unknown[] }).toolResults ?? []).filter(Boolean)
       console.log('[runAgentTurn] toolResults count', toolResults.length, 'toolResults', JSON.stringify(toolResults))
-      const swapResult = toolResults.find((r: unknown) => (r as { toolName?: string }).toolName === 'propose_swap')
-      const result = (swapResult as { result?: Record<string, unknown> } | undefined)?.result
-      console.log('[runAgentTurn] propose_swap result', result)
+      const signResult = toolResults.find(
+        (r: unknown) =>
+          (r as { result?: Record<string, unknown> } | undefined)?.result?.verdict === 'sign' &&
+          Array.isArray((r as { result?: Record<string, unknown> } | undefined)?.result?.unsignedTxs),
+      )
+      const result = (signResult as { result?: Record<string, unknown> } | undefined)?.result
+      console.log('[runAgentTurn] sign tool result', result)
       if (result?.verdict === 'sign' && Array.isArray(result.unsignedTxs)) {
         action = {
           type: 'sign_tx',
           unsignedTxs: result.unsignedTxs as (UnsignedTx | SolanaUnsignedTx)[],
           note: result.note as string | undefined,
+          proposal: result.proposal as SignTxAction['proposal'] | undefined,
         }
       }
     }

@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server'
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
-import { keccak256, toBytes, formatUnits, type Hex } from 'viem'
+import { keccak256, toBytes, formatUnits, type Hex, type Address } from 'viem'
 import { config } from './config'
 import { PersonaError, loadPersona, ownerOf, resolveTokenId } from './chain/persona'
 import { resolveChainKey, getChainContext, chainKeyByChainId } from './chain/registry'
@@ -34,7 +34,7 @@ import { broadcastSignedTx } from './chain/defi'
 import { SOL_MINT, usdcMintOf } from './chain/jupiter'
 import { solanaConnection, type FailoverConnection } from './chain/personaSolana'
 import { EXEC_CHAIN_KEY, MAINNET_EXPLORER, MAINNET_USDC_MINT, mainnetConnection, mainnetTxUrl } from './chain/solanaExec'
-import { executeProposal, recordDefiTask, describeSwapResult } from '../runtime-skills/builtins/defi-swap'
+import { executeProposal, recordDefiTask, describeSwapResult, tokenSymbolOf } from '../runtime-skills/builtins/defi-swap'
 import { executeLendingProposal } from '../runtime-skills/builtins/defi-lending'
 import { executeStakingProposal } from '../runtime-skills/builtins/defi-staking'
 import { generateSkill, installGeneratedSkill } from '../runtime-skills/builtins/skill-creator/generator'
@@ -903,8 +903,8 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
     return c.json({ error: 'txHash 不能为空' }, 400)
   }
   const action = body?.proposal?.action
-  if (!action || !['swap', 'supply', 'withdraw', 'staking'].includes(action)) {
-    return c.json({ error: 'proposal.action 必须是 swap / supply / withdraw / staking' }, 400)
+  if (!action || !['swap', 'supply', 'withdraw', 'staking', 'gmx_order'].includes(action)) {
+    return c.json({ error: 'proposal.action 必须是 swap / supply / withdraw / staking / gmx_order' }, 400)
   }
   const proposal = body.proposal as Proposal
   try {
@@ -919,11 +919,14 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
     if (receipt.status !== 'success') {
       // revert:记失败任务(不计入限额),主动告知失败
       await recordDefiTask(chainKey, tokenId, proposal, { txHash: body.txHash, amountOut: '0', usdValue: null }, 'failed')
-      const notice = describeSwapResult(chainKey, proposal, { confirmed: false, reverted: true, amountOut: null })
+      const notice =
+        action === 'gmx_order'
+          ? describeGmxResult(chainKey, proposal, { confirmed: false, reverted: true })
+          : describeSwapResult(chainKey, proposal, { confirmed: false, reverted: true, amountOut: null })
       if (body.conversationId) await appendAssistantMessage(chainKey, body.conversationId, notice)
       return c.json({ ok: true, confirmed: false, reverted: true, notice })
     }
-    // 仅 swap 需要解析 Swap 事件拿实际输出;supply/withdraw 以提案金额为准
+    // 仅 swap 需要解析 Swap 事件拿实际输出;supply/withdraw/gmx_order 以提案金额为准
     const parsed = action === 'swap' ? parseSwapAmountOut(receipt) : null
     const amountOut = parsed?.amountOut ?? null
     await recordDefiTask(chainKey, tokenId, proposal, {
@@ -931,7 +934,10 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
       amountOut: amountOut?.toString() ?? '0',
       usdValue: proposal.estimatedValueUsd ?? null,
     })
-    const notice = describeSwapResult(chainKey, proposal, { confirmed: true, reverted: false, amountOut })
+    const notice =
+      action === 'gmx_order'
+        ? describeGmxResult(chainKey, proposal, { confirmed: true, reverted: false })
+        : describeSwapResult(chainKey, proposal, { confirmed: true, reverted: false, amountOut })
     if (body.conversationId) await appendAssistantMessage(chainKey, body.conversationId, notice)
     return c.json({
       ok: true,
@@ -947,7 +953,10 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
     try {
       const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
       await recordDefiTask(chainKey, tokenId, proposal, { txHash: body.txHash, amountOut: '0', usdValue: proposal.estimatedValueUsd ?? null })
-      const notice = describeSwapResult(chainKey, proposal, { confirmed: false, reverted: false, amountOut: null })
+      const notice =
+        action === 'gmx_order'
+          ? describeGmxResult(chainKey, proposal, { confirmed: false, reverted: false })
+          : describeSwapResult(chainKey, proposal, { confirmed: false, reverted: false, amountOut: null })
       if (body.conversationId) await appendAssistantMessage(chainKey, body.conversationId, notice)
       return c.json({ ok: true, confirmed: false, amountOut: null, notice })
     } catch (err2) {
@@ -1062,6 +1071,29 @@ async function confirmSolanaSign(
     // 落库/追加消息失败不掩盖已确认事实
     return c.json({ ok: true, confirmed: true, amountOut: amountOut?.toString() ?? null, notice: noticeOf(amountOut, true), explorer: txUrl })
   }
+}
+
+/** GMX 订单签名确认后的人类可读结果描述 */
+function describeGmxResult(
+  chainKey: string,
+  proposal: Proposal,
+  r: { confirmed: boolean; reverted: boolean },
+): string {
+  const cfg = getChainContext(chainKey).cfg
+  const { params } = proposal
+  const marketSymbol = (params.tokenOut ?? 'GMX').toUpperCase()
+  const sizeUsdHuman = params.amountOutMin ? formatUnits(BigInt(params.amountOutMin), 30) : '未知'
+  const collateralSymbol = params.tokenIn === 'native' ? cfg.defi!.nativeSymbol : tokenSymbolOf(chainKey, params.tokenIn as Address)
+  const collateralDecimals = collateralSymbol === cfg.defi!.nativeSymbol ? 18 : 6
+  const collateralHuman = params.amountIn ? formatUnits(BigInt(params.amountIn), collateralDecimals) : '未知'
+
+  if (r.reverted) {
+    return `刚才那笔 GMX 订单没能成交:${marketSymbol} ${sizeUsdHuman} USD 方向订单在链上执行失败(revert),抵押品 ${collateralHuman} ${collateralSymbol} 没有动用。要我重新组装一笔吗?`
+  }
+  if (!r.confirmed) {
+    return `你的 GMX 订单已广播,链上还没确认成交,我把哈希记下了,稍后帮你盯一下。`
+  }
+  return `已确认你的 GMX 订单上链:${marketSymbol} ${sizeUsdHuman} USD 方向订单已提交,抵押 ${collateralHuman} ${collateralSymbol}。订单由 GMX keeper 执行后仓位会更新,稍后你可以在仓位查询里看到。`
 }
 
 /** 统一错误出口:人格完整性问题 422,技能问题按其 status,LLM 网关异常 502,其余 500 */

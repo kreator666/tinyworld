@@ -420,6 +420,10 @@ function makeProposeGmxOrder(chainKey: string, tokenId: number) {
       approvalId: z.string().optional(),
       error: z.string().optional(),
       note: z.string().optional(),
+      // 用户钱包签名模式:前端签名按钮需要的字段
+      type: z.literal('sign_tx').optional(),
+      unsignedTxs: z.array(z.any()).optional(),
+      proposal: z.record(z.any()).optional(),
     }),
     execute: async ({ context }) => {
       const cfg = getChainContext(chainKey).cfg
