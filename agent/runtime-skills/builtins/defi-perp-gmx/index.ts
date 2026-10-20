@@ -313,13 +313,15 @@ export async function buildUnsignedGmxOrder(
 ): Promise<UnsignedTx[]> {
   const cfg = getChainContext(chainKey).cfg
   const exchangeRouter = cfg.gmx!.exchangeRouter as Address
+  const router = cfg.gmx!.router as Address
   const orderVault = cfg.gmx!.orderVault as Address
   const sizeDeltaUsd = parseGmxUsd(sizeUsdHuman)
   const currentPrice = await getGmxIndexPriceUsd(chainKey, market.indexToken)
   const acceptablePrice = calcAcceptablePrice(currentPrice, side, orderType, 0.005)
 
   const unsignedTxs: UnsignedTx[] = []
-  const allowance = await getGmxTokenAllowance(chainKey, collateralToken, user, exchangeRouter)
+  // sendTokens 内部调用 router.pluginTransfer,因此 spender 是 Router 合约
+  const allowance = await getGmxTokenAllowance(chainKey, collateralToken, user, router)
   if (allowance < collateralAmount) {
     unsignedTxs.push({
       to: collateralToken,
@@ -328,11 +330,11 @@ export async function buildUnsignedGmxOrder(
           { type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ name: '', type: 'bool' }] },
         ],
         functionName: 'approve',
-        args: [exchangeRouter, collateralAmount],
+        args: [router, collateralAmount],
       }),
       value: '0',
       chainId: cfg.chainId,
-      description: `授权 GMX ExchangeRouter 使用 ${fmtAddr(collateralToken)}`,
+      description: `授权 GMX Router 使用 ${fmtAddr(collateralToken)}`,
     })
   }
 

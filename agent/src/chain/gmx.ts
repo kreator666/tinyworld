@@ -493,17 +493,18 @@ export async function createGmxOrder(
   const account = wallet.account!.address
   const client = getPublicClient(chainKey)
 
-  // 1. approve ExchangeRouter 使用抵押品(不足才发)
-  const allowance = await getGmxTokenAllowance(chainKey, args.initialCollateralToken, account, cfg.exchangeRouter)
+  // 1. approve GMX Router 使用抵押品(不足才发)
+  // 注意:sendTokens 内部调用 router.pluginTransfer,因此 spender 必须是 Router 合约,不是 ExchangeRouter
+  const allowance = await getGmxTokenAllowance(chainKey, args.initialCollateralToken, account, cfg.router)
   if (allowance < args.initialCollateralDeltaAmount) {
     const t0 = await wallet.writeContract({
       address: args.initialCollateralToken,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [cfg.exchangeRouter, args.initialCollateralDeltaAmount],
+      args: [cfg.router, args.initialCollateralDeltaAmount],
     })
     const r0 = await client.waitForTransactionReceipt({ hash: t0, timeout: 120_000 })
-    if (r0.status !== 'success') throw new Error(`approve(ExchangeRouter) 失败: ${t0}`)
+    if (r0.status !== 'success') throw new Error(`approve(Router) 失败: ${t0}`)
   }
 
   // 2. 组装 multicall: sendWnt(executionFee) + sendTokens(collateral) + createOrder
