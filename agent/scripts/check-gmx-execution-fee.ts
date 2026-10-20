@@ -1,6 +1,7 @@
 import { getPublicClient } from '../src/chain/clients'
 import { getChainContext } from '../src/chain/registry'
 import { formatEther, keccak256, encodeAbiParameters, type Address } from 'viem'
+import { estimateGmxExecutionFee } from '../src/chain/gmx'
 
 function key(s: string) {
   return keccak256(encodeAbiParameters([{ type: 'string' }], [s]))
@@ -39,8 +40,13 @@ async function main() {
     const estimatedGasLimit = vals[orderType]
     const adjusted = baseGasLimit + (estimatedGasLimit * vals.ESTIMATED_GAS_FEE_MULTIPLIER_FACTOR) / PRECISION
     const minFee = adjusted * gasPrice
-    console.log(`${orderType} recommended executionFee:`, formatEther(minFee), 'AVAX')
+    console.log(`${orderType} raw min executionFee:`, formatEther(minFee), 'AVAX')
   }
+
+  const estIncrease = await estimateGmxExecutionFee(chainKey, 'increase')
+  const estDecrease = await estimateGmxExecutionFee(chainKey, 'decrease')
+  console.log('estimateGmxExecutionFee increase:', formatEther(estIncrease), 'AVAX')
+  console.log('estimateGmxExecutionFee decrease:', formatEther(estDecrease), 'AVAX')
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })

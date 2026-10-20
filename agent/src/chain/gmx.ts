@@ -429,7 +429,10 @@ const GMX_FEE_FACTOR_PRECISION = 10n ** 30n
  *   minExecutionFee = (ESTIMATED_GAS_FEE_BASE + ESTIMATED_GAS_FEE_PER_ORACLE_PRICE * (3+swaps)
  *                      + INCREASE/DECREASE_ORDER_GAS_LIMIT * ESTIMATED_GAS_FEE_MULTIPLIER_FACTOR / 1e30)
  *                     * gasPrice
- * 返回原生币 wei(已含 10% 缓冲)。
+ * 返回原生币 wei。
+ *
+ * 注意: keeper 执行时用的 gasPrice 可能高于下单时的 gasPrice,因此 gasPrice 先用 2x 缓冲,
+ * 最终结果再加 20% 缓冲。多余执行费会退回给用户,宁多勿少。
  */
 export async function estimateGmxExecutionFee(
   chainKey: string,
@@ -458,9 +461,9 @@ export async function estimateGmxExecutionFee(
   const estimatedGasLimit = orderGasLimit + singleSwapGasLimit * BigInt(swapCount)
   const adjustedGasLimit = base + perOracle * oraclePriceCount + (estimatedGasLimit * multiplier) / GMX_FEE_FACTOR_PRECISION
   const gasPrice = await client.getGasPrice()
-  const fee = adjustedGasLimit * gasPrice
-  // 10% 缓冲,防止 gas 价格波动导致 keeper 不执行
-  return (fee * 110n) / 100n
+  // keeper 执行时的 gasPrice 通常高于下单时,用 2x 预估;最终再留 20% 余量
+  const fee = adjustedGasLimit * gasPrice * 2n
+  return (fee * 120n) / 100n
 }
 
 /** 读取 ERC20 授权额度 */
