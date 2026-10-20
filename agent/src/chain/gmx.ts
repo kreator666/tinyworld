@@ -362,7 +362,9 @@ export const exchangeRouterAbi = [
           { name: 'decreasePositionSwapType', type: 'uint8' },
           { name: 'isLong', type: 'bool' },
           { name: 'shouldUnwrapNativeToken', type: 'bool' },
+          { name: 'autoCancel', type: 'bool' },
           { name: 'referralCode', type: 'bytes32' },
+          { name: 'dataList', type: 'bytes32[]' },
         ],
       },
     ],
@@ -401,7 +403,9 @@ export interface CreateGmxOrderArgs {
   validFromTime?: bigint
   decreasePositionSwapType?: number
   shouldUnwrapNativeToken?: boolean
+  autoCancel?: boolean
   referralCode?: Hex
+  dataList?: `0x${string}`[]
 }
 
 /** GMX V2 精度:USD 值用 30 位小数,sizeInTokens 用 token decimals */
@@ -536,7 +540,9 @@ export async function createGmxOrder(
       decreasePositionSwapType: args.decreasePositionSwapType ?? 0,
       isLong: args.isLong,
       shouldUnwrapNativeToken: args.shouldUnwrapNativeToken ?? false,
+      autoCancel: false,
       referralCode: args.referralCode ?? ('0x0000000000000000000000000000000000000000000000000000000000000000' as Hex),
+      dataList: [],
     },
   ] as const
 

@@ -363,7 +363,9 @@ export async function buildUnsignedGmxOrder(
       decreasePositionSwapType: 0,
       isLong: side === 'LONG',
       shouldUnwrapNativeToken: false,
+      autoCancel: false,
       referralCode: '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex,
+      dataList: [],
     },
   ] as const
 
