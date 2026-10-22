@@ -215,6 +215,18 @@ curl -s https://agent.freetoken.xin/chains
 ssh claw 'curl -s http://127.0.0.1:4111/health'
 ```
 
+## 8.5 竞技场部署前置:服务器上编译合约产物
+
+竞技场"一键部署"接口按请求现场读取 `contract/artifacts/` 的 bytecode(构建输出不入 git)。
+新克隆/更新后的服务器必须先编译,否则报"合约编译产物缺失":
+
+```bash
+ssh claw 'cd /opt/tinyworld/contract && npm install --registry=https://registry.npmmirror.com && npx hardhat compile'
+```
+
+注意:服务器(阿里云国内)直连 npm 官方源可能 ECONNRESET,用 npmmirror 源;
+合约目录需要 devDependencies(hardhat 本体),不要用 `--omit=dev`。
+
 ## 9. 注意事项
 
 - 远端 `.env` 文件是手工维护的，**不会被 Git 管理**，修改后无需重启 Nginx，但需要重启 PM2 进程生效。
