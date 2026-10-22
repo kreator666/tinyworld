@@ -21,13 +21,17 @@ import { sendTransactions } from '../lib/chainDispatch'
 import { isIdentityOwner } from '../lib/chain'
 import { agentApiBase } from '../lib/agentApi'
 
-/** 从 /chains 读该链配置的 defi.usdc(后端权威),用于表单预填 */
-async function chainUsdcOf(chainKey: string): Promise<string> {
+/** 从 /chains 读全部 EVM 链的 defi.usdc(后端权威;零地址视为未配置 → 空串) */
+async function fetchUsdcMap(): Promise<Record<string, string>> {
   const res = await fetch(`${agentApiBase()}/chains`)
-  if (!res.ok) return ''
+  if (!res.ok) return {}
   const data = (await res.json()) as { chains: { chain_key: string; config?: { defi?: { usdc?: string } } }[] }
-  const row = data.chains.find((c) => c.chain_key === chainKey)
-  return row?.config?.defi?.usdc && row.config.defi.usdc !== '0x0000000000000000000000000000000000000000' ? row.config.defi.usdc : ''
+  const map: Record<string, string> = {}
+  for (const c of data.chains) {
+    const usdc = c.config?.defi?.usdc
+    if (usdc && usdc !== '0x0000000000000000000000000000000000000000') map[c.chain_key] = usdc
+  }
+  return map
 }
 
 // ============================================================
@@ -155,19 +159,26 @@ export default function AdminArenaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, seasons.length])
 
+  // 全链 USDC 配置表(一次拉取)
+  const [usdcMap, setUsdcMap] = useState<Record<string, string>>({})
   useEffect(() => {
-    if (evmChains.length > 0 && !form.chain_key) setForm((f) => ({ ...f, chain_key: evmChains[0].key }))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [evmChains.length])
+    fetchUsdcMap().then(setUsdcMap).catch(() => {})
+  }, [])
 
-  // 选链变化:预填该链配置的 USDC(用户可改)
+  // 默认选链:优先选第一个已配置 USDC 的 EVM 链(如 Fuji/Avalanche),避免默认落到无 USDC 的 Sepolia
+  useEffect(() => {
+    if (evmChains.length === 0 || form.chain_key || Object.keys(usdcMap).length === 0) return
+    const withUsdc = evmChains.find((c) => usdcMap[c.key])
+    setForm((f) => ({ ...f, chain_key: (withUsdc ?? evmChains[0]).key }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evmChains, usdcMap])
+
+  // 选链变化:预填该链配置的 USDC(用户可改;未配置则留空)
   useEffect(() => {
     if (!form.chain_key) return
-    chainUsdcOf(form.chain_key)
-      .then((usdc) => setForm((f) => ({ ...f, usdc })))
-      .catch(() => {})
+    setForm((f) => ({ ...f, usdc: usdcMap[form.chain_key] ?? '' }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.chain_key])
+  }, [form.chain_key, usdcMap])
 
   const onCreate = async () => {
     if (!form.start || !form.end) return showToast('请填写起止时间')
