@@ -4,6 +4,7 @@ import { verifyJwt, isAgentOwner, AuthError } from '../core/auth'
 import { isAdmin } from '../db'
 import { resolveChainKey, getChainContext } from '../chain/registry'
 import { PERMISSION_SKILL, getAgentPermissions } from '../chain/persona'
+import { isChainAdmin } from '../chain/admin'
 
 // ============================================================
 // Hono 认证中间件:从 Authorization: Bearer <jwt> 提取地址并写入上下文
@@ -56,6 +57,33 @@ export const adminRequired = createMiddleware(async (c, next) => {
     const payload = verifyJwt(token)
     if (!(await isAdmin(payload.address))) {
       return c.json({ error: '该地址不在管理员白名单中' }, 403)
+    }
+    c.set('address', payload.address)
+    await next()
+  } catch (err) {
+    const msg = err instanceof AuthError ? err.message : 'token 无效或已过期'
+    return c.json({ error: msg }, 401)
+  }
+})
+
+/** 竞技场管理鉴权:有效 JWT + 该链平台合约(DIDIdentity)owner,与铸造后台同一套链上判定。
+ *  区别于 adminRequired(admin_whitelist 是 2026-10 动态链配置的遗留体系),不做链下白名单。 */
+export const chainAdminRequired = createMiddleware(async (c, next) => {
+  const auth = c.req.header('Authorization')
+  if (!auth || !auth.startsWith('Bearer ')) {
+    return c.json({ error: '缺少 Authorization: Bearer <token> 头' }, 401)
+  }
+  let chainKey: string
+  try {
+    chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+  }
+  const token = auth.slice(7).trim()
+  try {
+    const payload = verifyJwt(token)
+    if (!(await isChainAdmin(chainKey, payload.address))) {
+      return c.json({ error: '你不是该链平台合约的 owner(与铸造后台管理员一致)' }, 403)
     }
     c.set('address', payload.address)
     await next()

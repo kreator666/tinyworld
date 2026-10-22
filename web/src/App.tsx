@@ -12,6 +12,8 @@ import LandingPage from './pages/LandingPage'
 import MintWorkshop from './pages/MintWorkshop'
 import ProfilePage from './pages/ProfilePage'
 import PlazaPage from './pages/PlazaPage'
+import ArenaPage from './pages/ArenaPage'
+import AdminArenaPage from './pages/AdminArenaPage'
 import ChatPage from './pages/ChatPage'
 import BackpackPage from './pages/BackpackPage'
 import AdminPage from './pages/AdminPage'
@@ -177,8 +179,10 @@ export default function App() {
             <Route path="/assistant" element={<Guard><MyAgentPage /></Guard>} />
             <Route path="/plaza" element={<Guard><PlazaPage /></Guard>} />
             <Route path="/chat" element={<Guard><ChatPage /></Guard>} />
+            <Route path="/arena" element={<Guard><ArenaPage /></Guard>} />
             <Route path="/backpack" element={<Guard><BackpackPage /></Guard>} />
             <Route path="/admin" element={<Guard><AdminPage /></Guard>} />
+            <Route path="/admin/arena" element={<Guard><AdminArenaPage /></Guard>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

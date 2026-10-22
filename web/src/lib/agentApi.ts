@@ -100,11 +100,14 @@ export interface AgentChatResult {
 }
 
 export interface EvmUnsignedTx {
-  to: string
+  /** 为空表示合约部署交易(仅携带 data) */
+  to?: string
   data: string
   value: string // wei
   chainId: number
   description: string
+  /** 显式 nonce(可选):批量部署等三连号场景由后端给定,钱包严格照办,避免 nonce 竞态 */
+  nonce?: number
 }
 
 /** Solana 未签名交易(用户钱包签名模式;agent 经 Jupiter/Meteora 组装,base64 wire format) */
@@ -188,7 +191,7 @@ export interface SkillInfo {
   description?: string
 }
 
-async function apiCall<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiCall<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${AGENT_API}${path}`, { ...init, headers: authHeaders(init?.headers) })
   const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null
   if (!res.ok) throw new Error(data?.error ?? `Agent 服务错误(${res.status})`)

@@ -23,14 +23,36 @@ import { ALL_CHAINS } from './config'
 import { SkillError, getInstalledSkills, getInstalledUserSkills, installSkill, listSkills, syncSkillsToDb, uninstallSkill, deleteUserSkill, ensureDefaultSkills, refreshProtocolCache, loadSkills, reloadSkills, removeUserSkillDir } from './skills'
 import { seedChainProtocols } from './skills/protocolSeeding'
 import { startScheduler, stopScheduler } from './core/scheduler'
+import { startArenaScheduler, stopArenaScheduler } from './core/arenaScheduler'
 import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
 import { createNonce, verifyLogin, signJwt, AuthError, isValidAddress } from './core/auth'
 import { readPersonaMirror, writePersonaMirror } from './core/personaMirror'
-import { authRequired, adminRequired, assertAgentOwnership, assertAgentSkillAccess } from './middleware/auth'
+import { authRequired, adminRequired, chainAdminRequired, assertAgentOwnership, assertAgentSkillAccess } from './middleware/auth'
 import { getAgentStats } from './core/stats'
 import { getSwapMode, setSwapMode, type SwapMode } from './core/settings'
 import { broadcastSignedTx } from './chain/defi'
+import {
+  ArenaError,
+  buildFreezeTx,
+  buildRegisterTxs,
+  buildWithdrawTxs,
+  confirmFreeze,
+  confirmRegister,
+  confirmWithdraw,
+  deriveSeasonStatus,
+  getPlaybook,
+  leaderboardOf,
+  loadSeasonOrThrow,
+  savePlaybook,
+  validatePlaybook,
+} from './core/arena'
+import { getArenaAccount, insertArenaSeason, listArenaAccounts, listArenaSeasons, updateArenaSeason, getArenaFuel } from './db/arena'
+import { decisionGate, fuelConfigOf } from './core/arenaFuel'
+import { settleAccount } from './core/arenaSettlement'
+import { buildDeployTxs, buildWhitelistTx, resolveDeployReceipts, whitelistTemplate } from './core/arenaDeploy'
+import { getPublicClient, getWalletClient } from './chain/clients'
+import { toFunctionSelector, type Hex as ViemHex } from 'viem'
 import { SOL_MINT, usdcMintOf } from './chain/jupiter'
 import { solanaConnection, type FailoverConnection } from './chain/personaSolana'
 import { EXEC_CHAIN_KEY, MAINNET_EXPLORER, MAINNET_USDC_MINT, mainnetConnection, mainnetTxUrl } from './chain/solanaExec'
@@ -55,6 +77,12 @@ app.use('/*', cors({ origin: corsOrigins }))
 
 app.get('/health', (c) => c.json({ ok: true }))
 
+// 全局错误兜底:未捕获异常带请求方法+路径落日志(空 500 排查入口)
+app.onError((err, c) => {
+  console.error(`[onError] ${c.req.method} ${c.req.path}:`, err.message)
+  return c.json({ error: '服务内部错误: ' + err.message.slice(0, 120) }, 500)
+})
+
 // 链配置管理(admin):鉴权 = 管理员钱包签名登录的 JWT(adminRequired,白名单在 admin_whitelist 表)。
 // 所有写操作 insertAudit 记审计,并热重载链注册表(applyDbChains + applyDbChainConfigs)立即生效。
 // 废弃:静态 CHAIN_ADMIN_TOKEN 比对(无身份、无审计)。
@@ -77,7 +105,17 @@ app.get('/chains', async (c) => {
       list.push(p)
       byChain.set(p.chain_key, list)
     }
-    return c.json({ chains: chains.map((row) => ({ ...row, protocols: byChain.get(row.chain_key) ?? [] })) })
+    return c.json({
+      chains: chains.map((row) => {
+        // config 列回退补全:DB 未配的 defi.usdc 等从 ALL_CHAINS 合并层补,前端表单可直接预填
+        const merged = row.config ?? {}
+        const baseCfg = ALL_CHAINS[row.chain_key as keyof typeof ALL_CHAINS]?.defi
+        if (baseCfg && !(merged as Record<string, unknown>).defi) {
+          ;(merged as Record<string, unknown>).defi = baseCfg
+        }
+        return { ...row, config: merged, protocols: byChain.get(row.chain_key) ?? [] }
+      }),
+    })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -1096,9 +1134,402 @@ function describeGmxResult(
   return `已确认你的 GMX 订单上链:${marketSymbol} ${sizeUsdHuman} USD 方向订单已提交,抵押 ${collateralHuman} ${collateralSymbol}。订单由 GMX keeper 执行后仓位会更新,稍后你可以在仓位查询里看到。`
 }
 
-/** 统一错误出口:人格完整性问题 422,技能问题按其 status,LLM 网关异常 502,其余 500 */
+// ============================================================
+// 竞技场(Arena,P1):赛季管理(admin)、报名注册、紧急冻结、Playbook 配置、排行榜
+// 链上裁决在 ArenaAccount/ArenaSeason 合约(见 knowledge/arena-mode-design.md);
+// 本层只做交易组装、回执解析与落库
+// ============================================================
+
+// 赛季列表(公开;status 为派生态:created/open/active/settling/settled)
+app.get('/arena/seasons', async (c) => {
+  try {
+    // all=1:跨链全量(管理端用);默认按当前激活链过滤(用户端用)
+    const all = c.req.query('all') === '1'
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const rows = await listArenaSeasons(all ? undefined : chainKey)
+    const nowSec = Math.floor(Date.now() / 1000)
+    return c.json({ seasons: rows.map((r) => ({ ...r, status: deriveSeasonStatus(r, nowSec) })) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 赛季详情 + 排行榜(公开)
+app.get('/arena/seasons/:id', async (c) => {
+  try {
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const nowSec = Math.floor(Date.now() / 1000)
+    const accounts = await leaderboardOf(season.id)
+    return c.json({ season: { ...season, status: deriveSeasonStatus(season, nowSec) }, leaderboard: accounts })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 创建赛季(admin):金额/时长可配;链上合约由部署脚本产出地址后经 PUT 回填
+app.post('/admin/arena/seasons', chainAdminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{
+      chain_key?: string
+      usdc_address?: string
+      principal_usd?: number
+      fuel_usd?: number
+      start_ts?: number
+      end_ts?: number
+      config?: Record<string, unknown>
+    }>().catch(() => null)
+    if (!body) return c.json({ error: '请求体必须是 JSON' }, 400)
+    const chainKey = body.chain_key ?? resolveChainKey(c.req.header('X-Chain-Key'))
+    const chainCfg = getChainContext(chainKey).cfg // 校验链存在
+    // USDC 地址:显式传入优先,缺省回落链配置(defi.usdc),都没有才拒绝
+    const usdc = body.usdc_address ?? (chainCfg.defi && chainCfg.defi.usdc !== '0x0000000000000000000000000000000000000000' ? chainCfg.defi.usdc : '')
+    if (!/^0x[0-9a-fA-F]{40}$/.test(usdc)) {
+      return c.json({ error: 'usdc_address 缺失:请在表单填写,或先在链配置(/admin/chains)中配置 defi.usdc' }, 400)
+    }
+    body.usdc_address = usdc
+    if (!(body.principal_usd! > 0) || !(body.fuel_usd! >= 0)) return c.json({ error: 'principal_usd 必须为正、fuel_usd 必须非负' }, 400)
+    if (!Number.isInteger(body.start_ts) || !Number.isInteger(body.end_ts) || body.end_ts! <= body.start_ts!) {
+      return c.json({ error: 'start_ts/end_ts 必须是整数且 end_ts > start_ts' }, 400)
+    }
+    const id = `season-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    // config 默认:赛季固定模型(缺省用全局模型,开赛前后不允许换)+ 燃料计价默认项
+    const seasonConfig = { llmModel: config.llmModel, priceMarkup: 1.0, ...(body.config ?? {}) }
+    await insertArenaSeason({
+      id,
+      chain_key: chainKey,
+      season_address: '',
+      account_impl_address: '',
+      usdc_address: body.usdc_address!.toLowerCase(),
+      principal_usd: String(body.principal_usd),
+      fuel_usd: String(body.fuel_usd),
+      start_ts: body.start_ts!,
+      end_ts: body.end_ts!,
+      status: 'created',
+      config: seasonConfig,
+      created_by: c.get('address'),
+    })
+    await insertAudit({ adminAddress: c.get('address'), action: 'create_arena_season', target: id, payload: body })
+    return c.json({ ok: true, season: await loadSeasonOrThrow(id) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 赛季参数/地址回填(admin):部署 ArenaSeason + ArenaAccount 实现后回填地址,赛季进入 open
+app.put('/admin/arena/seasons/:id', chainAdminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{
+      season_address?: string
+      account_impl_address?: string
+      status?: string
+      config?: Record<string, unknown>
+    }>().catch(() => null)
+    if (!body) return c.json({ error: '请求体必须是 JSON' }, 400)
+    const patch: Record<string, unknown> = {}
+    for (const k of ['season_address', 'account_impl_address', 'status'] as const) {
+      if (body[k] !== undefined) {
+        if (k !== 'status' && !/^0x[0-9a-fA-F]{40}$/.test(body[k]!)) return c.json({ error: `${k} 必须是 EVM 地址` }, 400)
+        patch[k] = body[k]!.toLowerCase()
+      }
+    }
+    if (body.config !== undefined) patch.config = body.config
+    // 推进到 open 的硬约束:链上地址已回填 + 赛季固定模型已配置(不可换模型是竞技公平底线)
+    if (body.status === 'open') {
+      const cur = await loadSeasonOrThrow(c.req.param('id'))
+      const merged = { ...(cur.config ?? {}), ...(body.config ?? {}) } as Record<string, unknown>
+      const hasAddr = (body.season_address ?? cur.season_address) && (body.account_impl_address ?? cur.account_impl_address)
+      if (!hasAddr) return c.json({ error: '进入 open 前必须回填 season_address 与 account_impl_address' }, 409)
+      if (typeof merged.llmModel !== 'string' || !merged.llmModel) return c.json({ error: '进入 open 前必须配置 config.llmModel(赛季固定模型)' }, 409)
+    }
+    const ok = await updateArenaSeason(c.req.param('id'), patch)
+    if (!ok) return c.json({ error: '赛季不存在或无有效字段' }, 404)
+    await insertAudit({ adminAddress: c.get('address'), action: 'update_arena_season', target: c.req.param('id'), payload: body })
+    return c.json({ ok: true, season: await loadSeasonOrThrow(c.req.param('id')) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 建议白名单(公开):按链配置生成 Aave/GMX/DEX 常用方法,管理端表单预填用
+app.get('/arena/whitelist-template', async (c) => {
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    return c.json({ entries: whitelistTemplate(chainKey) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 一键部署:组装三笔部署交易(账户实现 → 赛季实现 → 赛季代理),管理员钱包签名广播
+app.post('/admin/arena/seasons/:id/deploy-txs', chainAdminRequired, async (c) => {
+  try {
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    if (season.season_address) return c.json({ error: '该赛季已部署合约' }, 409)
+    const bundle = await buildDeployTxs(season, c.get('address') as Address)
+    return c.json({ ok: true, ...bundle })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 部署确认:解析三笔回执的实际合约地址,回填赛季(预测失配会报错并提示)
+app.post('/admin/arena/seasons/:id/deploy-confirm', chainAdminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{ txHashes?: string[] }>().catch(() => null)
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    if (!body?.txHashes || body.txHashes.length !== 3) return c.json({ error: '需要三笔部署交易的 txHashes' }, 400)
+    const addrs = await resolveDeployReceipts(season.chain_key, body.txHashes)
+    if (season.account_impl_address && season.account_impl_address !== addrs.accountImpl.toLowerCase()) {
+      return c.json({ error: `账户实现地址与预测失配(预测 ${season.account_impl_address} 实际 ${addrs.accountImpl}),请检查是否有其他交易占用 nonce 后重试` }, 409)
+    }
+    await updateArenaSeason(season.id, { season_address: addrs.seasonProxy.toLowerCase(), account_impl_address: addrs.accountImpl.toLowerCase() })
+    await insertAudit({ adminAddress: c.get('address'), action: 'arena_deploy', target: season.id, payload: addrs })
+    return c.json({ ok: true, ...addrs })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 白名单上链(组装 unsigned tx,管理员签名):entries = [{target, selector 或方法签名, allowed}]
+app.post('/admin/arena/seasons/:id/whitelist-txs', chainAdminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{ entries?: { target?: string; selector?: string; allowed?: boolean }[] }>().catch(() => null)
+    const entries = body?.entries ?? []
+    if (entries.length === 0) return c.json({ error: 'entries 不能为空' }, 400)
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    if (!season.season_address) return c.json({ error: '赛季合约尚未部署' }, 409)
+    const parsed = entries.map((e) => {
+      if (!e.target?.match(/^0x[0-9a-fA-F]{40}$/)) throw new ArenaError(`target 地址非法: ${e.target}`)
+      let sel = e.selector ?? ''
+      if (/^0x[0-9a-fA-F]{8}$/.test(sel)) sel = sel.toLowerCase()
+      else if (sel.includes('(')) sel = toFunctionSelector(sel as ViemHex).toLowerCase()
+      else throw new ArenaError(`selector 非法(需 0x 四字节或方法签名): ${e.selector}`)
+      return { target: e.target.toLowerCase(), selector: sel, allowed: e.allowed ?? true }
+    })
+    return c.json({ ok: true, txs: [buildWhitelistTx(season, parsed)] })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 白名单确认:核实链上回执
+app.post('/admin/arena/seasons/:id/whitelist-confirm', chainAdminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{ txHash?: string }>().catch(() => null)
+    if (!body?.txHash?.match(/^0x[0-9a-fA-F]{64}$/)) return c.json({ error: 'txHash 格式不正确' }, 400)
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const receipt = await waitForTxReceipt(season.chain_key, body.txHash as ViemHex)
+    if (receipt.status !== 'success') return c.json({ error: '白名单交易未成功执行' }, 400)
+    const hit = receipt.logs.some((l: { address: string }) => l.address.toLowerCase() === season.season_address.toLowerCase())
+    if (!hit) return c.json({ error: '回执中找不到赛季合约事件' }, 400)
+    await insertAudit({ adminAddress: c.get('address'), action: 'arena_whitelist', target: season.id, payload: { txHash: body.txHash } })
+    return c.json({ ok: true })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 手动结算某个账户(admin):退赛(frozen)或到期账户立即 recordResult
+app.post('/admin/arena/seasons/:id/agents/:tokenId/settle', chainAdminRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const account = await getArenaAccount(season.id, tokenId)
+    if (!account) return c.json({ error: '该 Agent 未报名本赛季' }, 404)
+    if (account.phase === 'settled') return c.json({ error: '已结算' }, 409)
+    const r = await settleAccount(season, account)
+    await insertAudit({ adminAddress: c.get('address'), action: 'arena_settle', target: `${season.id}/${tokenId}`, payload: r })
+    return c.json({ ok: true, navUsd: r.navUsd, txHash: r.txHash })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 报名:组装 approve + register 两笔 unsigned tx,owner 钱包逐笔签名(前端 chainDispatch 发送)
+// tokenId 从请求体取(路径里没有 :tokenId 段;parseTokenId 读 URL 参数会 NaN)
+function parseBodyTokenId(body: unknown): number | null {
+  const tokenId = (body as { tokenId?: unknown } | null)?.tokenId
+  return typeof tokenId === 'number' && Number.isInteger(tokenId) && tokenId > 0 ? tokenId : null
+}
+
+app.post('/arena/seasons/:id/register', authRequired, async (c) => {
+  const body = await c.req.json<{ tokenId?: number }>().catch(() => null)
+  const tokenId = parseBodyTokenId(body)
+  if (tokenId === null) return c.json({ error: 'tokenId 不合法' }, 400)
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    // 不校验 agent 归属:报名是自愿出资行为,USDC 扣款由链上 transferFrom 强制签名方付款;
+    // 前端只列出当前钱包的 agent,误选无损失
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    if (season.chain_key !== chainKey) return c.json({ error: '请求链与赛季链不一致' }, 400)
+    // 报名门槛 = 合约已部署 + 赛季未结束(开赛后随时可中途加入,与链上 register 同源:
+    // startTime 只控制交易窗口,endTime 前都可报名)
+    const nowSec = Math.floor(Date.now() / 1000)
+    if (!season.season_address) return c.json({ error: '赛季合约尚未部署' }, 409)
+    if (nowSec >= season.end_ts) return c.json({ error: '赛季已结束,无法报名' }, 409)
+    if (await getArenaAccount(season.id, tokenId)) return c.json({ error: '该 Agent 已报名本赛季' }, 409)
+    const txs = buildRegisterTxs(season, tokenId, c.get('address') as Address)
+    return c.json({ ok: true, txs, season: { id: season.id, principal_usd: season.principal_usd, fuel_usd: season.fuel_usd } })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 注册确认:前端发送 register 交易后回传 txHash,后端解析 Registered 事件落库(账户地址以链上为准)
+app.post('/arena/seasons/:id/register-confirm', authRequired, async (c) => {
+  try {
+    const body = await c.req.json<{ txHash?: string; tokenId?: number }>().catch(() => null)
+    const tokenId = parseBodyTokenId(body)
+    if (tokenId === null) return c.json({ error: 'tokenId 不合法' }, 400)
+    if (!body?.txHash?.match(/^0x[0-9a-fA-F]{64}$/)) return c.json({ error: 'txHash 格式不正确' }, 400)
+    const account = await confirmRegister(c.req.param('id'), tokenId, c.get('address'), body.txHash)
+    return c.json({ ok: true, account })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 我的参赛账户查询(owner)
+app.get('/arena/seasons/:id/agents/:tokenId', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const account = await getArenaAccount(season.id, tokenId)
+    if (!account) return c.json({ error: '该 Agent 未报名本赛季' }, 404)
+    const playbook = await getPlaybook(season.id, tokenId)
+    const fuel = await getArenaFuel(season.id, tokenId)
+    const fuelCfg = fuelConfigOf(season, config.llmModel)
+    const gate = fuel ? await decisionGate(season.id, tokenId, fuelCfg) : null
+    return c.json({
+      account,
+      playbook: playbook?.config ?? null,
+      playbookVersion: playbook?.version ?? 0,
+      fuel: fuel ? { balance_usd: fuel.balance_usd, total_spent_usd: fuel.total_spent_usd, decision_halted: gate?.halted ?? false } : null,
+      llmModel: fuelCfg.llmModel,
+    })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// Playbook 保存(owner 赛季中可改,版本化留历史)
+app.put('/arena/seasons/:id/agents/:tokenId/playbook', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ config?: unknown }>().catch(() => null)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const account = await getArenaAccount(season.id, tokenId)
+    if (!account) return c.json({ error: '该 Agent 未报名本赛季' }, 404)
+    if (account.phase !== 'active') return c.json({ error: `当前状态(${account.phase})不可修改策略` }, 409)
+    const config = validatePlaybook(body?.config)
+    const version = await savePlaybook(season.id, tokenId, config, c.get('address'))
+    return c.json({ ok: true, version })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 结算后提取:组装 withdraw(USDC) + withdrawNative 两笔 unsigned tx,owner 签名
+app.post('/arena/seasons/:id/agents/:tokenId/withdraw', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const account = await getArenaAccount(season.id, tokenId)
+    if (!account) return c.json({ error: '该 Agent 未报名本赛季' }, 404)
+    if (account.phase !== 'settled') return c.json({ error: '账户尚未结算,无法提取(紧急停止后等待平台结算)' }, 409)
+    return c.json({ ok: true, txs: buildWithdrawTxs(season, account) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 提取确认:核实链上回执
+app.post('/arena/seasons/:id/agents/:tokenId/withdraw-confirm', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ txHash?: string }>().catch(() => null)
+    if (!body?.txHash?.match(/^0x[0-9a-fA-F]{64}$/)) return c.json({ error: 'txHash 格式不正确' }, 400)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    await confirmWithdraw(c.req.param('id'), tokenId, body.txHash)
+    return c.json({ ok: true })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 净值曲线(owner):按时间升序返回快照
+app.get('/arena/seasons/:id/agents/:tokenId/snapshots', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const limit = Math.min(Number(c.req.query('limit')) || 200, 500)
+    const db = await (await import('./db')).getDb()
+    const res = await db.query(
+      `SELECT nav_usd::text AS nav_usd, breakdown, created_at FROM arena_snapshots
+       WHERE season_id = $1 AND token_id = $2 ORDER BY created_at ASC LIMIT $3`,
+      [season.id, tokenId, limit],
+    )
+    return c.json({ snapshots: res.rows })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 紧急冻结:组装 freeze unsigned tx,owner 一笔签名
+app.post('/arena/seasons/:id/agents/:tokenId/freeze', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const account = await getArenaAccount(season.id, tokenId)
+    if (!account) return c.json({ error: '该 Agent 未报名本赛季' }, 404)
+    if (account.phase !== 'active') return c.json({ error: `当前状态(${account.phase})不可冻结` }, 409)
+    return c.json({ ok: true, txs: [buildFreezeTx(season, account)] })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 冻结确认:解析链上 Frozen 事件后置 frozen(等待平台结算后退赛取回)
+app.post('/arena/seasons/:id/agents/:tokenId/freeze-confirm', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ txHash?: string }>().catch(() => null)
+    if (!body?.txHash?.match(/^0x[0-9a-fA-F]{64}$/)) return c.json({ error: 'txHash 格式不正确' }, 400)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    await confirmFreeze(c.req.param('id'), tokenId, body.txHash)
+    return c.json({ ok: true })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+
+/** 统一错误出口:人格完整性问题 422,技能问题按其 status,竞技场按其 status,LLM 网关异常 502,其余 500 */
 function handleErr(c: Context, err: unknown) {
   if (err instanceof AuthError) {
+    return c.json({ error: err.message }, err.status)
+  }
+  if (err instanceof ArenaError) {
     return c.json({ error: err.message }, err.status)
   }
   if (err instanceof PersonaError) {
@@ -1164,6 +1595,7 @@ async function main() {
   await loadSkills()
   await syncSkillsToDb()
   startScheduler() // M3:心跳驱动自主社交
+  startArenaScheduler() // P4:竞技场统一调度(两层 tick + 燃料闸门)
   serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`Agent 服务已启动: http://localhost:${info.port} (模型: ${config.llmModel}, 链: ${config.chain.name})`)
   })
@@ -1171,6 +1603,7 @@ async function main() {
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     process.on(sig, () => {
       stopScheduler()
+      stopArenaScheduler()
       closeDb().finally(() => process.exit(0))
     })
   }

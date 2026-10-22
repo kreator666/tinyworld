@@ -1,0 +1,20 @@
+{
+  "id": "arena-strategies",
+  "name": "竞技场策略",
+  "version": "0.1.0",
+  "description": "竞技场自主交易:固定收益(Aave 存取)/现货兑换(DEX)/永续(GMX)。资金出口经 ArenaAccount 链上白名单,提案经竞技场策略引擎(无人工审批),盈亏写入 arena_trades。仅参赛 agent 由平台在报名时安装,不在默认技能列表。",
+  "tools": [
+    "arena_status",
+    "arena_supply",
+    "arena_withdraw",
+    "arena_swap",
+    "arena_perp_open",
+    "arena_perp_close"
+  ],
+  "permissions": [],
+  "scope": "owner",
+  "evmOnly": true,
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

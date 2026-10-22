@@ -91,18 +91,11 @@ async function inCooldown(chainKey: string, action: string): Promise<boolean> {
 }
 
 /**
- * 评估提案:
- * - rejected:白名单外协议/代币、chainId 不在 CHAINS 白名单或该链无 defi 合约配置(硬规则,人工也不能放行)
- * - needsApproval:估值失败(熔断)、超单笔限额、超日累计、冷却期内(软规则,人工审批可放行)
- * - execute:全部通过
- *
- * 多链重构(方案A):chainId 不再要求等于请求链,只要求落在 CHAINS 白名单且该链配置了 defi 合约;
- * 协议/代币白名单与日累计限额全部按"提案目标链"解析,与请求链解耦。
+ * 硬规则校验(导出供竞技场引擎复用):白名单外协议/代币、chainId 不在 CHAINS 白名单或该链无 defi 合约配置。
+ * 返回拒绝原因列表(空 = 通过)。软规则(限额/审批)不在此列。
  */
-export async function evaluateProposal(chainKey: string, p: Proposal): Promise<Verdict> {
+export async function checkProposalHardRules(chainKey: string, p: Proposal): Promise<string[]> {
   const hardFail: string[] = []
-  const soft: string[] = []
-
   // 链硬规则:chainId 必须对应 CHAINS 白名单内的链,且该链必须配置 defi 合约(无配置直接拒绝并说明)
   const pChainKey = chainKeyByChainId(p.chainId)
   const pCfg = pChainKey ? getChainContext(pChainKey).cfg : null
@@ -130,11 +123,7 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
       hardFail.push(`协议不在白名单: ${p.protocol}(action=${p.action} 仅允许 ${pCfg.aave?.pool ?? '未配置 Aave'})`)
     }
 
-    // 代币白名单按 action 解耦:
-    // - swap: 只能走 DEX 基础代币(wNative/USDC/USDT)
-    // - supply/withdraw: 只能从 Aave 资产配置列表出
-    // - staking/unstake/claim_stake: DEX 基础代币 + sAVAX(unstake 时)
-    // - gmx_order: 只能从 GMX 市场的 longToken/shortToken 出
+    // 代币白名单按 action 解耦(见 evaluateProposal 注释)
     const swapWhitelist = [pCfg.defi.wNative, pCfg.defi.usdc, pCfg.defi.usdt]
       .filter((a) => a !== '0x0000000000000000000000000000000000000000')
       .map((a) => a.toLowerCase())
@@ -165,8 +154,25 @@ export async function evaluateProposal(chainKey: string, p: Proposal): Promise<V
       hardFail.push(`tokenOut 不在白名单: ${p.params.tokenOut}`)
     }
   }
+  return hardFail
+}
 
+/**
+ * 评估提案:
+ * - rejected:白名单外协议/代币、chainId 不在 CHAINS 白名单或该链无 defi 合约配置(硬规则,人工也不能放行)
+ * - needsApproval:估值失败(熔断)、超单笔限额、超日累计、冷却期内(软规则,人工审批可放行)
+ * - execute:全部通过
+ *
+ * 多链重构(方案A):chainId 不再要求等于请求链,只要求落在 CHAINS 白名单且该链配置了 defi 合约;
+ * 协议/代币白名单与日累计限额全部按"提案目标链"解析,与请求链解耦。
+ */
+export async function evaluateProposal(chainKey: string, p: Proposal): Promise<Verdict> {
+  const soft: string[] = []
+
+  const hardFail = await checkProposalHardRules(chainKey, p)
   if (hardFail.length > 0) return { verdict: 'rejected', reasons: hardFail }
+
+  const pChainKey = chainKeyByChainId(p.chainId)!
 
   // 熔断:估值失败一律转人工,绝不自动执行
   if (p.estimatedValueUsd === null) {

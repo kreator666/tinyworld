@@ -210,6 +210,7 @@ export default function AdminPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Link to="/admin/arena" className="btn-ghost text-xs">竞技场管理 →</Link>
           <button
             className="btn-ghost text-xs"
             onClick={() => address && refreshPartStates()}

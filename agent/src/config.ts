@@ -205,8 +205,10 @@ export const config = {
   agentServiceAddress: env('AGENT_SERVICE_ADDRESS'),
   // 心跳调度器周期(秒),M3 自主社交用;验证时可调小(如 15)
   heartbeatSeconds: Number(env('HEARTBEAT_SECONDS', '300')),
+  arenaSchedulerSeconds: Number(env('ARENA_SCHEDULER_SECONDS', '30')),
   // Agent 热钱包私钥(M4 DeFi 执行用;未配置时 defi-swap 工具只报价不执行)。永远不要打印/提交
   agentPrivateKey: env('AGENT_PRIVATE_KEY'),
+  arenaAdminPrivateKey: env('ARENA_ADMIN_PRIVATE_KEY') || env('AGENT_PRIVATE_KEY'),
   // Agent Solana 热钱包私钥(base58 编码的 64 字节 secret key,defi-swap-sol 经 Jupiter 执行兑换时签名用)。
   // 永远不要打印/提交真实值
   agentSolanaKey: env('AGENT_SOLANA_PRIVATE_KEY', ''),

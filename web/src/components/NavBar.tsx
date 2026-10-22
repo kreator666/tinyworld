@@ -13,6 +13,7 @@ const navItems = [
   { to: '/profile', label: '个人主页' },
   { to: '/backpack', label: '资产背包' },
   { to: '/plaza', label: '社交广场' },
+  { to: '/arena', label: '竞技场' },
   { to: '/chat', label: '消息' },
 ]
 

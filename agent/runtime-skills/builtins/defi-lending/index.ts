@@ -103,23 +103,14 @@ async function estimateValueUsd(
   }
 }
 
-/** 已执行的借贷操作落 tasks 表(审计 + 策略引擎日累计/冷却的数据源) */
+/** 已执行的借贷操作落 tasks 表(委托公共 recordDefiTask,不再单独维护一份 INSERT) */
 async function recordLendingTask(
   chainKey: string,
   tokenId: number,
   proposal: Proposal,
   result: { txHash: string; amount: string; usdValue: number | null },
 ) {
-  const db = await getDb()
-  await db.query('INSERT INTO tasks (id, chain_key, token_id, type, status, payload, result) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
-    randomUUID(),
-    chainKey,
-    tokenId,
-    'defi',
-    'done',
-    JSON.stringify({ action: proposal.action, params: proposal.params, reason: proposal.reason }),
-    JSON.stringify(result),
-  ])
+  await recordDefiTask(chainKey, tokenId, proposal, { txHash: result.txHash, amountOut: result.amount, usdValue: result.usdValue })
 }
 
 /** 把完整 Proposal 中需要回传后端记 tasks 表的字段抽出来,附加到 sign_tx action */

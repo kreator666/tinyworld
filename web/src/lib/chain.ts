@@ -609,6 +609,16 @@ export async function unequipPart(owner: Address, tokenId: number, slot: number)
 // 管理员发行
 // ============================================================
 
+/** 判断地址是否为 DIDIdentity(平台根合约)owner —— 竞技场管理门槛,与后端 chainAdminRequired 同源 */
+export async function isIdentityOwner(account: Address): Promise<boolean> {
+  const owner = (await readClient().readContract({
+    address: A().identity,
+    abi: identityAbi,
+    functionName: 'owner',
+  })) as Address
+  return owner.toLowerCase() === account.toLowerCase()
+}
+
 /** 判断地址是否为 DIDParts owner */
 export async function isPartsOwner(account: Address): Promise<boolean> {
   const owner = (await readClient().readContract({
@@ -843,9 +853,12 @@ export async function sendTransactions(owner: Address, unsignedTxs: EvmUnsignedT
       params: [
         {
           from: owner,
-          to: tx.to,
+          // 部署交易无 to;EIP 约定合约创建必须省略 to
+          ...(tx.to && tx.to !== '0x' ? { to: tx.to } : {}),
           data: tx.data,
           value: `0x${BigInt(tx.value).toString(16)}`,
+          // 后端给定显式 nonce 时严格照办(三连号部署),否则由钱包自行管理
+          ...(tx.nonce !== undefined ? { nonce: `0x${tx.nonce.toString(16)}` } : {}),
         },
       ],
     }, 60000)) as string

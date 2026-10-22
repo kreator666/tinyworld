@@ -329,6 +329,115 @@ export async function initSchema(): Promise<void> {
     FROM conversations c
     WHERE messages.conversation_id = c.id AND messages.chain_key <> c.chain_key;
   `)
+
+  // ============================================================
+  // 竞技场(Arena,P1):赛季 / 参赛账户 / 燃料 / 快照 / 交易 / 策略 / 调度队列
+  // token_id 沿用全库 NUMERIC(20,0) 约定
+  // ============================================================
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS arena_seasons (
+      id TEXT PRIMARY KEY,
+      chain_key TEXT NOT NULL,
+      season_address TEXT NOT NULL DEFAULT '',       -- 链上 ArenaSeason 代理地址(''=未部署)
+      account_impl_address TEXT NOT NULL DEFAULT '',
+      usdc_address TEXT NOT NULL,
+      principal_usd NUMERIC(20,6) NOT NULL,
+      fuel_usd NUMERIC(20,6) NOT NULL,
+      start_ts BIGINT NOT NULL,
+      end_ts BIGINT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'created'
+        CHECK (status IN ('created', 'open', 'active', 'settling', 'settled')),
+      config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS arena_accounts (
+      season_id TEXT NOT NULL REFERENCES arena_seasons(id),
+      chain_key TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      owner TEXT NOT NULL,
+      account_address TEXT NOT NULL,
+      phase TEXT NOT NULL DEFAULT 'active' CHECK (phase IN ('active', 'frozen', 'settled', 'eliminated')),
+      nav_usd NUMERIC(20,6),
+      eliminated_reason TEXT,
+      register_tx TEXT NOT NULL DEFAULT '',
+      settled_tx TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (season_id, token_id)
+    );
+    CREATE INDEX IF NOT EXISTS arena_accounts_addr_idx ON arena_accounts (account_address);
+
+    CREATE TABLE IF NOT EXISTS arena_fuel (
+      season_id TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      balance_usd NUMERIC(20,6) NOT NULL,
+      total_spent_usd NUMERIC(20,6) NOT NULL DEFAULT 0,
+      last_deduction_ts TIMESTAMPTZ,
+      PRIMARY KEY (season_id, token_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS arena_snapshots (
+      id TEXT PRIMARY KEY,
+      season_id TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      nav_usd NUMERIC(20,6) NOT NULL,
+      breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS arena_snapshots_idx ON arena_snapshots (season_id, token_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS arena_trades (
+      id TEXT PRIMARY KEY,
+      season_id TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      strategy_type TEXT NOT NULL,
+      action TEXT NOT NULL,
+      tx_hash TEXT,
+      pnl_usd NUMERIC(20,6),
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS arena_trades_idx ON arena_trades (season_id, token_id, created_at);
+
+    -- Playbook(owner 可改,版本化保留全量历史)
+    CREATE TABLE IF NOT EXISTS arena_playbooks (
+      season_id TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      version INTEGER NOT NULL,
+      config JSONB NOT NULL,
+      updated_by TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (season_id, token_id, version)
+    );
+
+    -- 调度队列(统一调度器驱动;落库保证崩溃恢复)
+    CREATE TABLE IF NOT EXISTS arena_due (
+      season_id TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      due_ts BIGINT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('cheap', 'decision')),
+      priority INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done')),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (season_id, token_id, kind)
+    );
+
+    -- 燃料流水(P2):每次 LLM 调用一行,可回放对账
+    CREATE TABLE IF NOT EXISTS arena_fuel_ledger (
+      id TEXT PRIMARY KEY,
+      season_id TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL,
+      output_tokens INTEGER NOT NULL,
+      cost_usd NUMERIC(20,6) NOT NULL,
+      balance_after_usd NUMERIC(20,6) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS arena_fuel_ledger_idx ON arena_fuel_ledger (season_id, token_id, created_at);
+  `)
 }
 
 export interface ChainRow {
