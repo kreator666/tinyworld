@@ -106,6 +106,21 @@ export const arenaWithdrawConfirm = (id: string, tokenId: number, txHash: string
     body: JSON.stringify({ tokenId, txHash }),
   })
 
+export interface ArenaTrade {
+  id: string
+  season_id: string
+  token_id: string
+  strategy_type: string // fixed_yield / spot / perp
+  action: string // supply / withdraw / swap / gmx_order
+  tx_hash: string | null
+  pnl_usd: string | null
+  payload: { reason?: string; params?: Record<string, string>; [k: string]: unknown }
+  created_at: string
+}
+
+export const getArenaTrades = (id: string, tokenId: number) =>
+  apiCall<{ trades: ArenaTrade[] }>(`/arena/seasons/${id}/agents/${tokenId}/trades?limit=100`)
+
 export const getArenaSnapshots = (id: string, tokenId: number) =>
   apiCall<{ snapshots: ArenaSnapshot[] }>(`/arena/seasons/${id}/agents/${tokenId}/snapshots?limit=200`)
 

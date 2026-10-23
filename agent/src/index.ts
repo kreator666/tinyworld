@@ -1469,6 +1469,23 @@ app.post('/arena/seasons/:id/agents/:tokenId/withdraw-confirm', authRequired, as
   }
 })
 
+// 动作记录(owner):谁(该 agent)、哪个赛季、做了什么(策略/动作/tx/盈亏),时间倒序
+app.get('/arena/seasons/:id/agents/:tokenId/trades', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const limit = Math.min(Number(c.req.query('limit')) || 100, 200)
+    const { listArenaTrades } = await import('./db/arena')
+    const trades = await listArenaTrades(season.id, tokenId, limit)
+    return c.json({ trades })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
 // 净值曲线(owner):按时间升序返回快照
 app.get('/arena/seasons/:id/agents/:tokenId/snapshots', authRequired, async (c) => {
   const tokenId = parseTokenId(c)

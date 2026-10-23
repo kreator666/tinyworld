@@ -226,6 +226,29 @@ export async function insertArenaTrade(row: {
   )
 }
 
+export interface ArenaTradeRow {
+  id: string
+  season_id: string
+  token_id: string
+  strategy_type: string
+  action: string
+  tx_hash: string | null
+  pnl_usd: string | null
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+/** 动作记录:某 agent 在某赛季的全部动作(时间倒序) */
+export async function listArenaTrades(seasonId: string, tokenId: number, limit = 100): Promise<ArenaTradeRow[]> {
+  const db = await getDb()
+  const res = await db.query<ArenaTradeRow>(
+    `SELECT * FROM arena_trades WHERE season_id = $1 AND token_id = $2
+     ORDER BY created_at DESC LIMIT $3`,
+    [seasonId, tokenId, limit],
+  )
+  return res.rows
+}
+
 /** 该账户当日已实现盈亏(USD,arena_trades 表归因) */
 export async function arenaDailyPnl(seasonId: string, tokenId: number): Promise<number> {
   const db = await getDb()

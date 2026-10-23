@@ -8,6 +8,8 @@ import {
   arenaFreezeConfirm,
   arenaWithdraw,
   arenaWithdrawConfirm,
+  getArenaTrades,
+  type ArenaTrade,
   arenaRegister,
   arenaRegisterConfirm,
   getArenaSeason,
@@ -75,6 +77,7 @@ export default function ArenaPage() {
   const [agentTokenId, setAgentTokenId] = useState<number>(0)
   const [mine, setMine] = useState<MyArenaAccount | null>(null)
   const [navPoints, setNavPoints] = useState<{ t: string; v: number }[]>([])
+  const [trades, setTrades] = useState<ArenaTrade[]>([])
   const [busy, setBusy] = useState(false)
   const [playbookDraft, setPlaybookDraft] = useState<Record<string, unknown> | null>(null)
   const isEvm = active.family === 'evm'
@@ -100,6 +103,12 @@ export default function ArenaPage() {
           setPlaybookDraft(m.playbook ?? defaultPlaybook())
           const snaps = await getArenaSnapshots(id, tokenId)
           setNavPoints(snaps.snapshots.map((s) => ({ t: s.created_at, v: Number(s.nav_usd) })))
+          try {
+            const t = await getArenaTrades(id, tokenId)
+            setTrades(t.trades)
+          } catch {
+            setTrades([])
+          }
         } catch {
           setMine(null)
           setPlaybookDraft(null)
@@ -335,6 +344,34 @@ export default function ArenaPage() {
                     </div>
                   </div>
                   <NavCurve points={navPoints} />
+                  {/* 动作记录:谁(agent#tokenId)、哪个赛季(当前)、做了什么 */}
+                  <div>
+                    <div className="text-xs text-slate-400 mb-2">动作记录(谁:Agent #{agentTokenId} · 赛季:{selected})</div>
+                    {trades.length === 0 ? (
+                      <p className="text-[10px] text-slate-600 text-center py-2">暂无动作 —— 调度器驱动决策后自动记录(固收/现货/永续每笔上链动作)</p>
+                    ) : (
+                      <div className="max-h-48 overflow-y-auto space-y-1">
+                        {trades.map((t) => (
+                          <div key={t.id} className="flex items-center justify-between text-[10px] bg-white/5 rounded px-2 py-1.5">
+                            <span className="text-slate-300">
+                              <span className="text-sky-300">{{ fixed_yield: '固收', spot: '现货', perp: '永续' }[t.strategy_type] ?? t.strategy_type}</span>
+                              {' / '}
+                              {{ supply: '存入', withdraw: '取出', swap: '兑换', gmx_order: '永续单' }[t.action] ?? t.action}
+                              <span className="block text-slate-500 truncate max-w-[220px]">{t.payload?.reason as string}</span>
+                            </span>
+                            <span className="text-right shrink-0">
+                              {t.tx_hash ? (
+                                <a href={`${active.explorer}/tx/${t.tx_hash}`} target="_blank" rel="noreferrer" className="text-sky-400 hover:underline block">{t.tx_hash.slice(0, 8)}…</a>
+                              ) : (
+                                <span className="text-slate-600">-</span>
+                              )}
+                              <span className="block text-slate-500">{new Date(t.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   {mine.account.phase === 'active' && (
                     <button onClick={onFreeze} disabled={busy} className="w-full py-2 rounded bg-rose-500/80 hover:bg-rose-500 text-white text-sm font-bold disabled:opacity-50">
                       紧急停止并退赛
