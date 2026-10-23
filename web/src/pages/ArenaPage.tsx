@@ -354,9 +354,9 @@ export default function ArenaPage() {
                         {trades.map((t) => (
                           <div key={t.id} className="flex items-center justify-between text-[10px] bg-white/5 rounded px-2 py-1.5">
                             <span className="text-slate-300">
-                              <span className="text-sky-300">{{ fixed_yield: '固收', spot: '现货', perp: '永续' }[t.strategy_type] ?? t.strategy_type}</span>
+                              <span className="text-sky-300">{{ fixed_yield: '固收', spot: '现货', perp: '永续', decision: '决策' }[t.strategy_type] ?? t.strategy_type}</span>
                               {' / '}
-                              {{ supply: '存入', withdraw: '取出', swap: '兑换', gmx_order: '永续单' }[t.action] ?? t.action}
+                              {{ supply: '存入', withdraw: '取出', swap: '兑换', gmx_order: '永续单', hold: '观望', acted: '执行动作', rejected_all: '动作被拒' }[t.action] ?? t.action}
                               <span className="block text-slate-500 truncate max-w-[220px]">{t.payload?.reason as string}</span>
                             </span>
                             <span className="text-right shrink-0">

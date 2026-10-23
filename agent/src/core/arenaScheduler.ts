@@ -5,6 +5,7 @@ import {
   ArenaAccountRow,
   ArenaSeasonRow,
   bumpDuePriority,
+  insertArenaTrade,
   ensureArenaDue,
   lastDecisionAt,
   lastSnapshotAt,
@@ -228,6 +229,21 @@ async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow,
         }
       }
       await recordArenaTask(chainKey, tokenId, { action: 'decision_tick', season: season.id }, { actions: results })
+      // 决策留痕:即使观望也落一条 arena_trades(owner 页可看到"模型想了但没动手"及原始输出)
+      await insertArenaTrade({
+        season_id: season.id,
+        token_id: tokenId,
+        strategy_type: 'decision',
+        action: results.length === 0 ? 'hold' : results.every((r) => !r.ok) ? 'rejected_all' : 'acted',
+        tx_hash: null,
+        pnl_usd: null,
+        payload: {
+          model: fuelCfg.llmModel,
+          fuelSpent: true,
+          actions: results,
+          raw: output.slice(0, 600),
+        },
+      }).catch((e) => console.error('[arena] 决策留痕失败:', e instanceof Error ? e.message : e))
       console.log(`[arena:${chainKey}] decision tick(token=${tokenId}): ${results.map((r) => `${r.action}${r.ok ? '✓' : '✗'}`).join(' ') || 'hold'}`)
     } finally {
       gate.running -= 1
