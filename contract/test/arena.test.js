@@ -318,6 +318,27 @@ describe("Arena 竞技场合约", function () {
     );
   });
 
+  it("管理员可提取合约内滞留代币(withdrawFee),陌生人不可", async function () {
+    const s = await deploySeasonWithWhitelist();
+    const accountAddr = await register(s, user1, 88n);
+    // 有人误向赛季合约转入 USDC(模拟极端情况)
+    await usdc.connect(user1).transfer(await s.getAddress(), 5n * 10n ** 6n);
+    assert.strictEqual(await usdc.balanceOf(await s.getAddress()), 5n * 10n ** 6n, "合约应持有误转入的 USDC");
+
+    // 陌生人不可提取
+    await expectCustomError(
+      s.connect(stranger).withdrawFee(await usdc.getAddress(), stranger.address, 5n * 10n ** 6n),
+      s,
+      "OwnableUnauthorizedAccount"
+    );
+    // owner 提取到指定地址
+    const before = await usdc.balanceOf(feeRecipient.address);
+    await s.withdrawFee(await usdc.getAddress(), feeRecipient.address, 5n * 10n ** 6n);
+    assert.strictEqual((await usdc.balanceOf(feeRecipient.address)) - before, 5n * 10n ** 6n, "owner 应能提取滞留代币");
+    assert.strictEqual(await usdc.balanceOf(await s.getAddress()), 0n);
+    void accountAddr;
+  });
+
   it("金额可配置:不同赛季可用不同 principal/fuel", async function () {
     const s = await deploySeason({ principal: 100n * 10n ** 6n, fuel: 15n * 10n ** 6n });
     const accountAddr = await register(s, user1, 1n);

@@ -52,6 +52,7 @@ contract ArenaSeason is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     error AlreadyRegistered(address account);
     error RegistrationClosed();
     error NotParticipant(address account);
+    error TransferFailed();
     error AlreadySettled();
     error SettlementNotOpen();
     error NothingToSettle();
@@ -185,6 +186,14 @@ contract ArenaSeason is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         startTime = startTime_;
         endTime = endTime_;
         emit TimesUpdated(startTime_, endTime_);
+    }
+
+    /// @notice 提取合约内滞留的 ERC-20(燃料在注册时直付 feeRecipient,正常不会滞留;
+    /// 此方法用于救援误转入的代币或极端情况下的燃料结余)。onlyOwner。
+    function withdrawFee(address token, address to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
+        (bool ok, bytes memory ret) = token.call(abi.encodeCall(IERC20.transfer, (to, amount)));
+        if (!ok || (ret.length > 0 && !abi.decode(ret, (bool)))) revert TransferFailed();
     }
 
     /// @notice 管理员熔断:净值快照完成后调用,所有账户停止新开交易(平仓白名单调用不受限——
