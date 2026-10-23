@@ -5,6 +5,8 @@ import { useChainConfig } from '../store/chainConfigStore'
 import {
   adminArenaSettle,
   adminCreateSeason,
+  adminSettleConfirm,
+  adminSettleTxs,
   adminDeployConfirm,
   adminDeployTxs,
   adminUpdateSeason,
@@ -213,6 +215,27 @@ export default function AdminArenaPage() {
     }
   }
 
+  /** 赛季结算:owner 钱包签名(熔断 + 逐账户 recordResult);服务端自动结算仅当服务端密钥=合约 owner 时可用 */
+  const onSettleSeason = async (id: string) => {
+    if (!address) return
+    const pending = (detail[id] ?? []).filter((e) => e.phase !== 'settled')
+    if (!window.confirm(`将签名 ${pending.length + 1} 笔交易(熔断 + ${pending.length} 个账户结算),按当前链上净值登记并解锁提取。确定继续?`)) return
+    setBusy(true)
+    try {
+      const r = await adminSettleTxs(id)
+      showToast(`请在钱包中依次确认 ${r.txs.length} 笔结算交易`)
+      const txHashes = await sendTransactions(address, r.txs)
+      showToast('交易已广播,等待链上确认…')
+      const c = await adminSettleConfirm(id, txHashes)
+      showToast(`结算完成:${c.settled} 个账户已登记净值`)
+      reload()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '结算失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const onDeploy = async (id: string) => {
     if (!address) return
     setBusy(true)
@@ -357,7 +380,14 @@ export default function AdminArenaPage() {
               <span className="text-xs text-slate-400 ml-2">{s.chain_key} · {STATUS_LABEL[s.status] ?? s.status}</span>
               <span className="block text-[10px] text-slate-500">{fmtTime(s.start_ts)} ~ {fmtTime(s.end_ts)} · 本金 ${Number(s.principal_usd).toFixed(0)} + 燃料 ${Number(s.fuel_usd).toFixed(0)}U · 模型 {(s.config as { llmModel?: string }).llmModel ?? '-'}</span>
             </div>
-            <div className="text-[10px] text-emerald-300/80">部署完成即就绪,到开始时间自动开赛,无需人工开放</div>
+            <div className="flex items-center gap-2">
+              <div className="text-[10px] text-emerald-300/80">部署完成即就绪,到开始时间自动开赛,无需人工开放</div>
+              {s.status === 'settling' && (detail[s.id] ?? []).some((e) => e.phase !== 'settled') && (
+                <button onClick={() => onSettleSeason(s.id)} disabled={busy} className="px-3 py-1 rounded bg-amber-500/80 hover:bg-amber-500 text-white text-xs font-bold disabled:opacity-50">
+                  触发结算(钱包签名)
+                </button>
+              )}
+            </div>
           </div>
 
           {/* 一键部署:字段全部预填,管理员签名广播即可 */}

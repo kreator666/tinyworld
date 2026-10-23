@@ -51,6 +51,7 @@ import { getArenaAccount, insertArenaSeason, listArenaAccounts, listArenaSeasons
 import { decisionGate, fuelConfigOf } from './core/arenaFuel'
 import { settleAccount } from './core/arenaSettlement'
 import { buildDeployTxs, buildWhitelistTx, resolveDeployReceipts, whitelistTemplate } from './core/arenaDeploy'
+import { buildSettleTxs, confirmSettleTxs } from './core/arenaSettlement'
 import { getPublicClient, getWalletClient } from './chain/clients'
 import { toFunctionSelector, type Hex as ViemHex } from 'viem'
 import { SOL_MINT, usdcMintOf } from './chain/jupiter'
@@ -1329,7 +1330,31 @@ app.post('/admin/arena/seasons/:id/whitelist-confirm', chainAdminRequired, async
   }
 })
 
-// 手动结算某个账户(admin):退赛(frozen)或到期账户立即 recordResult
+// 结算交易组装(admin):未熔断先 haltTrading + 逐账户 recordResult,owner 钱包签名广播
+app.post('/admin/arena/seasons/:id/settle-txs', chainAdminRequired, async (c) => {
+  try {
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const r = await buildSettleTxs(season)
+    return c.json({ ok: true, txs: r.txs, targets: r.targets })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 结算确认(admin):解析 ResultRecorded 事件落库;全部结清自动归档赛季
+app.post('/admin/arena/seasons/:id/settle-confirm', chainAdminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{ txHashes?: string[] }>().catch(() => null)
+    if (!body?.txHashes?.length) return c.json({ error: 'txHashes 不能为空' }, 400)
+    const r = await confirmSettleTxs(c.req.param('id'), body.txHashes)
+    await insertAudit({ adminAddress: c.get('address'), action: 'arena_settle_confirm', target: c.req.param('id'), payload: r })
+    return c.json({ ok: true, ...r })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 手动结算某个账户(admin):退赛(frozen)或到期账户立即 recordResult(服务端签名,仅当服务端密钥=合约 owner 时可用)
 app.post('/admin/arena/seasons/:id/agents/:tokenId/settle', chainAdminRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return

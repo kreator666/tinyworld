@@ -185,6 +185,20 @@ export const adminWhitelistConfirm = (id: string, txHash: string) =>
     body: JSON.stringify({ txHash }),
   })
 
+/** 结算交易组装:未熔断 haltTrading + 逐账户 recordResult(owner 钱包签名) */
+export const adminSettleTxs = (id: string) =>
+  apiCall<{ ok: boolean; txs: UnsignedTx[]; targets: { tokenId: number; account: string; navUsd: number }[] }>(
+    `/admin/arena/seasons/${id}/settle-txs`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) },
+  )
+
+export const adminSettleConfirm = (id: string, txHashes: string[]) =>
+  apiCall<{ ok: boolean; settled: number }>(`/admin/arena/seasons/${id}/settle-confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ txHashes }),
+  })
+
 export const adminArenaSettle = (id: string, tokenId: number) =>
   apiCall<{ ok: boolean; navUsd: number; txHash: string }>(`/admin/arena/seasons/${id}/agents/${tokenId}/settle`, {
     method: 'POST',

@@ -23,7 +23,7 @@ import { deriveSeasonStatus } from './arena'
 // - 退赛结算走同一函数:owner freeze 后 recordResult 的 frozen 分支随时可结
 // ============================================================
 
-const seasonAbi = [
+export const seasonAbi = [
   {
     type: 'function',
     name: 'haltTrading',
@@ -118,4 +118,104 @@ export async function settleDueSeasons(nowSec = Math.floor(Date.now() / 1000)): 
       }
     }
   }
+}
+
+// ------------------------------------------------------------------
+// 钱包签名结算(管理端):组装 haltTrading(未熔断时) + 逐账户 recordResult 的
+// unsigned txs,由赛季合约 owner 钱包签名广播;确认端解析 ResultRecorded 事件落库。
+// 自动结算(settleDueSeasons)走服务端密钥,仅在服务端密钥=合约 owner 时可用(如主网);
+// 测试网赛季由 MetaMask 部署时,必须用这里的人工签名流程。
+// ------------------------------------------------------------------
+
+import { encodeFunctionData } from 'viem'
+import { getPublicClient } from '../chain/clients'
+import { getChainContext } from '../chain/registry'
+import type { UnsignedTx } from '../chain/defi'
+import { getArenaAccountByAddress } from '../db/arena'
+
+/** 组装结算交易:未熔断先 haltTrading,再对每个未结算账户 recordResult(当前链上净值) */
+export async function buildSettleTxs(season: ArenaSeasonRow): Promise<{ txs: UnsignedTx[]; targets: { tokenId: number; account: string; navUsd: number }[] }> {
+  if (!season.season_address) throw new Error('赛季合约尚未部署')
+  const chainKey = season.chain_key
+  const { cfg } = getChainContext(chainKey)
+  const client = getPublicClient(chainKey)
+  const halted = (await client.readContract({
+    address: season.season_address as Address,
+    abi: seasonAbi,
+    functionName: 'tradingHalted',
+  })) as boolean
+  const accounts = (await listArenaAccounts(season.id)).filter((a) => a.phase === 'active' || a.phase === 'frozen')
+  if (accounts.length === 0) throw new Error('没有待结算账户')
+
+  const txs: UnsignedTx[] = []
+  if (!halted) {
+    txs.push({
+      to: season.season_address as Address,
+      data: encodeFunctionData({ abi: seasonAbi, functionName: 'haltTrading' }),
+      value: '0',
+      chainId: cfg.chainId,
+      description: '熔断:停止本赛季一切新开交易',
+    })
+  }
+  const targets: { tokenId: number; account: string; navUsd: number }[] = []
+  for (const a of accounts) {
+    const nav = await computeNav(chainKey, a.account_address as Address)
+    targets.push({ tokenId: Number(a.token_id), account: a.account_address, navUsd: nav.navUsd })
+    txs.push({
+      to: season.season_address as Address,
+      data: encodeFunctionData({
+        abi: seasonAbi,
+        functionName: 'recordResult',
+        args: [a.account_address as Address, navToUnits(nav.navUsd)],
+      }),
+      value: '0',
+      chainId: cfg.chainId,
+      description: `结算 Agent #${a.token_id}:NAV $${nav.navUsd.toFixed(2)}`,
+    })
+  }
+  return { txs, targets }
+}
+
+const resultRecordedAbi = [
+  {
+    type: 'event',
+    name: 'ResultRecorded',
+    inputs: [
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'navUsd', type: 'uint256' },
+    ],
+  },
+] as const
+
+/** 确认:解析每笔 recordResult 回执的 ResultRecorded 事件,按账户地址落库结算值 */
+export async function confirmSettleTxs(seasonId: string, txHashes: string[]): Promise<{ settled: number }> {
+  const { getArenaSeason } = await import('../db/arena')
+  const season = await getArenaSeason(seasonId)
+  if (!season) throw new Error('赛季不存在')
+  const client = getPublicClient(season.chain_key)
+  const { decodeEventLog } = await import('viem')
+  let settled = 0
+  for (const h of txHashes) {
+    const receipt = await client.getTransactionReceipt({ hash: h as Hex })
+    if (!receipt || receipt.status !== 'success') throw new Error(`结算交易未成功: ${h}`)
+    for (const log of receipt.logs) {
+      if (log.address.toLowerCase() !== season.season_address.toLowerCase()) continue
+      try {
+        const evt = decodeEventLog({ abi: resultRecordedAbi, eventName: 'ResultRecorded', topics: log.topics as [Hex, ...Hex[]], data: log.data })
+        const row = await getArenaAccountByAddress(evt.args.account)
+        if (!row || row.season_id !== seasonId) continue
+        await updateArenaAccountPhase(seasonId, Number(row.token_id), 'settled', {
+          nav_usd: (Number(evt.args.navUsd) / 1e6).toString(),
+          settled_tx: h,
+        })
+        settled += 1
+      } catch {
+        // 非 ResultRecorded 日志(如 haltTrading 事件),跳过
+      }
+    }
+  }
+  // 全部结清 → 赛季归档
+  const remaining = (await listArenaAccounts(seasonId)).filter((a) => a.phase === 'active' || a.phase === 'frozen')
+  if (remaining.length === 0) await updateArenaSeason(seasonId, { status: 'settled' })
+  return { settled }
 }
