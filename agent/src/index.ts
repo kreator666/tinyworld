@@ -1585,10 +1585,15 @@ function handleErr(c: Context, err: unknown) {
   if (msg.startsWith('未知链:')) {
     return c.json({ error: msg }, 400)
   }
-  // viem/网络错误和 LLM 网关错误都按上游故障处理
-  if (/fetch|network|timeout|LLM|api|429|5\d\d/i.test(msg)) {
-    console.error('[upstream]', msg)
+  // LLM 网关专属错误(不再把链上 RPC/外部 API 的张冠李戴到 LLM 头上)
+  if (/LLM|chat\/completions|aiping|网关|gateway|429/i.test(msg)) {
+    console.error('[llm]', msg)
     return c.json({ error: 'LLM 网关暂时不可用,请稍后重试' }, 502)
+  }
+  // 链上 RPC / 外部行情 API 等上游网络故障:如实告知类别
+  if (/fetch|network|timeout|ECONN|ETIMEDOUT|5\d\d/i.test(msg)) {
+    console.error('[upstream]', msg)
+    return c.json({ error: '网络请求失败(链上节点或外部 API),请稍后重试: ' + msg.slice(0, 80) }, 502)
   }
   console.error('[internal]', msg)
   return c.json({ error: '服务内部错误: ' + msg.slice(0, 120) }, 500)

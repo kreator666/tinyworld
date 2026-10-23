@@ -26,6 +26,13 @@ import { deriveSeasonStatus } from './arena'
 export const seasonAbi = [
   {
     type: 'function',
+    name: 'tradingHalted',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    type: 'function',
     name: 'haltTrading',
     stateMutability: 'nonpayable',
     inputs: [],
