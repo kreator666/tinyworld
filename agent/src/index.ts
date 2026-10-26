@@ -1441,6 +1441,30 @@ app.get('/arena/seasons/:id/agents/:tokenId', authRequired, async (c) => {
   }
 })
 
+// 参赛账户查询(admin):管理员可查看任意 agent 的参赛详情与燃料状态
+app.get('/admin/arena/seasons/:id/agents/:tokenId', chainAdminRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const account = await getArenaAccount(season.id, tokenId)
+    if (!account) return c.json({ error: '该 Agent 未报名本赛季' }, 404)
+    const playbook = await getPlaybook(season.id, tokenId)
+    const fuel = await getArenaFuel(season.id, tokenId)
+    const fuelCfg = fuelConfigOf(season, config.llmModel)
+    const gate = fuel ? await decisionGate(season.id, tokenId, fuelCfg) : null
+    return c.json({
+      account,
+      playbook: playbook?.config ?? null,
+      playbookVersion: playbook?.version ?? 0,
+      fuel: fuel ? { balance_usd: fuel.balance_usd, total_spent_usd: fuel.total_spent_usd, decision_halted: gate?.halted ?? false } : null,
+      llmModel: fuelCfg.llmModel,
+    })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
 // Playbook 保存(owner 赛季中可改,版本化留历史)
 app.put('/arena/seasons/:id/agents/:tokenId/playbook', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
