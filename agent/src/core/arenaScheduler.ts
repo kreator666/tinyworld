@@ -207,7 +207,9 @@ export function parseDecisionActions(text: string): {
   }
 }
 
-async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow, knobs: SchedKnobs, nowSec: number): Promise<void> {
+async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow, knobs: SchedKnobs, _nowSec: number): Promise<void> {
+  // 决策 tick 内部使用当前实际时间,避免调度轮起始时间被前面任务拖后导致误判 cooldown
+  const nowSec = Math.floor(Date.now() / 1000)
   const tokenId = Number(account.token_id)
   const chainKey = season.chain_key
   const fuelCfg = fuelConfigOf(season, config.llmModel)
