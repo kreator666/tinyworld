@@ -1511,6 +1511,21 @@ app.get('/arena/seasons/:id/agents/:tokenId/trades', authRequired, async (c) => 
   }
 })
 
+// 动作记录(admin):管理员可查看任意 agent 的竞技场交易流水(用于排查日志不全问题)
+app.get('/admin/arena/seasons/:id/agents/:tokenId/trades', chainAdminRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const limit = Math.min(Number(c.req.query('limit')) || 100, 200)
+    const { listArenaTrades } = await import('./db/arena')
+    const trades = await listArenaTrades(season.id, tokenId, limit)
+    return c.json({ trades })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
 // 净值曲线(owner):按时间升序返回快照
 app.get('/arena/seasons/:id/agents/:tokenId/snapshots', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
