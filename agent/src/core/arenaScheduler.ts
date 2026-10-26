@@ -162,7 +162,7 @@ export function parseDecisionActions(text: string): {
   if (!m) return { actions: [] }
   try {
     const obj = JSON.parse(m[0]) as Record<string, unknown>
-    const reasoning =
+    let reasoning =
       typeof obj.reasoning === 'string'
         ? obj.reasoning
         : typeof obj.thought === 'string'
@@ -171,10 +171,18 @@ export function parseDecisionActions(text: string): {
             ? obj.analysis
             : undefined
     if (obj.action === 'hold') return { actions: [], reasoning }
-    const arr = Array.isArray(obj.actions) ? obj.actions : []
+    const arr = Array.isArray(obj.actions)
+      ? (obj.actions as Record<string, unknown>[]).filter((a) => a && typeof a === 'object')
+      : []
+    // LLM 有时把 hold 误放进 actions 数组,此时应视为观望并提取其 reason
+    const nonHold = arr.filter((a) => (a.action as string) !== 'hold')
+    const holdInActions = arr.find((a) => (a.action as string) === 'hold')
+    if (!reasoning && holdInActions && typeof holdInActions.reason === 'string') {
+      reasoning = holdInActions.reason
+    }
     return {
-      actions: arr
-        .filter((a) => a && typeof a === 'object' && typeof (a as Record<string, unknown>).action === 'string')
+      actions: nonHold
+        .filter((a) => typeof a.action === 'string')
         .map((a) => a as { action: string; args?: Record<string, unknown>; reason?: string }),
       reasoning,
     }
