@@ -42,6 +42,19 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   settled: { text: '已结束', cls: 'bg-slate-500/20 text-slate-400' },
 }
 
+const ACTION_LABEL: Record<string, string> = {
+  supply: '存入',
+  withdraw: '取出',
+  swap: '兑换',
+  gmx_order: '永续单',
+  hold: '观望',
+  acted: '执行动作',
+  rejected_all: '动作被拒',
+  fuel_halt: '燃料停机',
+  daily_halt: '日回撤暂停',
+  cooldown: '决策冷却',
+}
+
 const fmtTime = (ts: number) => new Date(ts * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const short = (addr: string) => `${addr.slice(0, 6)}…${addr.slice(-4)}`
 
@@ -351,24 +364,46 @@ export default function ArenaPage() {
                       <p className="text-[10px] text-slate-600 text-center py-2">暂无动作 —— 调度器驱动决策后自动记录(固收/现货/永续每笔上链动作)</p>
                     ) : (
                       <div className="max-h-48 overflow-y-auto space-y-1">
-                        {trades.map((t) => (
-                          <div key={t.id} className="flex items-center justify-between text-[10px] bg-white/5 rounded px-2 py-1.5">
-                            <span className="text-slate-300">
-                              <span className="text-sky-300">{{ fixed_yield: '固收', spot: '现货', perp: '永续', decision: '决策' }[t.strategy_type] ?? t.strategy_type}</span>
-                              {' / '}
-                              {{ supply: '存入', withdraw: '取出', swap: '兑换', gmx_order: '永续单', hold: '观望', acted: '执行动作', rejected_all: '动作被拒' }[t.action] ?? t.action}
-                              <span className="block text-slate-500 truncate max-w-[220px]">{t.payload?.reason as string}</span>
-                            </span>
-                            <span className="text-right shrink-0">
-                              {t.tx_hash ? (
-                                <a href={`${active.explorer}/tx/${t.tx_hash}`} target="_blank" rel="noreferrer" className="text-sky-400 hover:underline block">{t.tx_hash.slice(0, 8)}…</a>
-                              ) : (
-                                <span className="text-slate-600">-</span>
+                        {trades.map((t) => {
+                          const acted = (t.payload?.actions as { action: string; ok: boolean; detail: string }[] | undefined)?.filter((a) => a.ok)
+                          const rejected = (t.payload?.actions as { action: string; ok: boolean; detail: string }[] | undefined)?.filter((a) => !a.ok)
+                          const summary = (t.payload?.summary as string) || (t.payload?.reason as string)
+                          return (
+                            <div key={t.id} className="text-[10px] bg-white/5 rounded px-2 py-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-slate-300">
+                                  <span className="text-sky-300">{{ fixed_yield: '固收', spot: '现货', perp: '永续', decision: '决策' }[t.strategy_type] ?? t.strategy_type}</span>
+                                  {' / '}
+                                  {ACTION_LABEL[t.action] ?? t.action}
+                                  {acted && acted.length > 0 && <span className="ml-1.5 text-emerald-400">✓ {acted.map((a) => ACTION_LABEL[a.action] ?? a.action).join(', ')}</span>}
+                                  {rejected && rejected.length > 0 && <span className="ml-1.5 text-rose-400">✗ {rejected.length} 个</span>}
+                                </span>
+                                <span className="text-right shrink-0">
+                                  {t.tx_hash ? (
+                                    <a href={`${active.explorer}/tx/${t.tx_hash}`} target="_blank" rel="noreferrer" className="text-sky-400 hover:underline block">{t.tx_hash.slice(0, 8)}…</a>
+                                  ) : (
+                                    <span className="text-slate-600">-</span>
+                                  )}
+                                  <span className="block text-slate-500">{new Date(t.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                </span>
+                              </div>
+                              {summary && (
+                                <div className="mt-1 text-slate-400 break-words leading-relaxed" title={summary}>
+                                  {summary}
+                                </div>
                               )}
-                              <span className="block text-slate-500">{new Date(t.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                            </span>
-                          </div>
-                        ))}
+                              {rejected && rejected.length > 0 && (
+                                <ul className="mt-1 space-y-0.5">
+                                  {rejected.map((r, i) => (
+                                    <li key={i} className="text-rose-300/80 break-words">
+                                      · {ACTION_LABEL[r.action] ?? r.action}: {r.detail}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </div>

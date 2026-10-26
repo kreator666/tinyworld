@@ -149,23 +149,37 @@ function buildDecisionPrompt(season: ArenaSeasonRow, guard: GuardState, playbook
     `- 燃料余额 $${fuelBalance.toFixed(4)}(每次决策都烧燃料,无意义地频繁决策会提前停机)`,
     `- 近期动作:${recentTrades || '无'}`,
     `可用动作:arena_supply/arena_withdraw(Aave 固收)、arena_swap(现货)、arena_perp_open/arena_perp_close(GMX)、或 hold(什么都不做)。`,
-    `要求:只做配置内的策略;不要解释,严格输出 JSON:{"actions":[{"action":"...","args":{...},"reason":"..."}]},无动作输出 {"actions":[]},也可以输出 {"action":"hold"}。`,
+    `要求:只做配置内的策略;不要解释,严格输出 JSON:{"reasoning":"一句话说明当前判断与原因","actions":[{"action":"...","args":{...},"reason":"..."}]}。如果决定观望,输出 {"reasoning":"...","action":"hold"}。`,
   ].join('\n')
 }
 
-/** 从 LLM 输出中稳健提取动作数组(容忍 ```json 包裹与额外文字) */
-export function parseDecisionActions(text: string): { action: string; args?: Record<string, unknown>; reason?: string }[] {
+/** 从 LLM 输出中稳健提取动作数组与 reasoning(容忍 ```json 包裹与额外文字) */
+export function parseDecisionActions(text: string): {
+  actions: { action: string; args?: Record<string, unknown>; reason?: string }[]
+  reasoning?: string
+} {
   const m = text.match(/\{[\s\S]*\}/)
-  if (!m) return []
+  if (!m) return { actions: [] }
   try {
     const obj = JSON.parse(m[0]) as Record<string, unknown>
-    if (obj.action === 'hold') return []
+    const reasoning =
+      typeof obj.reasoning === 'string'
+        ? obj.reasoning
+        : typeof obj.thought === 'string'
+          ? obj.thought
+          : typeof obj.analysis === 'string'
+            ? obj.analysis
+            : undefined
+    if (obj.action === 'hold') return { actions: [], reasoning }
     const arr = Array.isArray(obj.actions) ? obj.actions : []
-    return arr
-      .filter((a) => a && typeof a === 'object' && typeof (a as Record<string, unknown>).action === 'string')
-      .map((a) => a as { action: string; args?: Record<string, unknown>; reason?: string })
+    return {
+      actions: arr
+        .filter((a) => a && typeof a === 'object' && typeof (a as Record<string, unknown>).action === 'string')
+        .map((a) => a as { action: string; args?: Record<string, unknown>; reason?: string }),
+      reasoning,
+    }
   } catch {
-    return []
+    return { actions: [] }
   }
 }
 
@@ -180,18 +194,58 @@ async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow,
     const fg = await decisionGate(season.id, tokenId, fuelCfg)
     if (!fg.ok) {
       await recordArenaTask(chainKey, tokenId, { action: 'decision_halted', season: season.id }, { balance: fg.balance, estimate: fg.estimate })
+      await insertArenaTrade({
+        season_id: season.id,
+        token_id: tokenId,
+        strategy_type: 'decision',
+        action: 'fuel_halt',
+        tx_hash: null,
+        pnl_usd: null,
+        payload: {
+          reason: `燃料余额 $${fg.balance.toFixed(4)} 不足以支付本次决策估算 $${fg.estimate.toFixed(4)}，停机等待赛季结束或充值`,
+          balance: fg.balance,
+          estimate: fg.estimate,
+        },
+      }).catch((e) => console.error('[arena] 燃料停机留痕失败:', e instanceof Error ? e.message : e))
       await markDueDone(season.id, tokenId, 'decision', nowSec + knobs.decisionIntervalSec)
       return
     }
     // 最小间隔地板(全局,与燃料无关)
     const lastAt = await lastDecisionAt(season.id, tokenId)
     if (lastAt !== null && nowSec - lastAt < knobs.minDecisionIntervalSec) {
-      await markDueDone(season.id, tokenId, 'decision', (lastAt + knobs.minDecisionIntervalSec))
+      const elapsed = nowSec - lastAt
+      await insertArenaTrade({
+        season_id: season.id,
+        token_id: tokenId,
+        strategy_type: 'decision',
+        action: 'cooldown',
+        tx_hash: null,
+        pnl_usd: null,
+        payload: {
+          reason: `距上次决策仅 ${elapsed}s，低于最小间隔地板 ${knobs.minDecisionIntervalSec}s，跳过本次决策`,
+          elapsedSec: elapsed,
+          minIntervalSec: knobs.minDecisionIntervalSec,
+        },
+      }).catch((e) => console.error('[arena] 决策冷却留痕失败:', e instanceof Error ? e.message : e))
+      await markDueDone(season.id, tokenId, 'decision', lastAt + knobs.minDecisionIntervalSec)
       return
     }
     // 日回撤触限:今天不再新开仓(省燃料);只等 cheap tick 继续监控
     if (guard.haltNewPositions && !guard.forceDeRisk) {
       await recordArenaTask(chainKey, tokenId, { action: 'daily_halt', season: season.id }, { dailyLossPct: guard.dailyLossPct })
+      await insertArenaTrade({
+        season_id: season.id,
+        token_id: tokenId,
+        strategy_type: 'decision',
+        action: 'daily_halt',
+        tx_hash: null,
+        pnl_usd: null,
+        payload: {
+          reason: `当日回撤 ${guard.dailyLossPct.toFixed(2)}% 已触达 playbook 上限 ${playbook.guardrails.maxDailyLossPct}%，今日停止新开仓`,
+          dailyLossPct: guard.dailyLossPct,
+          maxDailyLossPct: playbook.guardrails.maxDailyLossPct,
+        },
+      }).catch((e) => console.error('[arena] 日回撤暂停留痕失败:', e instanceof Error ? e.message : e))
       await markDueDone(season.id, tokenId, 'decision', nowSec + knobs.decisionIntervalSec)
       return
     }
@@ -208,28 +262,38 @@ async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow,
         buildDecisionPrompt(season, guard, playbook, fg.balance, recent),
         { model: fuelCfg.llmModel, temperature: 0.2, onUsage: makeFuelMeter(season.id, tokenId, fuelCfg) },
       )
-      const actions = parseDecisionActions(output)
-      const results: { action: string; ok: boolean; detail: string }[] = []
+      const { actions, reasoning } = parseDecisionActions(output)
+      const results: { action: string; ok: boolean; detail: string; llmReason?: string }[] = []
       for (const a of actions) {
         // forceDeRisk:只许降仓类动作
         if (guard.forceDeRisk && !['arena_withdraw', 'arena_perp_close', 'arena_status'].includes(a.action)) {
-          results.push({ action: a.action, ok: false, detail: '累计回撤触限,只许降仓/平仓' })
+          results.push({ action: a.action, ok: false, detail: '累计回撤触限,只许降仓/平仓', llmReason: a.reason })
           continue
         }
         const fn = ARENA_ACTIONS[a.action]
         if (!fn) {
-          results.push({ action: a.action, ok: false, detail: '未知动作' })
+          results.push({ action: a.action, ok: false, detail: '未知动作', llmReason: a.reason })
           continue
         }
         try {
           const r = await fn(chainKey, tokenId, (a.args ?? {}) as never)
-          results.push({ action: a.action, ok: true, detail: JSON.stringify(r).slice(0, 200) })
+          results.push({ action: a.action, ok: true, detail: JSON.stringify(r).slice(0, 200), llmReason: a.reason })
         } catch (err) {
-          results.push({ action: a.action, ok: false, detail: err instanceof Error ? err.message.slice(0, 200) : String(err) })
+          results.push({ action: a.action, ok: false, detail: err instanceof Error ? err.message.slice(0, 200) : String(err), llmReason: a.reason })
         }
       }
-      await recordArenaTask(chainKey, tokenId, { action: 'decision_tick', season: season.id }, { actions: results })
+      await recordArenaTask(chainKey, tokenId, { action: 'decision_tick', season: season.id }, { actions: results, reasoning })
       // 决策留痕:即使观望也落一条 arena_trades(owner 页可看到"模型想了但没动手"及原始输出)
+      const acted = results.filter((r) => r.ok).map((r) => r.action)
+      const rejected = results.filter((r) => !r.ok)
+      let summary: string
+      if (results.length === 0) {
+        summary = reasoning ? `观望: ${reasoning.slice(0, 240)}` : '模型决策观望，未输出任何动作'
+      } else if (rejected.length === results.length) {
+        summary = `全部动作被拒绝: ${rejected.map((r) => `${r.action}(${r.detail})`).join('; ')}`
+      } else {
+        summary = `执行: ${acted.join(', ')}` + (rejected.length > 0 ? `; 拒绝: ${rejected.map((r) => `${r.action}(${r.detail})`).join('; ')}` : '')
+      }
       await insertArenaTrade({
         season_id: season.id,
         token_id: tokenId,
@@ -241,6 +305,8 @@ async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow,
           model: fuelCfg.llmModel,
           fuelSpent: true,
           actions: results,
+          reasoning,
+          summary,
           raw: output.slice(0, 600),
         },
       }).catch((e) => console.error('[arena] 决策留痕失败:', e instanceof Error ? e.message : e))

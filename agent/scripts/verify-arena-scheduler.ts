@@ -68,14 +68,15 @@ assert((await lastDecisionAt('season-sched', 42)) !== null, 'decision 最近执�
 console.log('✅ 调度队列生命周期(登记/到期过滤/优先级/完成回调)')
 
 // ---------- 3. LLM 决策输出解析(容忍包裹与脏输出) ----------
-assert(parseDecisionActions('{"actions":[{"action":"arena_supply","args":{"asset":"USDC","amountUsd":10}}]}').length === 1, '标准 JSON')
-assert(parseDecisionActions('```json\n{"actions":[{"action":"arena_swap","args":{"tokenIn":"USDC","tokenOut":"AVAX","amountUsd":5}}]}\n```').length === 1, '代码块包裹')
-assert(parseDecisionActions('{"action":"hold"}').length === 0, 'hold = 无动作')
-assert(parseDecisionActions('{"actions":[]}').length === 0, '空数组')
-assert(parseDecisionActions('今天市场波动太大,我决定观望。').length === 0, '自然语言兜底空')
+assert(parseDecisionActions('{"actions":[{"action":"arena_supply","args":{"asset":"USDC","amountUsd":10}}]}').actions.length === 1, '标准 JSON')
+assert(parseDecisionActions('```json\n{"actions":[{"action":"arena_swap","args":{"tokenIn":"USDC","tokenOut":"AVAX","amountUsd":5}}]}\n```').actions.length === 1, '代码块包裹')
+assert(parseDecisionActions('{"action":"hold"}').actions.length === 0, 'hold = 无动作')
+assert(parseDecisionActions('{"actions":[]}').actions.length === 0, '空数组')
+assert(parseDecisionActions('今天市场波动太大,我决定观望。').actions.length === 0, '自然语言兜底空')
 const parsed = parseDecisionActions('{"actions":[{"action":"arena_perp_open","args":{"indexSymbol":"BTC","side":"LONG","sizeUsd":100,"collateralUsd":50},"reason":"突破"}]}')
-assert(parsed[0].action === 'arena_perp_open' && (parsed[0].args as { side: string }).side === 'LONG', '动作与参数透传')
-console.log('✅ 决策输出解析(标准/包裹/hold/脏输入)')
+assert(parsed.actions[0].action === 'arena_perp_open' && (parsed.actions[0].args as { side: string }).side === 'LONG', '动作与参数透传')
+assert(parseDecisionActions('{"action":"hold","reasoning":"现金缓冲已触限，观望"}').reasoning === '现金缓冲已触限，观望', '提取 reasoning')
+console.log('✅ 决策输出解析(标准/包裹/hold/脏输入/reasoning)')
 
 await closeDb()
 console.log('竞技场 P4 调度器验证通过 ✅(tick 执行路径待 Fuji 端到端)')
