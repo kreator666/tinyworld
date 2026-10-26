@@ -416,12 +416,14 @@ export async function bumpDuePriority(seasonId: string, tokenId: number, kind: s
   )
 }
 
-/** 该账户 decision tick 上次执行时间(最小间隔地板用):以实际落库的 decision 记录为准,避免 cooldown 刷新 due 行导致永远过不了间隔 */
+/** 该账户 decision tick 上次执行时间(最小间隔地板用):以实际落库的 LLM 决策记录为准,
+ *  排除 cooldown/daily_halt/fuel_halt 等系统跳过记录,避免它们自刷新导致永远过不了间隔 */
 export async function lastDecisionAt(seasonId: string, tokenId: number): Promise<number | null> {
   const db = await getDb()
   const res = await db.query<{ created_at: string }>(
     `SELECT created_at FROM arena_trades
      WHERE season_id = $1 AND token_id = $2 AND strategy_type = 'decision'
+       AND action NOT IN ('cooldown', 'daily_halt', 'fuel_halt')
      ORDER BY created_at DESC LIMIT 1`,
     [seasonId, tokenId],
   )
