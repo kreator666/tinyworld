@@ -49,4 +49,32 @@ export async function getNativePriceUsd(chainKey: string): Promise<{ usd: number
   }
 }
 
+const MAJOR_IDS = 'bitcoin,ethereum,avalanche-2'
+const MAJOR_SYMBOLS: Record<string, string> = {
+  bitcoin: 'BTC',
+  ethereum: 'ETH',
+  'avalanche-2': 'AVAX',
+}
+
+/** 主流资产 USD 价格与 24h 涨跌幅(BTC/ETH/AVAX);失败时返回空对象,不阻塞调用方 */
+export async function getMajorPricesUsd(): Promise<Record<string, { usd: number; change24h: number | null }>> {
+  try {
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${MAJOR_IDS}&vs_currencies=usd&include_24hr_change=true`
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = (await res.json()) as Record<string, { usd?: number; usd_24h_change?: number }>
+    const out: Record<string, { usd: number; change24h: number | null }> = {}
+    for (const [id, symbol] of Object.entries(MAJOR_SYMBOLS)) {
+      const p = data[id]
+      if (typeof p?.usd === 'number') {
+        out[symbol] = { usd: p.usd, change24h: typeof p.usd_24h_change === 'number' ? p.usd_24h_change : null }
+      }
+    }
+    return out
+  } catch (err) {
+    console.error('[price] 主流资产行情获取失败:', err instanceof Error ? err.message : err)
+    return {}
+  }
+}
+
 // defaultChainKey 引用保持模块依赖方向(price → registry → config)

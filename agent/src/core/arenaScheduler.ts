@@ -21,6 +21,7 @@ import { getPlaybook } from './arena'
 import { fuelConfigOf, decisionGate, makeFuelMeter } from './arenaFuel'
 import { evaluateGuardrails, type GuardState } from './arenaGuard'
 import { complete } from './llm'
+import { getMajorPricesUsd } from './price'
 import { ARENA_ACTIONS } from '../../runtime-skills/builtins/arena-strategies/index'
 import { settleDueSeasons } from './arenaSettlement'
 
@@ -135,21 +136,36 @@ async function runCheapTick(season: ArenaSeasonRow, account: ArenaAccountRow, kn
 // decision tick:燃料门槛 + 最小间隔地板 + 护栏闸门 → 无状态 LLM 决策 → 动作分发
 // ------------------------------------------------------------------
 
-/** 无状态一次性 prompt:只注入结构化状态摘要,不挂聊天历史/记忆检索(燃料可控且可比) */
-function buildDecisionPrompt(season: ArenaSeasonRow, guard: GuardState, playbook: ReturnType<typeof resolvePlaybook>, fuelBalance: number, recentTrades: string): string {
+function formatMajorPrices(prices: Record<string, { usd: number; change24h: number | null }>): string {
+  return Object.entries(prices)
+    .map(([sym, p]) => {
+      const ch = p.change24h === null ? 'N/A' : `${p.change24h >= 0 ? '+' : ''}${p.change24h.toFixed(2)}%`
+      return `${sym}: $${p.usd.toFixed(2)}(24h ${ch})`
+    })
+    .join(' / ') || '行情数据暂时不可用'
+}
+
+/** 无状态一次性 prompt:注入账户状态与主流资产行情,要求模型先分析市场再给出动作 */
+async function buildDecisionPrompt(season: ArenaSeasonRow, guard: GuardState, playbook: ReturnType<typeof resolvePlaybook>, fuelBalance: number, recentTrades: string): Promise<string> {
   const principal = Number(season.principal_usd)
+  const majorPrices = await getMajorPricesUsd()
   return [
-    `你是竞技场赛季中的自主交易 agent,当前账户状态(USD):`,
+    `你是竞技场赛季中的自主交易 agent。当前账户状态(USD):`,
     `- 净值 ${guard.navUsd.toFixed(2)}(本金 ${principal},盈亏 ${(guard.navUsd - principal).toFixed(2)})`,
     `- 构成:USDC ${guard.nav.usdcUsd.toFixed(2)} / 原生币 ${guard.nav.nativeUsd.toFixed(2)} / Aave ${guard.nav.aaveUsd.toFixed(2)} / GMX ${guard.nav.gmxUsd.toFixed(2)}`,
     `- 现金占比 ${guard.cashPct.toFixed(1)}%(下限 ${playbook.guardrails.minCashBufferPct}%)`,
     `- 当日回撤 ${guard.dailyLossPct.toFixed(2)}%(触限 ${guard.haltNewPositions})/ 累计回撤 ${guard.drawdownPct.toFixed(2)}%(${guard.forceDeRisk ? '触限:只许降仓' : '未触限'})`,
     `- 风险档 ${playbook.riskProfile}:单笔上限 ${playbook.defaults.maxOrderPct}% NAV,杠杆上限 ${playbook.defaults.maxLeverage}x`,
     `- 目标配置 allocation:${JSON.stringify(playbook.allocation)};策略:${JSON.stringify(playbook.strategies)}`,
-    `- 燃料余额 $${fuelBalance.toFixed(4)}(每次决策都烧燃料,无意义地频繁决策会提前停机)`,
+    `- 燃料余额 $${fuelBalance.toFixed(4)}(每次决策都烧燃料)`,
     `- 近期动作:${recentTrades || '无'}`,
+    ``,
+    `【市场分析任务】请先基于以下主流资产最新价格与 24h 走势给出判断(若数据缺失,可结合你的知识):`,
+    `${formatMajorPrices(majorPrices)}`,
+    `分析要点:BTC/ETH/AVAX 当前趋势方向(上涨/下跌/震荡)、关键支撑/压力位的直观感受、与账户持仓的关联。`,
+    ``,
     `可用动作:arena_supply/arena_withdraw(Aave 固收)、arena_swap(现货)、arena_perp_open/arena_perp_close(GMX)、或 hold(什么都不做)。`,
-    `要求:只做配置内的策略;不要解释,严格输出 JSON:{"reasoning":"一句话说明当前判断与原因","actions":[{"action":"...","args":{...},"reason":"..."}]}。如果决定观望,输出 {"reasoning":"...","action":"hold"}。`,
+    `输出格式:不要解释,严格输出 JSON:{"reasoning":"当前市场判断+账户应对思路","actions":[{"action":"...","args":{...},"reason":"..."}]}。如果决定观望,输出 {"reasoning":"...","action":"hold"}。`,
   ].join('\n')
 }
 
@@ -267,7 +283,7 @@ async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow,
       const recent = await recentTradesSummary(season.id, tokenId)
       const output = await complete(
         '你是竞技场自主交易 agent。只输出指定格式的 JSON,不输出其他文字。',
-        buildDecisionPrompt(season, guard, playbook, fg.balance, recent),
+        await buildDecisionPrompt(season, guard, playbook, fg.balance, recent),
         { model: fuelCfg.llmModel, temperature: 0.2, onUsage: makeFuelMeter(season.id, tokenId, fuelCfg) },
       )
       const { actions, reasoning } = parseDecisionActions(output)
