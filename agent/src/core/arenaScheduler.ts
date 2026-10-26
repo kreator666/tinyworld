@@ -34,8 +34,8 @@ import { settleDueSeasons } from './arenaSettlement'
 
 interface SchedKnobs {
   cheapIntervalSec: number // 常规巡检间隔(默认 10min)
-  decisionIntervalSec: number // 常规决策间隔(默认 30min)
-  minDecisionIntervalSec: number // 两次 decision 的最小间隔地板(默认 10min)
+  decisionIntervalSec: number // 常规决策间隔(默认 5min)
+  minDecisionIntervalSec: number // 两次 decision 的最小间隔地板(默认 5min)
   snapshotIntervalSec: number // 净值快照间隔(默认 4h)
   deviationThresholdPct: number // allocation 偏离触发决策的阈值(默认 15 百分点)
 }
@@ -45,8 +45,8 @@ export function knobsOf(season: ArenaSeasonRow): SchedKnobs {
   const num = (v: unknown, dflt: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : dflt)
   return {
     cheapIntervalSec: num(c.cheapIntervalSec, 600),
-    decisionIntervalSec: num(c.decisionIntervalSec, 1800),
-    minDecisionIntervalSec: num(c.minDecisionIntervalSec, 600),
+    decisionIntervalSec: num(c.decisionIntervalSec, 300),   // 默认 5min，加快决策频率
+    minDecisionIntervalSec: num(c.minDecisionIntervalSec, 300), // 与决策间隔对齐
     snapshotIntervalSec: num(c.snapshotIntervalSec, 14_400),
     deviationThresholdPct: num(c.deviationThresholdPct, 15),
   }
