@@ -424,6 +424,47 @@ export async function initSchema(): Promise<void> {
       PRIMARY KEY (season_id, token_id, kind)
     );
 
+    -- 每次 LLM 思考的 plan
+    CREATE TABLE IF NOT EXISTS arena_decisions (
+      id TEXT PRIMARY KEY,
+      season_id TEXT NOT NULL REFERENCES arena_seasons(id),
+      token_id NUMERIC(20,0) NOT NULL,
+      plan JSONB NOT NULL DEFAULT '{}'::jsonb,
+      model TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      cost_usd NUMERIC(20,6),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS arena_decisions_idx ON arena_decisions (season_id, token_id, created_at);
+
+    -- plan 的执行结果（逐条动作）
+    CREATE TABLE IF NOT EXISTS arena_executions (
+      id TEXT PRIMARY KEY,
+      decision_id TEXT NOT NULL REFERENCES arena_decisions(id),
+      action_idx INTEGER NOT NULL,
+      tool_id TEXT NOT NULL,
+      args JSONB,
+      status TEXT NOT NULL CHECK (status IN ('success', 'failed', 'skipped', 'needs_owner')),
+      result JSONB,
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS arena_executions_idx ON arena_executions (decision_id, action_idx);
+
+    -- 竞技场专用记忆（与聊天 memories 隔离）
+    CREATE TABLE IF NOT EXISTS arena_memories (
+      id TEXT PRIMARY KEY,
+      chain_key TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      season_id TEXT,
+      kind TEXT NOT NULL CHECK (kind IN ('episodic', 'semantic')),
+      content TEXT NOT NULL,
+      embedding vector(${EMBEDDING_DIM}),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS arena_memories_token_kind_idx ON arena_memories (chain_key, token_id, kind);
+
     -- 燃料流水(P2):每次 LLM 调用一行,可回放对账
     CREATE TABLE IF NOT EXISTS arena_fuel_ledger (
       id TEXT PRIMARY KEY,

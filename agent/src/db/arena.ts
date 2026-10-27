@@ -447,3 +447,135 @@ export async function lastSnapshotAt(seasonId: string, tokenId: number): Promise
   )
   return res.rows[0] ? Math.floor(new Date(res.rows[0].created_at).getTime() / 1000) : null
 }
+
+// ------------------------------------------------------------------
+// 决策与执行(P4+ Thinker/Executor 分离)
+// ------------------------------------------------------------------
+
+export interface ArenaDecisionRow {
+  id: string
+  season_id: string
+  token_id: string
+  plan: Record<string, unknown>
+  model: string | null
+  input_tokens: number | null
+  output_tokens: number | null
+  cost_usd: string | null
+  created_at: string
+}
+
+export async function insertArenaDecision(row: Omit<ArenaDecisionRow, 'id' | 'created_at'>): Promise<string> {
+  const db = await getDb()
+  const id = randomUUID()
+  await db.query(
+    `INSERT INTO arena_decisions (id, season_id, token_id, plan, model, input_tokens, output_tokens, cost_usd)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, row.season_id, row.token_id, JSON.stringify(row.plan), row.model ?? null, row.input_tokens ?? null, row.output_tokens ?? null, row.cost_usd ?? null],
+  )
+  return id
+}
+
+export async function listArenaDecisions(seasonId: string, tokenId: number, limit = 20): Promise<ArenaDecisionRow[]> {
+  const db = await getDb()
+  const res = await db.query<ArenaDecisionRow>(
+    `SELECT * FROM arena_decisions WHERE season_id = $1 AND token_id = $2 ORDER BY created_at DESC LIMIT $3`,
+    [seasonId, tokenId, limit],
+  )
+  return res.rows
+}
+
+export interface ArenaExecutionRow {
+  id: string
+  decision_id: string
+  action_idx: number
+  tool_id: string
+  args: Record<string, unknown> | null
+  status: string
+  result: Record<string, unknown> | null
+  error: string | null
+  created_at: string
+}
+
+export async function insertArenaExecution(row: Omit<ArenaExecutionRow, 'id' | 'created_at'>): Promise<string> {
+  const db = await getDb()
+  const id = randomUUID()
+  await db.query(
+    `INSERT INTO arena_executions (id, decision_id, action_idx, tool_id, args, status, result, error)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, row.decision_id, row.action_idx, row.tool_id, JSON.stringify(row.args ?? {}), row.status, JSON.stringify(row.result ?? {}), row.error ?? null],
+  )
+  return id
+}
+
+export async function listArenaExecutions(decisionId: string): Promise<ArenaExecutionRow[]> {
+  const db = await getDb()
+  const res = await db.query<ArenaExecutionRow>(
+    `SELECT * FROM arena_executions WHERE decision_id = $1 ORDER BY action_idx ASC`,
+    [decisionId],
+  )
+  return res.rows
+}
+
+// ------------------------------------------------------------------
+// 竞技场专用记忆(与聊天 memories 隔离)
+// ------------------------------------------------------------------
+
+export interface ArenaMemoryRow {
+  id: string
+  chain_key: string
+  token_id: string
+  season_id: string | null
+  kind: string
+  content: string
+  embedding: string | null
+  created_at: string
+}
+
+export async function insertArenaMemory(row: Omit<ArenaMemoryRow, 'id' | 'created_at'>): Promise<string> {
+  const db = await getDb()
+  const id = randomUUID()
+  await db.query(
+    `INSERT INTO arena_memories (id, chain_key, token_id, season_id, kind, content, embedding)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::vector)`,
+    [id, row.chain_key, row.token_id, row.season_id ?? null, row.kind, row.content, row.embedding ?? null],
+  )
+  return id
+}
+
+export async function listArenaMemories(chainKey: string, tokenId: number, kind?: string, limit = 50): Promise<ArenaMemoryRow[]> {
+  const db = await getDb()
+  const res = await db.query<ArenaMemoryRow>(
+    `SELECT * FROM arena_memories
+     WHERE chain_key = $1 AND token_id = $2 AND ($3::text IS NULL OR kind = $3)
+     ORDER BY created_at DESC LIMIT $4`,
+    [chainKey, tokenId, kind ?? null, limit],
+  )
+  return res.rows
+}
+
+/** 语义检索:返回最相关的 semantic 记忆 + 最近 episodic 记忆 */
+export async function retrieveArenaMemories(
+  chainKey: string,
+  tokenId: number,
+  vectorLiteral: string,
+  semanticK = 5,
+  episodicK = 3,
+): Promise<{ semantic: string[]; episodic: string[] }> {
+  const db = await getDb()
+  const semanticRes = await db.query<{ content: string }>(
+    `SELECT content FROM arena_memories
+     WHERE chain_key = $1 AND token_id = $2 AND kind = 'semantic' AND embedding IS NOT NULL
+     ORDER BY embedding <=> $3::vector LIMIT $4`,
+    [chainKey, tokenId, vectorLiteral, semanticK],
+  )
+  const episodicRes = await db.query<{ content: string }>(
+    `SELECT content FROM arena_memories
+     WHERE chain_key = $1 AND token_id = $2 AND kind = 'episodic'
+     ORDER BY created_at DESC LIMIT $3`,
+    [chainKey, tokenId, episodicK],
+  )
+  return {
+    semantic: semanticRes.rows.map((r) => r.content),
+    episodic: episodicRes.rows.map((r) => r.content),
+  }
+}

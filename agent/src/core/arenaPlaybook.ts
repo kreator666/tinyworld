@@ -44,8 +44,23 @@ export interface EffectivePlaybook {
   defaults: StrategyDefaults
 }
 
-/** owner 配置 + 预设默认值 → 生效配置(owner 显式给的值永远优先) */
-export function resolvePlaybook(config: Record<string, unknown> | null | undefined): EffectivePlaybook {
+/** 竞技场默认策略:owner 未配置 playbook 时,让 AI 有明确目标可执行 */
+export const ARENA_DEFAULT_PLAYBOOK: EffectivePlaybook = {
+  riskProfile: 'balanced',
+  allocation: { fixed_yield: 40, spot: 30, perp: 30 },
+  strategies: [
+    { type: 'fixed_yield', protocol: 'aave', asset: 'USDC' },
+    { type: 'spot', protocol: 'dex' },
+    { type: 'perp', protocol: 'gmx', maxLeverage: 3 },
+  ],
+  guardrails: { maxDailyLossPct: 5, maxDrawdownPct: 30, minCashBufferPct: 20 },
+  defaults: { ...RISK_PRESETS.balanced },
+}
+
+/** owner 配置 + 预设默认值 → 生效配置(owner 显式给的值永远优先)
+ *  allowArenaDefault=true 且 owner 完全未配时,使用竞技场默认策略 */
+export function resolvePlaybook(config: Record<string, unknown> | null | undefined, allowArenaDefault = false): EffectivePlaybook {
+  if (allowArenaDefault && !config) return ARENA_DEFAULT_PLAYBOOK
   const c = (config ?? {}) as Record<string, unknown>
   const profile: RiskProfile = (c.riskProfile as RiskProfile) ?? 'balanced'
   const preset = RISK_PRESETS[profile as Exclude<RiskProfile, 'custom'>] ?? RISK_PRESETS.balanced

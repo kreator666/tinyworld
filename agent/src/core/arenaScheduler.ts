@@ -6,6 +6,7 @@ import {
   ArenaSeasonRow,
   bumpDuePriority,
   insertArenaTrade,
+  insertArenaDecision,
   ensureArenaDue,
   lastDecisionAt,
   lastSnapshotAt,
@@ -20,9 +21,9 @@ import { resolvePlaybook } from './arenaPlaybook'
 import { getPlaybook } from './arena'
 import { fuelConfigOf, decisionGate, makeFuelMeter } from './arenaFuel'
 import { evaluateGuardrails, type GuardState } from './arenaGuard'
-import { complete } from './llm'
-import { getMajorPricesUsd } from './price'
-import { ARENA_ACTIONS } from '../../runtime-skills/builtins/arena-strategies/index'
+import { buildThinkerContext, think } from './arenaThinker'
+import { enqueueExecution } from './arenaExecutor'
+import { writeArenaMemory } from './arenaMemory'
 import { settleDueSeasons } from './arenaSettlement'
 
 // ============================================================
@@ -92,7 +93,7 @@ async function runCheapTick(season: ArenaSeasonRow, account: ArenaAccountRow, kn
   const tokenId = Number(account.token_id)
   const chainKey = season.chain_key
   try {
-    const playbook = resolvePlaybook((await getPlaybook(season.id, tokenId))?.config)
+    const playbook = resolvePlaybook((await getPlaybook(season.id, tokenId))?.config, true)
     const guard = await evaluateGuardrails(chainKey, season.id, tokenId, account.account_address as `0x${string}`, playbook, Number(season.principal_usd))
     // 快照(净值曲线的数据源)
     const lastSnap = await lastSnapshotAt(season.id, tokenId)
@@ -136,77 +137,6 @@ async function runCheapTick(season: ArenaSeasonRow, account: ArenaAccountRow, kn
 // decision tick:燃料门槛 + 最小间隔地板 + 护栏闸门 → 无状态 LLM 决策 → 动作分发
 // ------------------------------------------------------------------
 
-function formatMajorPrices(prices: Record<string, { usd: number; change24h: number | null }>): string {
-  return Object.entries(prices)
-    .map(([sym, p]) => {
-      const ch = p.change24h === null ? 'N/A' : `${p.change24h >= 0 ? '+' : ''}${p.change24h.toFixed(2)}%`
-      return `${sym}: $${p.usd.toFixed(2)}(24h ${ch})`
-    })
-    .join(' / ') || '行情数据暂时不可用'
-}
-
-/** 无状态一次性 prompt:注入账户状态与主流资产行情,要求模型先分析市场再给出动作 */
-async function buildDecisionPrompt(season: ArenaSeasonRow, guard: GuardState, playbook: ReturnType<typeof resolvePlaybook>, fuelBalance: number, recentTrades: string): Promise<string> {
-  const principal = Number(season.principal_usd)
-  const majorPrices = await getMajorPricesUsd()
-  return [
-    `你是竞技场赛季中的自主交易 agent。当前账户状态(USD):`,
-    `- 净值 ${guard.navUsd.toFixed(2)}(本金 ${principal},盈亏 ${(guard.navUsd - principal).toFixed(2)})`,
-    `- 构成:USDC ${guard.nav.usdcUsd.toFixed(2)} / 原生币 ${guard.nav.nativeUsd.toFixed(2)} / Aave ${guard.nav.aaveUsd.toFixed(2)} / GMX ${guard.nav.gmxUsd.toFixed(2)}`,
-    `- 现金占比 ${guard.cashPct.toFixed(1)}%(下限 ${playbook.guardrails.minCashBufferPct}%)`,
-    `- 当日回撤 ${guard.dailyLossPct.toFixed(2)}%(触限 ${guard.haltNewPositions})/ 累计回撤 ${guard.drawdownPct.toFixed(2)}%(${guard.forceDeRisk ? '触限:只许降仓' : '未触限'})`,
-    `- 风险档 ${playbook.riskProfile}:单笔上限 ${playbook.defaults.maxOrderPct}% NAV,杠杆上限 ${playbook.defaults.maxLeverage}x`,
-    `- 目标配置 allocation:${JSON.stringify(playbook.allocation)};策略:${JSON.stringify(playbook.strategies)}`,
-    `- 燃料余额 $${fuelBalance.toFixed(4)}(每次决策都烧燃料)`,
-    `- 近期动作:${recentTrades || '无'}`,
-    ``,
-    `【市场分析任务】请先基于以下主流资产最新价格与 24h 走势给出判断(若数据缺失,可结合你的知识):`,
-    `${formatMajorPrices(majorPrices)}`,
-    `分析要点:BTC/ETH/AVAX 当前趋势方向(上涨/下跌/震荡)、关键支撑/压力位的直观感受、与账户持仓的关联。`,
-    ``,
-    `可用动作:arena_supply/arena_withdraw(Aave 固收)、arena_swap(现货)、arena_perp_open/arena_perp_close(GMX)、或 hold(什么都不做)。`,
-    `输出格式:不要解释,严格输出 JSON:{"reasoning":"当前市场判断+账户应对思路","actions":[{"action":"...","args":{...},"reason":"..."}]}。如果决定观望,输出 {"reasoning":"...","action":"hold"}。`,
-  ].join('\n')
-}
-
-/** 从 LLM 输出中稳健提取动作数组与 reasoning(容忍 ```json 包裹与额外文字) */
-export function parseDecisionActions(text: string): {
-  actions: { action: string; args?: Record<string, unknown>; reason?: string }[]
-  reasoning?: string
-} {
-  const m = text.match(/\{[\s\S]*\}/)
-  if (!m) return { actions: [] }
-  try {
-    const obj = JSON.parse(m[0]) as Record<string, unknown>
-    let reasoning =
-      typeof obj.reasoning === 'string'
-        ? obj.reasoning
-        : typeof obj.thought === 'string'
-          ? obj.thought
-          : typeof obj.analysis === 'string'
-            ? obj.analysis
-            : undefined
-    if (obj.action === 'hold') return { actions: [], reasoning }
-    const arr = Array.isArray(obj.actions)
-      ? (obj.actions as Record<string, unknown>[]).filter((a) => a && typeof a === 'object')
-      : []
-    // LLM 有时把 hold 误放进 actions 数组,此时应视为观望并提取其 reason
-    const nonHold = arr.filter((a) => (a.action as string) !== 'hold')
-    const holdInActions = arr.find((a) => (a.action as string) === 'hold')
-    if (!reasoning && holdInActions && typeof holdInActions.reason === 'string') {
-      reasoning = holdInActions.reason
-    }
-    return {
-      actions: nonHold
-        .filter((a) => typeof a.action === 'string')
-        .map((a) => a as { action: string; args?: Record<string, unknown>; reason?: string }),
-      reasoning,
-    }
-  } catch {
-    return { actions: [] }
-  }
-}
-
 async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow, knobs: SchedKnobs, _nowSec: number): Promise<void> {
   // 决策 tick 内部使用当前实际时间,避免调度轮起始时间被前面任务拖后导致误判 cooldown
   const nowSec = Math.floor(Date.now() / 1000)
@@ -214,7 +144,7 @@ async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow,
   const chainKey = season.chain_key
   const fuelCfg = fuelConfigOf(season, config.llmModel)
   try {
-    const playbook = resolvePlaybook((await getPlaybook(season.id, tokenId))?.config)
+    const playbook = resolvePlaybook((await getPlaybook(season.id, tokenId))?.config, true)
     const guard = await evaluateGuardrails(chainKey, season.id, tokenId, account.account_address as `0x${string}`, playbook, Number(season.principal_usd))
     // 方案 B 燃料停机:不进 LLM,已有仓位继续计收益
     const fg = await decisionGate(season.id, tokenId, fuelCfg)
@@ -282,61 +212,48 @@ async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow,
     gate.running += 1
     gate.windowCount += 1
     try {
-      const recent = await recentTradesSummary(season.id, tokenId)
-      const output = await complete(
-        '你是竞技场自主交易 agent。只输出指定格式的 JSON,不输出其他文字。',
-        await buildDecisionPrompt(season, guard, playbook, fg.balance, recent),
-        { model: fuelCfg.llmModel, temperature: 0.2, onUsage: makeFuelMeter(season.id, tokenId, fuelCfg) },
-      )
-      const { actions, reasoning } = parseDecisionActions(output)
-      const results: { action: string; ok: boolean; detail: string; llmReason?: string }[] = []
-      for (const a of actions) {
-        // forceDeRisk:只许降仓类动作
-        if (guard.forceDeRisk && !['arena_withdraw', 'arena_perp_close', 'arena_status'].includes(a.action)) {
-          results.push({ action: a.action, ok: false, detail: '累计回撤触限,只许降仓/平仓', llmReason: a.reason })
-          continue
-        }
-        const fn = ARENA_ACTIONS[a.action]
-        if (!fn) {
-          results.push({ action: a.action, ok: false, detail: '未知动作', llmReason: a.reason })
-          continue
-        }
-        try {
-          const r = await fn(chainKey, tokenId, (a.args ?? {}) as never)
-          results.push({ action: a.action, ok: true, detail: JSON.stringify(r).slice(0, 200), llmReason: a.reason })
-        } catch (err) {
-          results.push({ action: a.action, ok: false, detail: err instanceof Error ? err.message.slice(0, 200) : String(err), llmReason: a.reason })
-        }
-      }
-      await recordArenaTask(chainKey, tokenId, { action: 'decision_tick', season: season.id }, { actions: results, reasoning })
-      // 决策留痕:即使观望也落一条 arena_trades(owner 页可看到"模型想了但没动手"及原始输出)
-      const acted = results.filter((r) => r.ok).map((r) => r.action)
-      const rejected = results.filter((r) => !r.ok)
-      let summary: string
-      if (results.length === 0) {
-        summary = reasoning ? `观望: ${reasoning.slice(0, 240)}` : '模型决策观望，未输出任何动作'
-      } else if (rejected.length === results.length) {
-        summary = `全部动作被拒绝: ${rejected.map((r) => `${r.action}(${r.detail})`).join('; ')}`
-      } else {
-        summary = `执行: ${acted.join(', ')}` + (rejected.length > 0 ? `; 拒绝: ${rejected.map((r) => `${r.action}(${r.detail})`).join('; ')}` : '')
-      }
+      const ctx = await buildThinkerContext(chainKey, tokenId, season, account, fg.balance)
+      const meter = makeFuelMeter(season.id, tokenId, fuelCfg)
+      const { plan, usage, costUsd } = await think(ctx, fuelCfg, meter)
+
+      const decisionId = await insertArenaDecision({
+        season_id: season.id,
+        token_id: String(tokenId),
+        plan: plan as unknown as Record<string, unknown>,
+        model: fuelCfg.llmModel,
+        input_tokens: usage.inputTokens,
+        output_tokens: usage.outputTokens,
+        cost_usd: String(costUsd),
+      })
+
+      // 兼容前端：仍写一条 arena_trades(decision)
       await insertArenaTrade({
         season_id: season.id,
         token_id: tokenId,
         strategy_type: 'decision',
-        action: results.length === 0 ? 'hold' : results.every((r) => !r.ok) ? 'rejected_all' : 'acted',
+        action: plan.intendedActions.length === 0 ? 'hold' : 'planned',
         tx_hash: null,
         pnl_usd: null,
         payload: {
+          decisionId,
+          plan: plan as unknown as Record<string, unknown>,
           model: fuelCfg.llmModel,
           fuelSpent: true,
-          actions: results,
-          reasoning,
-          summary,
-          raw: output.slice(0, 600),
+          costUsd,
         },
       }).catch((e) => console.error('[arena] 决策留痕失败:', e instanceof Error ? e.message : e))
-      console.log(`[arena:${chainKey}] decision tick(token=${tokenId}): ${results.map((r) => `${r.action}${r.ok ? '✓' : '✗'}`).join(' ') || 'hold'}`)
+
+      // 写思考记忆
+      if (plan.memoryNote) {
+        await writeArenaMemory(chainKey, tokenId, season.id, 'episodic', `[思考] ${plan.memoryNote}`).catch((e) =>
+          console.error('[arena] 写思考记忆失败:', e instanceof Error ? e.message : e),
+        )
+      }
+
+      // 执行层异步入队（失败不影响本轮思考结果）
+      enqueueExecution(chainKey, tokenId, season.id, decisionId, guard, plan)
+
+      console.log(`[arena:${chainKey}] decision tick(token=${tokenId}): ${plan.intendedActions.map((a) => a.toolId).join(', ') || 'hold'}`)
     } finally {
       gate.running -= 1
       await markDueDone(season.id, tokenId, 'decision', nowSec + knobs.decisionIntervalSec)
@@ -345,16 +262,6 @@ async function runDecisionTick(season: ArenaSeasonRow, account: ArenaAccountRow,
     console.error(`[arena:${chainKey}] decision tick 失败(token=${tokenId}):`, err instanceof Error ? err.message : err)
     await markDueDone(season.id, tokenId, 'decision', nowSec + knobs.decisionIntervalSec).catch(() => {})
   }
-}
-
-async function recentTradesSummary(seasonId: string, tokenId: number): Promise<string> {
-  const db = await getDb()
-  const res = await db.query<{ strategy_type: string; action: string; created_at: string }>(
-    `SELECT strategy_type, action, created_at FROM arena_trades
-     WHERE season_id = $1 AND token_id = $2 ORDER BY created_at DESC LIMIT 5`,
-    [seasonId, tokenId],
-  )
-  return res.rows.map((r) => `${r.strategy_type}/${r.action}`).join(', ')
 }
 
 // ------------------------------------------------------------------
