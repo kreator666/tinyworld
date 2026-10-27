@@ -1550,6 +1550,47 @@ app.get('/admin/arena/seasons/:id/agents/:tokenId/trades', chainAdminRequired, a
   }
 })
 
+// 思考记录(admin):查看 LLM 输出的 DecisionPlan
+app.get('/admin/arena/seasons/:id/agents/:tokenId/decisions', chainAdminRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const limit = Math.min(Number(c.req.query('limit')) || 100, 200)
+    const { listArenaDecisions } = await import('./db/arena')
+    const decisions = await listArenaDecisions(season.id, tokenId, limit)
+    return c.json({ decisions })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 执行记录(admin):查看 plan 的动作执行结果
+app.get('/admin/arena/seasons/:id/agents/:tokenId/executions', chainAdminRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const season = await loadSeasonOrThrow(c.req.param('id'))
+    const decisionId = c.req.query('decisionId')
+    if (!decisionId) {
+      const db = await (await import('./db')).getDb()
+      const res = await db.query(
+        `SELECT e.* FROM arena_executions e
+         JOIN arena_decisions d ON d.id = e.decision_id
+         WHERE d.season_id = $1 AND d.token_id = $2
+         ORDER BY e.created_at DESC LIMIT $3`,
+        [season.id, tokenId, Math.min(Number(c.req.query('limit')) || 100, 200)],
+      )
+      return c.json({ executions: res.rows })
+    }
+    const { listArenaExecutions } = await import('./db/arena')
+    const executions = await listArenaExecutions(decisionId)
+    return c.json({ decisionId, executions })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
 // 净值曲线(owner):按时间升序返回快照
 app.get('/arena/seasons/:id/agents/:tokenId/snapshots', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
