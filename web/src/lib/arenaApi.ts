@@ -121,6 +121,45 @@ export interface ArenaTrade {
 export const getArenaTrades = (id: string, tokenId: number) =>
   apiCall<{ trades: ArenaTrade[] }>(`/arena/seasons/${id}/agents/${tokenId}/trades?limit=100`)
 
+export interface ArenaDecision {
+  id: string
+  season_id: string
+  token_id: string
+  plan: {
+    reasoning?: string
+    riskAssessment?: string
+    survivalCheck?: string
+    memoryNote?: string
+    scores?: { expectedReturn: number; risk: number; survival: number }
+    intendedActions?: { toolId: string; args?: Record<string, unknown>; reason?: string }[]
+  }
+  model: string | null
+  input_tokens: number | null
+  output_tokens: number | null
+  cost_usd: string | null
+  created_at: string
+}
+
+export const getArenaDecisions = (id: string, tokenId: number, limit = 20) =>
+  apiCall<{ decisions: ArenaDecision[] }>(`/arena/seasons/${id}/agents/${tokenId}/decisions?limit=${limit}`)
+
+export interface ArenaExecution {
+  id: string
+  decision_id: string
+  action_idx: number
+  tool_id: string
+  args: Record<string, unknown> | null
+  status: string // success | failed | skipped
+  result: Record<string, unknown> | null
+  error: string | null
+  created_at: string
+}
+
+export const getArenaExecutions = (id: string, tokenId: number, decisionId?: string, limit = 100) =>
+  apiCall<{ executions: ArenaExecution[]; decisionId?: string }>(
+    `/arena/seasons/${id}/agents/${tokenId}/executions?limit=${limit}${decisionId ? `&decisionId=${decisionId}` : ''}`,
+  )
+
 export const getArenaSnapshots = (id: string, tokenId: number) =>
   apiCall<{ snapshots: ArenaSnapshot[] }>(`/arena/seasons/${id}/agents/${tokenId}/snapshots?limit=200`)
 

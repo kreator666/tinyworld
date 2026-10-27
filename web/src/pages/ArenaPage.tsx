@@ -20,6 +20,10 @@ import {
   type ArenaSeason,
   type LeaderboardEntry,
   type MyArenaAccount,
+  getArenaDecisions,
+  type ArenaDecision,
+  getArenaExecutions,
+  type ArenaExecution,
 } from '../lib/arenaApi'
 
 // ============================================================
@@ -48,11 +52,21 @@ const ACTION_LABEL: Record<string, string> = {
   swap: '兑换',
   gmx_order: '永续单',
   hold: '观望',
+  planned: '已生成计划',
   acted: '执行动作',
   rejected_all: '动作被拒',
   fuel_halt: '燃料停机',
   daily_halt: '日回撤暂停',
   cooldown: '决策冷却',
+}
+
+const TOOL_LABEL: Record<string, string> = {
+  arena_supply: '存入',
+  arena_withdraw: '取出',
+  arena_swap: '兑换',
+  arena_perp_open: '开永续',
+  arena_perp_close: '平永续',
+  arena_status: '状态',
 }
 
 const fmtTime = (ts: number) => new Date(ts * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -91,6 +105,8 @@ export default function ArenaPage() {
   const [mine, setMine] = useState<MyArenaAccount | null>(null)
   const [navPoints, setNavPoints] = useState<{ t: string; v: number }[]>([])
   const [trades, setTrades] = useState<ArenaTrade[]>([])
+  const [decisions, setDecisions] = useState<ArenaDecision[]>([])
+  const [executions, setExecutions] = useState<ArenaExecution[]>([])
   const [busy, setBusy] = useState(false)
   const [playbookDraft, setPlaybookDraft] = useState<Record<string, unknown> | null>(null)
   const isEvm = active.family === 'evm'
@@ -121,6 +137,18 @@ export default function ArenaPage() {
             setTrades(t.trades)
           } catch {
             setTrades([])
+          }
+          try {
+            const d = await getArenaDecisions(id, tokenId, 20)
+            setDecisions(d.decisions)
+          } catch {
+            setDecisions([])
+          }
+          try {
+            const e = await getArenaExecutions(id, tokenId, undefined, 100)
+            setExecutions(e.executions)
+          } catch {
+            setExecutions([])
           }
         } catch {
           setMine(null)
@@ -367,7 +395,8 @@ export default function ArenaPage() {
                         {trades.map((t) => {
                           const acted = (t.payload?.actions as { action: string; ok: boolean; detail: string }[] | undefined)?.filter((a) => a.ok)
                           const rejected = (t.payload?.actions as { action: string; ok: boolean; detail: string }[] | undefined)?.filter((a) => !a.ok)
-                          const summary = (t.payload?.summary as string) || (t.payload?.reason as string)
+                          const plan = t.payload?.plan as ArenaDecision['plan'] | undefined
+                          const summary = (t.payload?.summary as string) || (t.payload?.reason as string) || plan?.reasoning
                           return (
                             <div key={t.id} className="text-[10px] bg-white/5 rounded px-2 py-1.5">
                               <div className="flex items-center justify-between">
@@ -377,6 +406,11 @@ export default function ArenaPage() {
                                   {ACTION_LABEL[t.action] ?? t.action}
                                   {acted && acted.length > 0 && <span className="ml-1.5 text-emerald-400">✓ {acted.map((a) => ACTION_LABEL[a.action] ?? a.action).join(', ')}</span>}
                                   {rejected && rejected.length > 0 && <span className="ml-1.5 text-rose-400">✗ {rejected.length} 个</span>}
+                                  {plan?.scores && (
+                                    <span className="ml-1.5 text-slate-400">
+                                      收益{plan.scores.expectedReturn}/风险{plan.scores.risk}/存活{plan.scores.survival}
+                                    </span>
+                                  )}
                                 </span>
                                 <span className="text-right shrink-0">
                                   {t.tx_hash ? (
@@ -402,6 +436,79 @@ export default function ArenaPage() {
                                 </ul>
                               )}
                             </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 思考与执行记录(P4+):展示 LLM 思考过程与执行结果 */}
+                  <div>
+                    <div className="text-xs text-slate-400 mb-2">思考与执行记录</div>
+                    {decisions.length === 0 ? (
+                      <p className="text-[10px] text-slate-600 text-center py-2">暂无思考记录</p>
+                    ) : (
+                      <div className="max-h-64 overflow-y-auto space-y-2">
+                        {decisions.map((d) => {
+                          const plan = d.plan
+                          const decisionExecutions = executions.filter((e) => e.decision_id === d.id)
+                          return (
+                            <details key={d.id} className="text-[10px] bg-white/5 rounded px-2 py-1.5 group">
+                              <summary className="cursor-pointer list-none flex items-center justify-between text-slate-300">
+                                <span>
+                                  <span className="text-sky-300">{new Date(d.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                  <span className="ml-2">{(plan.intendedActions?.length ?? 0) === 0 ? '观望/持有' : `计划 ${plan.intendedActions?.length} 个动作`}</span>
+                                  {plan.scores && (
+                                    <span className="ml-2 text-slate-400">
+                                      收益{plan.scores.expectedReturn} 风险{plan.scores.risk} 存活{plan.scores.survival}
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="text-slate-500">{d.model} · ${Number(d.cost_usd || 0).toFixed(6)}</span>
+                              </summary>
+                              {plan.reasoning && (
+                                <div className="mt-1.5 text-slate-400 break-words leading-relaxed">
+                                  <span className="text-slate-500">思考：</span>{plan.reasoning}
+                                </div>
+                              )}
+                              {plan.riskAssessment && (
+                                <div className="mt-1 text-slate-400 break-words leading-relaxed">
+                                  <span className="text-slate-500">风险评估：</span>{plan.riskAssessment}
+                                </div>
+                              )}
+                              {plan.survivalCheck && (
+                                <div className="mt-1 text-slate-400 break-words leading-relaxed">
+                                  <span className="text-slate-500">存活检查：</span>{plan.survivalCheck}
+                                </div>
+                              )}
+                              {plan.intendedActions && plan.intendedActions.length > 0 && (
+                                <div className="mt-1.5">
+                                  <div className="text-slate-500 mb-0.5">计划动作：</div>
+                                  <ul className="space-y-0.5">
+                                    {plan.intendedActions.map((a, i) => (
+                                      <li key={i} className="text-slate-400 break-words">
+                                        · {TOOL_LABEL[a.toolId] ?? a.toolId}{a.reason ? ` (${a.reason})` : ''}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {decisionExecutions.length > 0 && (
+                                <div className="mt-1.5">
+                                  <div className="text-slate-500 mb-0.5">执行结果：</div>
+                                  <ul className="space-y-0.5">
+                                    {decisionExecutions.map((e) => (
+                                      <li key={e.id} className="break-words">
+                                        <span className={e.status === 'success' ? 'text-emerald-400' : e.status === 'skipped' ? 'text-amber-400' : 'text-rose-400'}>
+                                          {e.status === 'success' ? '✓' : e.status === 'skipped' ? '⊘' : '✗'} {TOOL_LABEL[e.tool_id] ?? e.tool_id}
+                                        </span>
+                                        {e.error && <span className="text-rose-300/80 ml-1">: {e.error}</span>}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </details>
                           )
                         })}
                       </div>
