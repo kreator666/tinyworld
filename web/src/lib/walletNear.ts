@@ -9,27 +9,29 @@ import {
 } from '@near-wallet-selector/core'
 import { setupModal, type WalletSelectorModal } from '@near-wallet-selector/modal-ui'
 import '@near-wallet-selector/modal-ui/styles.css'
-import { setupMyNearWallet } from '@near-wallet-selector/my-near-wallet'
 import { getActiveChain } from '../store/chainConfigStore'
 
 // ============================================================
-// NEAR 钱包封装(wallet-selector:MyNearWallet / Meteor)
+// NEAR 钱包封装(wallet-selector:Meteor)
 // 与 EVM 侧 EIP-6963 封装、Solana 侧 Phantom 封装风格一致:
 // 只做 selector 初始化 / 连接 / 签名,链上读写见 lib/chainNear.ts。
 // NEAR 的"地址"就是 account_id(如 alice.testnet)。
 // 会话由 wallet-selector 持久化在 localStorage(key 含合约地址),
 // 刷新后通过 initNearSession 恢复并校验与登录身份一致。
-// 注:meteor-wallet 的浏览器 bundle 混有 Node 风格依赖(randombytes 引用 global/process,
+// 注1:MyNearWallet 已于 2026 年退役,官方不再接受新应用连接(testnet.mynearwallet.com
+//      明确提示迁移到 Meteor),故不接;Meteor 为其官方继任者。
+// 注2:meteor-wallet 的浏览器 bundle 混有 Node 风格依赖(randombytes 引用 global/process,
 //    靠 vite define 垫片规避);为防其再出运行时错误拖垮整个应用,改为异步按需加载,
-//    加载失败仅跳过该钱包,不影响 MyNearWallet 与整体功能。
+//    加载失败仅跳过该钱包,不影响整体功能。
 // ============================================================
 
-/** 加载钱包模块:MyNearWallet 必载;Meteor 按需异步载,失败跳过(其浏览器 bundle 有 Node 依赖坑) */
-async function loadNearWalletModules(): Promise<Array<ReturnType<typeof setupMyNearWallet>>> {
-  const modules: Array<ReturnType<typeof setupMyNearWallet>> = [setupMyNearWallet()]
+/** 加载钱包模块:Meteor 按需异步载,失败跳过(其浏览器 bundle 有 Node 依赖坑);
+ *  (MyNearWallet 已退役,见文件头注释) */
+async function loadNearWalletModules(): Promise<Array<ReturnType<typeof import('@near-wallet-selector/meteor-wallet').setupMeteorWallet>>> {
+  const modules: Array<ReturnType<typeof import('@near-wallet-selector/meteor-wallet').setupMeteorWallet>> = []
   try {
     const { setupMeteorWallet } = await import('@near-wallet-selector/meteor-wallet')
-    modules.push(setupMeteorWallet() as unknown as ReturnType<typeof setupMyNearWallet>)
+    modules.push(setupMeteorWallet())
   } catch (err) {
     console.warn('[near] meteor-wallet 模块加载失败,已跳过该钱包(不影响其他功能):', err)
   }

@@ -252,7 +252,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
             >
               <span className="text-xl">Ⓝ</span>
               <span className="font-medium">NEAR 钱包</span>
-              <span className="ml-auto text-xs text-slate-500">MyNearWallet / Meteor</span>
+              <span className="ml-auto text-xs text-slate-500">Meteor Wallet</span>
               {phaseText('NEAR') && (
                 <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('NEAR')}</span>
               )}
