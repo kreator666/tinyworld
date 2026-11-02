@@ -5,6 +5,7 @@ import { useAppStore } from './store/appStore'
 import { useChainStore } from './store/chainStore'
 import { getActiveProvider, setActiveProvider } from './lib/wallet'
 import { clearActiveSolana, getSolanaProvider } from './lib/walletSolana'
+import { clearActiveNear, initNearSession, onNearAccountsChanged } from './lib/walletNear'
 import { useChainConfig } from './store/chainConfigStore'
 import NavBar from './components/NavBar'
 import OnboardingWizard from './components/OnboardingWizard'
@@ -138,6 +139,36 @@ function WalletEvents() {
     provider.on('accountChanged', onAccountChanged)
     return () => {
       provider.removeListener?.('accountChanged', onAccountChanged)
+    }
+  }, [connected, address, disconnect, clear, nav, walletKind])
+
+  // NEAR 账户切换/刷新恢复:wallet-selector 账户与登录身份不一致时强制断开,
+  // 避免用旧身份组交易、新账户签名导致钱包拒签
+  useEffect(() => {
+    if (walletKind !== 'near') return
+    let disposed = false
+    initNearSession()
+      .then((accountId) => {
+        if (disposed) return
+        if (!accountId || (address && accountId !== address)) {
+          clearActiveNear()
+          disconnect()
+          clear()
+          nav('/')
+        }
+      })
+      .catch(() => {})
+    const unsubscribe = onNearAccountsChanged((accountId) => {
+      if (!accountId || (address && accountId !== address)) {
+        clearActiveNear()
+        disconnect()
+        clear()
+        nav('/')
+      }
+    })
+    return () => {
+      disposed = true
+      unsubscribe()
     }
   }, [connected, address, disconnect, clear, nav, walletKind])
 

@@ -38,6 +38,7 @@
     "@types/bn.js": "^5.2.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.10.2",
+    "near-api-js": "^5.1.1",
     "typescript": "~5.6.3"
   }
 }

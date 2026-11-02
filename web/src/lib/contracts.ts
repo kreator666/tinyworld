@@ -12,7 +12,7 @@ import type { ChainType } from '../types'
 // 当前激活链由 store/chainConfigStore.ts 管理(导航栏按钮切换)。
 // ============================================================
 
-export type ChainKey = 'sepolia' | 'fuji' | 'solana-devnet' | 'avalanche'
+export type ChainKey = 'sepolia' | 'fuji' | 'solana-devnet' | 'avalanche' | 'near-testnet'
 
 export interface ChainContracts {
   key: ChainKey
@@ -23,8 +23,10 @@ export interface ChainContracts {
   parts: `0x${string}` // EVM: DIDParts 合约地址;Solana: 同程序地址(占位)
   rpc: string // 无钱包时的只读回退 RPC
   explorer: string // 区块浏览器地址(用于拼接 tx/address 链接)
-  /** 链族:缺省视为 'evm';solana 链的读写走 lib/chainSolana.ts */
-  family?: 'evm' | 'solana'
+  /** 链族:缺省视为 'evm';solana 链的读写走 lib/chainSolana.ts;near 链走 lib/chainNear.ts */
+  family?: 'evm' | 'solana' | 'near'
+  /** 是否测试网络:导航栏"测试网"开关关闭时从链选择器中隐藏 */
+  testnet: boolean
   /** 新手装备免费领养合约(EVM;未部署的链不填) */
   partsClaim?: `0x${string}`
   /** 装备铸造直售市场合约(EVM;未部署的链不填。价格一律链上 listPriceOf 为准) */
@@ -40,6 +42,15 @@ const solanaDevnetChain = {
   rpcUrls: { default: { http: ['https://api.devnet.solana.com'] } },
 } satisfies Chain
 
+// NEAR testnet 的 viem 链定义:仅作占位(near 不走 viem client),
+// chain_id 398 为哨兵值(NEAR 无 EVM chainId),与登录态 WalletLogin.chainId 对齐
+const nearTestnetChain = {
+  id: 398,
+  name: 'NEAR Testnet',
+  nativeCurrency: { name: 'NEAR', symbol: 'NEAR', decimals: 24 },
+  rpcUrls: { default: { http: ['https://rpc.testnet.near.org'] } },
+} satisfies Chain
+
 // 素材(角色库/装备目录)全链共用一套,与链无关;这里只放合约地址等链上信息
 export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
   // Sepolia 测试网(2026-07 部署)
@@ -52,6 +63,7 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     parts: '0xACa57ACa9F8FF68Dbf74E2baAB65f88Ec2515959',
     rpc: 'https://ethereum-sepolia-rpc.publicnode.com',
     explorer: 'https://sepolia.etherscan.io',
+    testnet: true,
   },
   // Avalanche Fuji 测试网(2026-10 UUPS 代理重部署)
   fuji: {
@@ -65,6 +77,7 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     market: '0x16140ee819539639f434FC32DfdEf392103B0703',
     rpc: 'https://avalanche-fuji-c-chain-rpc.publicnode.com',
     explorer: 'https://testnet.snowtrace.io',
+    testnet: true,
   },
   // Avalanche C-Chain 主网(2026-10 UUPS 代理重部署,chainId 43114)
   avalanche: {
@@ -78,6 +91,7 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     market: '0x57720BEb1Bf1fe0Fa896CBdb2f683098d4fDaB61',
     rpc: 'https://avalanche-c-chain-rpc.publicnode.com',
     explorer: 'https://subnets.avax.network/c-chain',
+    testnet: false,
   },
   // Solana devnet(程序 tinyworld 已部署,Token-2022;IDL 副本在 src/idl/tinyworld.json)
   'solana-devnet': {
@@ -89,7 +103,21 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     parts: '4ErVmJjpd798U2riCj76fDy8ggPd2W2fhRnP5Ta6dBaH' as `0x${string}`,
     rpc: 'https://api.devnet.solana.com',
     explorer: 'https://explorer.solana.com?cluster=devnet',
+    testnet: true,
     family: 'solana',
+  },
+  // NEAR testnet(合约 tinyworld.testnet 已部署;身份与部件同一合约,地址占位部署后替换)
+  'near-testnet': {
+    key: 'near-testnet',
+    name: 'NEAR Testnet',
+    chainId: 398,
+    chain: nearTestnetChain,
+    identity: 'tinyworld.testnet' as `0x${string}`,
+    parts: 'tinyworld.testnet' as `0x${string}`,
+    rpc: 'https://rpc.testnet.fastnear.com', // rpc.testnet.near.org 已弃用(429,2026-11 实测)
+    explorer: 'https://testnet.nearblocks.io',
+    testnet: true,
+    family: 'near',
   },
 }
 

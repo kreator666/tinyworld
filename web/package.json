@@ -10,6 +10,9 @@
     "build:assets": "node scripts/build-pet-acc-assets.mjs"
   },
   "dependencies": {
+    "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/modal-ui": "^10.1.4",
+    "@near-wallet-selector/my-near-wallet": "^10.1.4",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
     "buffer": "^6.0.3",
@@ -21,6 +24,7 @@
     "zustand": "^5.0.1"
   },
   "devDependencies": {
+    "@near-wallet-selector/meteor-wallet": "^10.1.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

@@ -10,15 +10,16 @@ function env(key: string, fallback = ''): string {
 // 链配置:与前端 web/src/lib/contracts.ts 的 CONTRACTS_BY_CHAIN 对应
 // TARGET_CHAIN 环境变量选择:sepolia(默认) | fuji | solana-devnet
 // family 区分链家族:evm(EVM 链,defi/aave 可用)/ solana(身份/人格/装备读+DeFi 兑换)
+// / near(NEAR 链,身份/人格/装备读;view 方法走 JSON-RPC call_function)
 // ============================================================
 interface ChainConfig {
-  family: 'evm' | 'solana'
+  family: 'evm' | 'solana' | 'near'
   name: string
-  chainId: number // Solana 家族为哨兵值(103=devnet,与 solana-cli 的 cluster 约定一致)
+  chainId: number // Solana/NEAR 家族为哨兵值(103=solana devnet,与 solana-cli 的 cluster 约定一致;398=near testnet,无 EVM chainId 可复用,取值无链上含义)
   rpc: string
   rpcFallbacks?: string[] // 备用 RPC:主端点网络故障时自动切换(Solana 官方域名间歇性不可达,必须配)
   explorer: string
-  identityAddress: string // EVM 为 0x 合约地址;Solana 为程序地址(base58)
+  identityAddress: string // EVM 为 0x 合约地址;Solana 为程序地址(base58);NEAR 为合约 account_id(如 xxx.testnet)
   partsAddress: string
   partsClaim?: string // 新手装备免费领养合约地址(EVM);未部署的链不填,运行时经 /admin/chains/:key/config 写入 chains.config
   market?: { address: string } // 装备铸造直售市场合约地址(EVM);价格一律链上为准,这里只存地址
@@ -177,6 +178,21 @@ const CHAINS: Record<string, ChainConfig> = {
       usdtMint: env('SOLANA_USDT_MINT', ''), // devnet 无公认 USDT 时留空 = 余额恒 0
       jupiterApiUrl: env('JUPITER_API_URL', ''), // 官方 api.jup.ag 仅主网;devnet 需自托管 jupiter-quote-api
     },
+  },
+  // NEAR testnet:Rust/near-sdk 合约 tinyworld(NEP-171 风格 Soulbound 身份 + 装备部件,见 near/README.md)
+  // 本阶段后端只做读取(view 方法走 JSON-RPC call_function);不发交易,写路径全部 TODO。
+  // 单合约同时承载身份与装备,identityAddress 与 partsAddress 指向同一合约。
+  // 合约尚未部署,以下 account_id 为占位,部署后替换(部署后也可经 /admin/chains/:key/config 热更新)。
+  'near-testnet': {
+    family: 'near',
+    name: 'NEAR Testnet',
+    chainId: 398, // 哨兵值:NEAR 无 EVM chainId,参照 solana-devnet(103)惯例,398 仅作本库内唯一标识
+    // rpc.testnet.near.org 已弃用(429),thirdweb 公共端点已失效(2026-11 实测),主用 fastnear
+    rpc: 'https://rpc.testnet.fastnear.com',
+    rpcFallbacks: [],
+    explorer: 'https://testnet.nearblocks.io',
+    identityAddress: 'tinyworld.testnet', // 占位:合约未部署,部署后替换
+    partsAddress: 'tinyworld.testnet', // 与 identityAddress 同一合约(占位)
   },
 }
 

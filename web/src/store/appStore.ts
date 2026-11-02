@@ -26,9 +26,9 @@ interface AppState {
   provider: string | null
   login: WalletLogin | null
   agentToken: string | null
-  /** 连接的钱包链族:决定链上交互走 EVM provider 还是 Phantom(persist) */
-  walletKind: 'evm' | 'solana'
-  connect: (login: WalletLogin, agentToken?: string | null, walletKind?: 'evm' | 'solana') => void
+  /** 连接的钱包链族:决定链上交互走 EVM provider、Phantom 还是 NEAR wallet-selector(persist) */
+  walletKind: 'evm' | 'solana' | 'near'
+  connect: (login: WalletLogin, agentToken?: string | null, walletKind?: 'evm' | 'solana' | 'near') => void
   updateLoginChainId: (chainId: number) => void
   disconnect: () => void
   setHydrated: (hydrated: boolean) => void

@@ -3,6 +3,7 @@ import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
 import type { Address } from 'viem'
 import * as evm from './chain'
 import * as sol from './chainSolana'
+import * as near from './chainNear'
 import { getActiveChain } from '../store/chainConfigStore'
 import type { EvmUnsignedTx, SolanaUnsignedTx, UnsignedTx } from './agentApi'
 import { broadcastSignedTxs, fetchSolanaBlockhash } from './agentApi'
@@ -11,6 +12,7 @@ import type { WalletLogin } from '../types'
 import type { ChainContracts } from './contracts'
 import type { ChainIdentityState, ChainPartAsset, ChainPartState, MintedAgent } from './chain'
 import { isValidSolanaAddress } from './chainSolana'
+import { isValidNearAddress } from './walletNear'
 import {
   SolanaWalletError,
   getActiveSolanaAddress,
@@ -21,12 +23,13 @@ import {
 
 // ============================================================
 // 链族分发层:每个 action 按当前激活链的 family 路由到
-// EVM(lib/chain.ts)或 Solana(lib/chainSolana.ts)实现,调用方零感知。
-// EVM 路径就是原 lib/chain.ts 的函数,行为不变。
-// 注意:写操作返回值统一为 string——EVM 返回 0x tx hash,Solana 返回 base58 signature。
+// EVM(lib/chain.ts)、Solana(lib/chainSolana.ts)或 NEAR(lib/chainNear.ts),
+// 调用方零感知。EVM 路径就是原 lib/chain.ts 的函数,行为不变。
+// 注意:写操作返回值统一为 string——EVM 返回 0x tx hash,Solana 返回 base58 signature,NEAR 返回 tx hash。
 // ============================================================
 
 const isSolana = () => (getActiveChain().family ?? 'evm') === 'solana'
+const isNear = () => (getActiveChain().family ?? 'evm') === 'near'
 
 export type { ChainIdentityState, ChainPartAsset, ChainPartState, MintedAgent }
 
@@ -37,34 +40,43 @@ export interface RegisterProgress {
   chainId: number | null
 }
 
-/** 钱包是否已处于激活链可用状态:EVM 比对 chainId;Solana 需 walletKind='solana' 且地址合法 */
+/** 钱包是否已处于激活链可用状态:EVM 比对 chainId;Solana 需 walletKind='solana' 且地址合法;NEAR 需 walletKind='near' 且 account_id 合法 */
 export function isWalletOnActiveChain(login: WalletLogin | null, active: ChainContracts): boolean {
-  if ((active.family ?? 'evm') === 'solana') {
+  const family = active.family ?? 'evm'
+  if (family === 'solana') {
     const { walletKind, address } = useAppStore.getState()
     return walletKind === 'solana' && !!login && login.address === address && isValidSolanaAddress(login.address)
+  }
+  if (family === 'near') {
+    const { walletKind, address } = useAppStore.getState()
+    return walletKind === 'near' && !!login && login.address === address && isValidNearAddress(login.address)
   }
   return !!login && login.chainId === active.chainId
 }
 
-/** 确保钱包切到目标链:Solana 为 no-op(Phantom cluster 手动切换) */
+/** 确保钱包切到目标链:Solana/NEAR 为 no-op(网络由钱包侧管理,前端无法探测也不需跟随) */
 export async function ensureTargetChain(): Promise<void> {
-  if (isSolana()) return
+  if (isSolana() || isNear()) return
   return evm.ensureTargetChain()
 }
 
 export async function fetchChainState(address: string): Promise<ChainIdentityState> {
+  if (isNear()) return near.fetchChainState(address)
   return isSolana() ? sol.fetchChainState(address) : evm.fetchChainState(address as Address)
 }
 
 export async function fetchOwnedPartCount(address: string): Promise<number> {
+  if (isNear()) return near.fetchOwnedPartCount(address)
   return isSolana() ? sol.fetchOwnedPartCount(address) : evm.fetchOwnedPartCount(address as Address)
 }
 
 export async function checkNameAvailable(name: string): Promise<boolean> {
+  if (isNear()) return near.checkNameAvailable(name)
   return isSolana() ? sol.checkNameAvailable(name) : evm.checkNameAvailable(name)
 }
 
 export async function fetchMintedAgents(): Promise<MintedAgent[]> {
+  if (isNear()) return near.fetchMintedAgents()
   return isSolana() ? sol.fetchMintedAgents() : evm.fetchMintedAgents()
 }
 
@@ -75,6 +87,7 @@ export async function fetchAgentPublic(tokenId: number): Promise<{
   bio: string
   equipped: import('../types').Equipped
 }> {
+  if (isNear()) return near.fetchAgentPublic(tokenId)
   return isSolana() ? sol.fetchAgentPublic(tokenId) : evm.fetchAgentPublic(tokenId)
 }
 
@@ -86,68 +99,81 @@ export async function fetchAgentsPublic(tokenIds: number[]): Promise<{
   bio: string
   equipped: import('../types').Equipped
 }[]> {
+  if (isNear()) return near.fetchAgentsPublic(tokenIds)
   return isSolana() ? sol.fetchAgentsPublic(tokenIds) : evm.fetchAgentsPublic(tokenIds)
 }
 
 export async function fetchPersona(tokenId: number): Promise<{ uri: string; contentHash: `0x${string}` }> {
+  if (isNear()) return near.fetchPersona(tokenId)
   return isSolana() ? sol.fetchPersona(tokenId) : evm.fetchPersona(tokenId)
 }
 
-/** Solana 分支忽略 bio/profileURI(程序无此字段) */
+/** Solana/NEAR 镜像模式:uri 忽略,hash+空 arweave_id 上链(详见 chainSolana/chainNear.setPersonaOnChain) */
 export async function mintIdentity(owner: string, name: string, profileURI: string): Promise<string> {
+  if (isNear()) return near.mintIdentity(owner, name, profileURI)
   return isSolana() ? sol.mintIdentity(owner, name, profileURI) : evm.mintIdentity(owner as Address, name, profileURI)
 }
 
-/** 新手大礼包领取状态(Solana 不支持,返回 null) */
+/** 新手大礼包领取状态(Solana 不支持返回 null;NEAR 为合约内置 claim,直接查视图) */
 export async function fetchStarterClaimState(address: string): Promise<boolean | null> {
   if (isSolana()) return null
+  if (isNear()) return near.fetchStarterClaimState(address)
   return evm.fetchStarterClaimState(address as Address)
 }
 
-/** 领取新手大礼包:随机 4 件套 + 自动穿戴,缺失授权自动补齐(Solana 不支持,抛错) */
+/** 领取新手大礼包:随机 4 件套 + 自动穿戴(Solana 不支持,抛错;NEAR 为合约内置一次领取) */
 export async function claimStarterPack(owner: string, tokenId: number): Promise<string> {
   if (isSolana()) throw new Error('Solana 链不支持新手大礼包')
+  if (isNear()) return near.claimStarterPack(owner, tokenId)
   return evm.claimStarterPack(owner as Address, tokenId)
 }
 
-/** 市场直售单价(wei);Solana 或未配置返回 null */
+/** 市场直售单价(wei);Solana/NEAR 或未配置返回 null */
 export async function fetchMarketPrice(partId: number): Promise<bigint | null> {
-  if (isSolana()) return null
+  if (isSolana() || isNear()) return null
   return evm.fetchMarketPrice(partId)
 }
 
-/** 市场直售购买(Solana 不支持,抛错) */
+/** 市场直售购买(Solana/NEAR 不支持,抛错) */
 export async function buyPartFromMarket(owner: string, partId: number, quantity: number, value: bigint): Promise<string> {
   if (isSolana()) throw new Error('Solana 链不支持装备市场')
+  if (isNear()) throw new Error('NEAR 链不支持装备市场')
   return evm.buyPartFromMarket(owner as Address, partId, quantity, value)
 }
 
 export async function equipPart(owner: string, tokenId: number, slot: number, partChainId: number): Promise<string> {
+  if (isNear()) return near.equipPart(owner, tokenId, slot, partChainId)
   return isSolana() ? sol.equipPart(owner, tokenId, slot, partChainId) : evm.equipPart(owner as Address, tokenId, slot, partChainId)
 }
 
 export async function unequipPart(owner: string, tokenId: number, slot: number): Promise<string> {
+  if (isNear()) return near.unequipPart(owner, tokenId, slot)
   return isSolana() ? sol.unequipPart(owner, tokenId, slot) : evm.unequipPart(owner as Address, tokenId, slot)
 }
 
-/** Solana 镜像模式:uri 忽略,hash+空 arweave_id 上链(详见 chainSolana.setPersonaOnChain) */
+/** Solana/NEAR 镜像模式:uri 忽略,hash+空 arweave_id 上链(详见 chainSolana.setPersonaOnChain) */
 export async function setPersonaOnChain(owner: string, tokenId: number, uri: string, contentHash: `0x${string}`): Promise<string> {
+  if (isNear()) return near.setPersonaOnChain(owner, tokenId, uri, contentHash)
   return isSolana() ? sol.setPersonaOnChain(owner, tokenId, uri, contentHash) : evm.setPersonaOnChain(owner as Address, tokenId, uri, contentHash)
 }
 
 export async function isPartsOwner(account: string): Promise<boolean> {
+  if (isNear()) return near.isPartsOwner(account)
   return isSolana() ? sol.isPartsOwner(account) : evm.isPartsOwner(account as Address)
 }
 
 export async function isPartsMinter(account: string): Promise<boolean> {
+  if (isNear()) return near.isPartsMinter(account)
   return isSolana() ? sol.isPartsMinter(account) : evm.isPartsMinter(account as Address)
 }
 
 export async function fetchPartStates(): Promise<ChainPartState[]> {
+  if (isNear()) return near.fetchPartStates()
   return isSolana() ? sol.fetchPartStates() : evm.fetchPartStates()
 }
 
 export async function registerPart(owner: string, chainId: number, slot: number, rarity: number, maxSupply: number): Promise<string> {
+  if (isNear()) return near.registerPart(owner, chainId, slot, rarity, maxSupply)
   return isSolana() ? sol.registerPart(owner, chainId, slot, rarity, maxSupply) : evm.registerPart(owner as Address, chainId, slot, rarity, maxSupply)
 }
 
@@ -156,17 +182,20 @@ export async function registerPartsBatch(
   parts: { chainId: number; slot: number; rarity: number; maxSupply: number; name: string }[],
   onProgress?: (p: RegisterProgress) => void,
 ): Promise<string[]> {
+  if (isNear()) return near.registerPartsBatch(owner, parts, onProgress)
   return isSolana()
     ? sol.registerPartsBatch(owner, parts, onProgress)
     : evm.registerPartsBatch(owner as Address, parts, onProgress as (p: evm.RegisterProgress) => void)
 }
 
 export async function mintPartsBatch(owner: string, to: string, ids: bigint[], amounts: bigint[]): Promise<string> {
+  if (isNear()) return near.mintPartsBatch(owner, to, ids, amounts)
   return isSolana() ? sol.mintPartsBatch(owner, to, ids, amounts) : evm.mintPartsBatch(owner as Address, to as Address, ids, amounts)
 }
 
 export async function approveErc20(owner: string, token: string, spender: string, amount: bigint): Promise<string> {
   if (isSolana()) throw new Error('Solana 链不支持 ERC20 授权')
+  if (isNear()) throw new Error('NEAR 链不支持 ERC20 授权')
   return evm.approveErc20(owner as Address, token as Address, spender as Address, amount)
 }
 
@@ -243,6 +272,7 @@ export async function sendTransactions(
   unsignedTxs: UnsignedTx[],
   opts?: { tokenId?: number; protocol?: string },
 ): Promise<string[]> {
+  if (isNear()) throw new Error('NEAR 链暂不支持 Agent 组装的交易,请通过页面直接操作')
   if (isSolana()) {
     if (!opts?.tokenId) throw new Error('Solana 交易发送缺少 tokenId')
     return sendSolanaTransactions(unsignedTxs, opts.tokenId, opts.protocol)
@@ -251,5 +281,6 @@ export async function sendTransactions(
 }
 
 export function explainChainError(err: unknown): string {
+  if (isNear()) return near.explainNearChainError(err)
   return isSolana() ? sol.explainSolanaChainError(err) : evm.explainChainError(err)
 }

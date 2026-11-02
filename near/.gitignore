@@ -1,0 +1,4 @@
+# Rust / NEAR
+target/
+Cargo.lock
+neardev/

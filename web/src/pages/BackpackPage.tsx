@@ -30,13 +30,15 @@ export default function BackpackPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]['key']>('did')
   const [acting, setActing] = useState<string | null>(null)
   const [lastTx, setLastTx] = useState<string | null>(null)
-  // 新手大礼包 v2:需 evm 链 + 已配置 partsClaim + 钱包在目标链 + 已持有 DID + 未领取
+  // 新手大礼包:EVM 需已配置 partsClaim 合约;NEAR 为身份合约内置 claim(2026-11 已支持);
+  // 共同条件:钱包在目标链 + 已持有 DID + 未领取
   const [claimed, setClaimed] = useState<boolean | null>(null)
   const [claiming, setClaiming] = useState(false)
   const showToast = useAppStore((s) => s.showToast)
   const onTargetChain = isWalletOnActiveChain(login, active)
+  const family = active.family ?? 'evm'
   const claimReady =
-    (active.family ?? 'evm') === 'evm' && !!active.partsClaim && connected && onTargetChain && !!address && tokenId > 0
+    (family === 'near' || (family === 'evm' && !!active.partsClaim)) && connected && onTargetChain && !!address && tokenId > 0
 
   // 切链先清空旧链的 DID/装备数据,避免展示上一链的背包内容
   useEffect(() => {

@@ -12,7 +12,7 @@ export type CachedWalletClient = WalletClient<Transport, Chain, Account>
 // 多链 client 工厂(方案A 地基):getChainConfig / getPublicClient / getWalletClient
 // - 每个 chainKey 缓存一个 viem client 实例
 // - viem 链定义集中登记,未登记直接抛错(旧实现静默回落 sepolia,签名会串链,属隐患)
-// - Solana 家族链在 EVM 工厂入口明确抛错(其连接逻辑在 personaSolana / skills 内自管)
+// - Solana/NEAR 家族链在 EVM 工厂入口明确抛错(其连接逻辑在 personaSolana / personaNear / skills 内自管)
 // - env 覆盖(CHAIN_RPC / DID_IDENTITY_ADDRESS 等)仍在 config.ts 内只作用于 TARGET_CHAIN 链,行为不变
 // ============================================================
 
@@ -28,7 +28,7 @@ export function getChainConfig(chainKey: string): ChainConfig {
   return getChainContext(chainKey).cfg
 }
 
-/** 链的 viem 定义;Solana 家族或未登记的 chainId 直接抛错 */
+/** 链的 viem 定义;Solana/NEAR 家族或未登记的 chainId 直接抛错 */
 export function viemChainDef(chainKey: string): Chain {
   const { family, cfg } = getChainContext(chainKey)
   if (family !== 'evm') {
@@ -59,7 +59,8 @@ const walletClients = new Map<string, CachedWalletClient>()
 /**
  * 热钱包/签名客户端(按 chainKey + 地址缓存)。
  * 同一把 EVM 私钥跨链地址相同(AGENT_PRIVATE_KEY 单钥多链,天然成立),调用方按需传入;
- * Solana 家族链在此明确抛错(用 agentSolanaKey 走 skills 内自管的 Solana 连接)。
+ * Solana/NEAR 家族链在此明确抛错(Solana 用 agentSolanaKey 走 skills 内自管的连接;
+ * NEAR 本阶段只读,连接逻辑在 personaNear 内自管)。
  */
 export function getWalletClient(chainKey: string, privateKey: Hex): CachedWalletClient {
   if (!isHex(privateKey) || privateKey.length !== 66) throw new Error('私钥格式无效(期望 0x + 64 hex)')

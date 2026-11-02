@@ -2,11 +2,11 @@ import { keccak256, toBytes } from 'viem'
 import type { AIProfile } from '../types'
 
 // ============================================================
-// EVM(persona.ts)与 Solana(personaSolana.ts)共用的类型、常量与缓存。
-// 两边导出完全相同的公开接口;此处只放与链无关的部分。
+// EVM(persona.ts)与 Solana(personaSolana.ts)/ NEAR(personaNear.ts)共用的类型、常量与缓存。
+// 三边导出完全相同的公开接口;此处只放与链无关的部分。
 // ============================================================
 
-// 权限位(与合约 DIDIdentity / Solana AgentPermission 的 PERMISSION_* 常量一致:bit0=persona,bit1=social,bit2=skill)
+// 权限位(与合约 DIDIdentity / Solana AgentPermission / NEAR agent_permissions 的 PERMISSION_* 常量一致:bit0=persona,bit1=social,bit2=skill)
 export const PERMISSION_SOCIAL = 2n
 export const PERMISSION_SKILL = 4n
 
@@ -86,7 +86,7 @@ export function parseVerifiedPersona(json: string, contentHash: string): AIProfi
   return { ...defaultAIProfile, ...raw }
 }
 
-// 人格缓存:每个 (链, tokenId) 只装载一次,reload 接口强制刷新(EVM/Solana 共用语义)。
+// 人格缓存:每个 (链, tokenId) 只装载一次,reload 接口强制刷新(EVM/Solana/NEAR 共用语义)。
 // 多链重构:tokenId 跨链可碰撞,u64 空间与 EVM 自增段重叠,key 必须带链维度。
 export const personaCache = new Map<string, LoadedPersona>()
 

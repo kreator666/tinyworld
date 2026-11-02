@@ -17,6 +17,12 @@ import {
   solanaSignMessage,
   SolanaWalletError,
 } from '../lib/walletSolana'
+import {
+  buildNearLoginMessage,
+  connectNearWallet,
+  nearLoginChallenge,
+  NearWalletError,
+} from '../lib/walletNear'
 import { requestNonce, verifyAgentLogin } from '../lib/agentApi'
 import { getAddress } from 'viem'
 import { ensureTargetChain } from '../lib/chainDispatch'
@@ -25,6 +31,7 @@ import { useChainStore } from '../store/chainStore'
 
 // 钱包选择弹窗: 通过 EIP-6963 发现钱包并走 SIWE 签名登录换取 JWT
 // Solana 激活链时改为 Phantom 连接 + signMessage 登录(消息格式见 buildSolanaLoginMessage)
+// NEAR 激活链时为 wallet-selector(MyNearWallet)连接 + login_challenge 链上挑战交易登录(见 buildNearLoginMessage)
 export default function WalletModal({ onClose }: { onClose: () => void }) {
   const active = useChainConfig((s) => s.active)
   const connect = useAppStore((s) => s.connect)
@@ -32,7 +39,9 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
   const updateLoginChainId = useAppStore((s) => s.updateLoginChainId)
   const refresh = useChainStore((s) => s.refresh)
   const nav = useNavigate()
-  const isSolana = (active.family ?? 'evm') === 'solana'
+  const family = active.family ?? 'evm'
+  const isSolana = family === 'solana'
+  const isNear = family === 'near'
 
   const [wallets, setWallets] = useState<DiscoveredWallet[]>([])
   const [scanning, setScanning] = useState(true)
@@ -40,8 +49,8 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
   const [phase, setPhase] = useState<'idle' | 'connecting' | 'signing'>('idle')
 
   useEffect(() => {
-    if (isSolana) {
-      // Solana 链只有一个候选:Phantom(检测 window.solana)
+    if (isSolana || isNear) {
+      // Solana / NEAR 不在 EIP-6963 列表里:Solana 只有 Phantom 候选,NEAR 走 wallet-selector 弹窗
       setWallets([])
       setScanning(false)
       return
@@ -56,7 +65,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
     return () => {
       mounted = false
     }
-  }, [isSolana])
+  }, [isSolana, isNear])
 
   // Solana(Phantom)登录:connect → /auth/nonce → signMessage → /auth/verify
   const handlePickSolana = async () => {
@@ -91,6 +100,45 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
     } catch (err) {
       let message = '登录失败,请重试'
       if (err instanceof SolanaWalletError || err instanceof WalletError) {
+        message = err.message
+      } else if (err instanceof Error) {
+        message = err.message
+      }
+      showToast(message)
+    } finally {
+      setActingWallet(null)
+      setPhase('idle')
+    }
+  }
+
+  // NEAR(wallet-selector)登录:connect → /auth/nonce → signMessage → /auth/verify
+  const handlePickNear = async () => {
+    setActingWallet('NEAR')
+    setPhase('connecting')
+    try {
+      const { address, providerName } = await connectNearWallet()
+      setPhase('signing')
+      const { nonce } = await requestNonce(address)
+      const message = buildNearLoginMessage(address, nonce, active.key)
+      // NEAR 登录 = 链上挑战交易(nonce 在交易参数里,后端按交易哈希核对),signature 字段传交易哈希
+      const signature = await nearLoginChallenge(nonce)
+      const { token } = await verifyAgentLogin(message, signature)
+      connect(
+        { address, signature, chainId: active.chainId, nonce, timestamp: Date.now(), provider: providerName },
+        token,
+        'near',
+      )
+      onClose()
+      showToast(`NEAR 钱包已连接(${active.name}),正在读取链上资产…`)
+      try {
+        await refresh(address)
+      } catch {
+        showToast('已连接钱包,但读取链上资产失败,请稍后重试')
+      }
+      nav('/profile')
+    } catch (err) {
+      let message = '登录失败,请重试'
+      if (err instanceof NearWalletError || err instanceof SolanaWalletError || err instanceof WalletError) {
         message = err.message
       } else if (err instanceof Error) {
         message = err.message
@@ -194,6 +242,19 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
               {!getSolanaProvider() && <span className="ml-auto text-xs text-slate-500">未安装</span>}
               {phaseText('Phantom') && (
                 <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('Phantom')}</span>
+              )}
+            </button>
+          ) : isNear ? (
+            <button
+              onClick={handlePickNear}
+              disabled={scanning || !!actingWallet}
+              className="w-full flex items-center gap-3 glass px-4 py-3 transition disabled:opacity-60 hover:border-neon-purple/60"
+            >
+              <span className="text-xl">Ⓝ</span>
+              <span className="font-medium">NEAR 钱包</span>
+              <span className="ml-auto text-xs text-slate-500">MyNearWallet / Meteor</span>
+              {phaseText('NEAR') && (
+                <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('NEAR')}</span>
               )}
             </button>
           ) : (

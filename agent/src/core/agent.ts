@@ -236,7 +236,9 @@ async function agentFor(chainKey: string, persona: LoadedPersona, mode: ChatMode
     const walletDesc =
       family === 'solana'
         ? '查询当前 Agent 主人钱包的链上资产,包括原生币 SOL、USDC(Solana 测试网)和已装备的 DID 装备。'
-        : `查询当前 Agent 主人钱包的链上资产,包括原生币(${cfg.defi?.nativeSymbol ?? 'ETH'})、USDC、USDT 和已装备的 DID 装备。`
+        : family === 'near'
+          ? '查询当前 Agent 主人钱包的链上资产,包括原生币 NEAR 和已装备的 DID 装备。'
+          : `查询当前 Agent 主人钱包的链上资产,包括原生币(${cfg.defi?.nativeSymbol ?? 'ETH'})、USDC、USDT 和已装备的 DID 装备。`
     const walletTool = createTool({
       id: 'get_wallet_assets',
       description: walletDesc,

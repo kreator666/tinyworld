@@ -140,7 +140,7 @@ app.post('/admin/chains', adminRequired, async (c) => {
       (k) => body?.[k as keyof typeof body] === undefined || body[k as keyof typeof body] === '',
     )
     if (!body || missing.length > 0) return c.json({ error: `缺少必填字段: ${missing.join(', ')}` }, 400)
-    if (body.family !== 'evm' && body.family !== 'solana') return c.json({ error: 'family 必须是 evm 或 solana' }, 400)
+    if (body.family !== 'evm' && body.family !== 'solana' && body.family !== 'near') return c.json({ error: 'family 必须是 evm / solana / near' }, 400)
     if (!Number.isInteger(body.chain_id) || (body.chain_id as number) <= 0) return c.json({ error: 'chain_id 必须是正整数' }, 400)
     if (await getChainRow(body.chain_key!)) return c.json({ error: `链已存在: ${body.chain_key}` }, 409)
     const row = {
@@ -311,6 +311,9 @@ app.post('/auth/verify', async (c) => {
     const { address, chain } = await verifyLogin(chainKey, { message: body.message, signature: body.signature })
     if (getChainContext(chainKey).family === 'solana' && chain !== 'solana') {
       return c.json({ error: '地址格式与当前链不匹配(Solana 链必须使用 base58 地址登录)' }, 400)
+    }
+    if (getChainContext(chainKey).family === 'near' && chain !== 'near') {
+      return c.json({ error: '地址格式与当前链不匹配(NEAR 链必须使用 account_id 登录)' }, 400)
     }
     if (getChainContext(chainKey).family === 'evm' && chain !== 'evm') {
       return c.json({ error: '地址格式与当前链不匹配(EVM 链必须使用 0x 地址登录)' }, 400)

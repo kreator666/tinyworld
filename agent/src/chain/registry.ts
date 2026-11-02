@@ -9,7 +9,7 @@ import type { ChainRow } from '../db'
 
 export interface ChainContext {
   chainKey: string // chains 表主键,如 'solana-devnet' / 'fuji'
-  family: 'evm' | 'solana'
+  family: 'evm' | 'solana' | 'near'
   cfg: ChainConfig
 }
 
@@ -66,7 +66,7 @@ export function applyDbChains(rows: ChainRow[]): void {
     if (!row.enabled) continue
     seen.add(row.chain_key)
     if (Object.prototype.hasOwnProperty.call(ALL_CHAINS, row.chain_key)) continue
-    const family = row.family === 'solana' ? 'solana' : 'evm'
+    const family = row.family === 'solana' ? 'solana' : row.family === 'near' ? 'near' : 'evm'
     const cfgJson = (row.config ?? {}) as Partial<ChainConfig>
     // 固有列(表结构)优先;config JSONB 补充扩展字段(defi/aave/solana/partsClaim/rpcFallbacks 等)
     const cfg: ChainConfig = {

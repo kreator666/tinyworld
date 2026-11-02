@@ -63,3 +63,6 @@ body {
   from { opacity: 0; transform: translateY(10px) scale(.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+/* wallet-selector 弹窗层级:modal-ui 默认 z-index 80,需高于应用弹窗(连接钱包 z-90) */
+.nws-modal-wrapper { z-index: 1000 !important; }

@@ -490,7 +490,7 @@ export interface ChainRow {
   rpc: string
   explorer: string
   enabled: boolean
-  family: string // 'evm' | 'solana',前端 hydrateFromApi 用
+  family: string // 'evm' | 'solana' | 'near',前端 hydrateFromApi 用
   config?: Record<string, unknown> // 链扩展配置(defi/aave/行情源/solana),seedChains 写入
 }
 

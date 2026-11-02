@@ -2,6 +2,7 @@ import { formatEther, formatUnits, keccak256, toBytes, isAddress, type Address }
 import type { AIProfile } from '../types'
 import { upsertChainIdentities } from '../db'
 import * as solana from './personaSolana'
+import * as near from './personaNear'
 import { getChainContext } from './registry'
 import { getPublicClient } from './clients'
 import {
@@ -32,8 +33,8 @@ export {
 }
 
 // ============================================================
-// 多链重构(方案A):本模块是 persona 的 EVM 家族实现 + Solana 家族分派层。
-// 所有公开函数首参 chainKey;家族决定走 viem(本文件)还是委托 personaSolana。
+// 多链重构(方案A):本模块是 persona 的 EVM 家族实现 + Solana/NEAR 家族分派层。
+// 所有公开函数首参 chainKey;家族决定走 viem(本文件)还是委托 personaSolana / personaNear。
 // 链上下文(合约地址/RPC)经 registry 按 chainKey 解析,不再读全局 config.chain。
 // ============================================================
 
@@ -41,9 +42,13 @@ function isSolana(chainKey: string): boolean {
   return getChainContext(chainKey).family === 'solana'
 }
 
-/** 地址格式校验:EVM 用 viem isAddress,Solana 用 base58 校验(链无关,按地址形态判断) */
+function isNear(chainKey: string): boolean {
+  return getChainContext(chainKey).family === 'near'
+}
+
+/** 地址格式校验:EVM 用 viem isAddress;Solana 用 base58 校验;NEAR 用 account_id 规则(链无关,按地址形态判断) */
 export function isValidAddress(address: string): boolean {
-  return isAddress(address as Address) || solana.isValidSolanaAddress(address)
+  return isAddress(address as Address) || solana.isValidSolanaAddress(address) || near.isValidNearAddress(address)
 }
 
 // ============================================================
@@ -146,13 +151,14 @@ const partsAbi = [
   },
 ] as const
 
-// 按链缓存只读客户端统一走 chain/clients.ts 工厂(Solana 家族在工厂入口抛错,
-// 本模块的 Solana 分派在 isSolana 分支已提前委托 personaSolana,不会走到这里)
+// 按链缓存只读客户端统一走 chain/clients.ts 工厂(Solana/NEAR 家族在工厂入口抛错,
+// 本模块的家族分派在 isSolana/isNear 分支已提前委托各自实现,不会走到这里)
 const clientFor = getPublicClient
 
 /** 地址 → tokenId;未铸造返回 0(合约约定) */
 export async function resolveTokenId(chainKey: string, owner: string): Promise<number> {
   if (isSolana(chainKey)) return solana.resolveTokenId(chainKey, owner)
+  if (isNear(chainKey)) return near.resolveTokenId(chainKey, owner)
   const tokenId = (await clientFor(chainKey).readContract({
     address: getChainContext(chainKey).cfg.identityAddress as Address,
     abi: identityAbi,
@@ -165,6 +171,7 @@ export async function resolveTokenId(chainKey: string, owner: string): Promise<n
 /** tokenId → owner 地址 */
 export async function ownerOf(chainKey: string, tokenId: number): Promise<string> {
   if (isSolana(chainKey)) return solana.ownerOf(chainKey, tokenId)
+  if (isNear(chainKey)) return near.ownerOf(chainKey, tokenId)
   return (await clientFor(chainKey).readContract({
     address: getChainContext(chainKey).cfg.identityAddress as Address,
     abi: identityAbi,
@@ -198,6 +205,7 @@ function decodePersonaUri(uri: string, contentHash: string): AIProfile {
 /** 从链上读取并校验人格(uri 为空则返回默认人格兜底);同时读链上名称用于身份区分 */
 export async function fetchPersonaFromChain(chainKey: string, tokenId: number): Promise<LoadedPersona> {
   if (isSolana(chainKey)) return solana.fetchPersonaFromChain(chainKey, tokenId)
+  if (isNear(chainKey)) return near.fetchPersonaFromChain(chainKey, tokenId)
   const client = clientFor(chainKey)
   const identityAddress = getChainContext(chainKey).cfg.identityAddress as Address
   const [res, name, owner] = await Promise.all([
@@ -233,6 +241,7 @@ export async function fetchPersonaFromChain(chainKey: string, tokenId: number): 
 
 export async function loadPersona(chainKey: string, tokenId: number, force = false): Promise<LoadedPersona> {
   if (isSolana(chainKey)) return solana.loadPersona(chainKey, tokenId, force)
+  if (isNear(chainKey)) return near.loadPersona(chainKey, tokenId, force)
   const cacheKey = personaCacheKey(chainKey, tokenId)
   if (!force) {
     const cached = personaCache.get(cacheKey)
@@ -250,6 +259,7 @@ export function getCachedPersona(chainKey: string, tokenId: number): LoadedPerso
 /** 链上 agentPermissions[tokenId][agentAddr] 位掩码(安装需要权限的技能前校验) */
 export async function getAgentPermissions(chainKey: string, tokenId: number, agentAddr: string): Promise<bigint> {
   if (isSolana(chainKey)) return solana.getAgentPermissions(chainKey, tokenId, agentAddr)
+  if (isNear(chainKey)) return near.getAgentPermissions(chainKey, tokenId, agentAddr)
   return (await clientFor(chainKey).readContract({
     address: getChainContext(chainKey).cfg.identityAddress as Address,
     abi: identityAbi,
@@ -261,6 +271,7 @@ export async function getAgentPermissions(chainKey: string, tokenId: number, age
 /** 列出全部已铸造的 Agent(心跳调度器每轮枚举用);顺带把镜像落 chain_identities(失败不影响读取) */
 export async function listMintedAgents(chainKey: string): Promise<AgentSummary[]> {
   if (isSolana(chainKey)) return solana.listMintedAgents(chainKey)
+  if (isNear(chainKey)) return near.listMintedAgents(chainKey)
   const client = clientFor(chainKey)
   const identityAddress = getChainContext(chainKey).cfg.identityAddress as Address
   const total = Number(
@@ -310,6 +321,7 @@ export async function listMintedAgents(chainKey: string): Promise<AgentSummary[]
 /** 列出最新铸造的 N 个 Agent(social-greeter 的 list_new_agents 用) */
 export async function listRecentAgents(chainKey: string, limit = 5): Promise<AgentSummary[]> {
   if (isSolana(chainKey)) return solana.listRecentAgents(chainKey, limit)
+  if (isNear(chainKey)) return near.listRecentAgents(chainKey, limit)
   const client = clientFor(chainKey)
   const identityAddress = getChainContext(chainKey).cfg.identityAddress as Address
   const total = Number(
@@ -346,6 +358,7 @@ export async function listRecentAgents(chainKey: string, limit = 5): Promise<Age
 /** 读链上装备(getEquipped)并按 DIDParts balanceOf 概述持有(defi-quote 的 get_my_equipment 用) */
 export async function getEquipment(chainKey: string, tokenId: number): Promise<EquipmentItem[]> {
   if (isSolana(chainKey)) return solana.getEquipment(chainKey, tokenId)
+  if (isNear(chainKey)) return near.getEquipment(chainKey, tokenId)
   const client = clientFor(chainKey)
   const { identityAddress, partsAddress } = getChainContext(chainKey).cfg
   const [items, owner] = await Promise.all([
@@ -395,6 +408,7 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
 export async function getWalletAssets(chainKey: string, address: string, tokenId: number): Promise<WalletAssets> {
   if (isSolana(chainKey)) return solana.getWalletAssets(chainKey, address, tokenId)
+  if (isNear(chainKey)) return near.getWalletAssets(chainKey, address, tokenId)
   const { usdc, usdt, nativeSymbol } = getChainContext(chainKey).cfg.defi! // 仅 EVM 家族链会走到这里(defi 必填)
   const client = clientFor(chainKey)
   const addr = address as Address

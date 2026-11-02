@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PublicKey } from '@solana/web3.js'
 import { isWalletOnActiveChain } from '../lib/chainDispatch'
+import { isValidNearAddress } from '../lib/walletNear'
 import type { NFTCategory, Rarity } from '../types'
 import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
@@ -23,8 +24,9 @@ const TABS: { key: NFTCategory; label: string }[] = [
 
 const RARITIES: Rarity[] = ['普通', '稀有', '史诗', '传说']
 
-// 地址校验:EVM 0x 或 Solana base58(按激活链族;两套格式都接受,铸造时以链上程序为准)
-function isAddress(v: string): boolean {
+// 地址校验:EVM 0x / Solana base58 / NEAR account_id(按激活链族;格式都接受,铸造时以链上程序为准)
+function isAddress(v: string, family: 'evm' | 'solana' | 'near' = 'evm'): boolean {
+  if (family === 'near') return isValidNearAddress(v)
   if (/^0x[a-fA-F0-9]{40}$/.test(v)) return true
   if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v)) {
     try {
@@ -114,8 +116,8 @@ export default function AdminPage() {
   const doMintCategory = async () => {
     if (!address || !isAdmin) return
     const to = recipient.trim() || address
-    if (!isAddress(to)) {
-      showToast('请输入有效的钱包地址(0x 或 Solana)')
+    if (!isAddress(to, active.family ?? 'evm')) {
+      showToast('请输入有效的钱包地址(0x、Solana 或 NEAR 账户)')
       return
     }
 

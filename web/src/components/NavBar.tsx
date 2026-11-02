@@ -7,6 +7,7 @@ import { useChainConfig } from '../store/chainConfigStore'
 import { ensureTargetChain, isWalletOnActiveChain } from '../lib/chainDispatch'
 import { setActiveProvider } from '../lib/wallet'
 import { clearActiveSolana, getSolanaProvider } from '../lib/walletSolana'
+import { clearActiveNear } from '../lib/walletNear'
 import WalletModal from './WalletModal'
 
 const navItems = [
@@ -20,7 +21,9 @@ const navItems = [
 export default function NavBar() {
   const { connected, address, did, disconnect, login, showToast, walletKind, updateLoginChainId } = useAppStore()
   const chainStore = useChainStore()
-  const { active, chains, setActive, hydrateFromApi } = useChainConfig()
+  const { active, chains, setActive, hydrateFromApi, showTestnets, setShowTestnets } = useChainConfig()
+  // 测试网开关关闭时链选择器只列主网
+  const visibleChains = showTestnets ? chains : chains.filter((c) => !c.testnet)
   const wizardOpen = useAppStore((s) => s.wizardOpen)
   const setWizardOpen = useAppStore((s) => s.setWizardOpen)
   const [switching, setSwitching] = useState(false)
@@ -28,6 +31,7 @@ export default function NavBar() {
     disconnect()
     setActiveProvider(null)
     clearActiveSolana()
+    clearActiveNear()
     chainStore.clear()
     nav('/')
   }
@@ -69,8 +73,9 @@ export default function NavBar() {
     // 多链提示:各链的 Agent/聊天记录互相独立,本期不支持跨链互动
     showToast(`已切换到 ${target.name}:该链的 Agent 与聊天记录独立,暂不支持跨链互动`)
     try {
-      if ((target.family ?? 'evm') === 'solana') {
-        // Solana 链:走 Phantom 连接流程(EVM 会话与 Solana 不通用,需重新连接)
+      const targetFamily = target.family ?? 'evm'
+      if (targetFamily === 'solana') {
+        // Solana 链:走 Phantom 连接流程(EVM/NEAR 会话与 Solana 不通用,需重新连接)
         if (!getSolanaProvider()) {
           showToast('未检测到 Phantom 钱包,请先安装')
           window.open('https://phantom.com', '_blank')
@@ -81,17 +86,32 @@ export default function NavBar() {
           disconnect()
           setActiveProvider(null)
           clearActiveSolana()
+          clearActiveNear()
           setShowWallet(true)
           showToast('Solana 链需使用 Phantom 钱包连接')
           setSwitching(false)
           return
         }
         if (address) await chainStore.refresh(address)
-      } else {
-        if (connected && walletKind === 'solana') {
+      } else if (targetFamily === 'near') {
+        // NEAR 链:走 wallet-selector 连接流程(与其他链族会话不通用,需重新连接)
+        if (!connected || walletKind !== 'near') {
           disconnect()
           setActiveProvider(null)
           clearActiveSolana()
+          clearActiveNear()
+          setShowWallet(true)
+          showToast('NEAR 链需使用 NEAR 钱包连接')
+          setSwitching(false)
+          return
+        }
+        if (address) await chainStore.refresh(address)
+      } else {
+        if (connected && walletKind !== 'evm') {
+          disconnect()
+          setActiveProvider(null)
+          clearActiveSolana()
+          clearActiveNear()
           setShowWallet(true)
           showToast('EVM 链需使用浏览器钱包重新连接')
           setSwitching(false)
@@ -178,7 +198,7 @@ export default function NavBar() {
             >
               🎓 新手引导
             </button>
-            {/* 切链按钮:合约地址以后端 chains 表为准,前端本地数据兜底 */}
+            {/* 切链按钮:合约地址以后端 chains 表为准,前端本地数据兜底;测试网开关关闭时只列主网 */}
             <select
               className="glass !rounded-xl text-xs px-2 py-1.5 text-neon-cyan cursor-pointer bg-transparent"
               value={active.key}
@@ -186,12 +206,22 @@ export default function NavBar() {
               onChange={(e) => switchTo(e.target.value)}
               title="切换目标链(素材全链一致,仅切换合约)"
             >
-              {chains.map((c) => (
+              {visibleChains.map((c) => (
                 <option key={c.key} value={c.key} className="bg-ink">
                   ⛓ {c.name}
                 </option>
               ))}
             </select>
+            {/* 测试网开关:打开后链选择器列出全部网络(含测试网),关闭只留主网 */}
+            <button
+              onClick={() => setShowTestnets(!showTestnets)}
+              className={`tag !text-[10px] transition ${
+                showTestnets ? 'border-neon-purple/60 text-neon-purple' : 'border-white/15 text-slate-400 hover:text-slate-200'
+              }`}
+              title={showTestnets ? '测试网已显示:点击隐藏测试网络' : '测试网已隐藏:点击显示全部网络(含测试网)'}
+            >
+              🧪 测试网 {showTestnets ? '开' : '关'}
+            </button>
             {connected ? (
               <div className="flex items-center gap-2">
                 <button
