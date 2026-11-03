@@ -21,6 +21,7 @@ import {
   buildNearLoginMessage,
   connectNearWallet,
   nearLoginChallenge,
+  stashNearLogin,
   NearWalletError,
 } from '../lib/walletNear'
 import { requestNonce, verifyAgentLogin } from '../lib/agentApi'
@@ -120,7 +121,9 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
       setPhase('signing')
       const { nonce } = await requestNonce(address)
       const message = buildNearLoginMessage(address, nonce, active.key)
-      // NEAR 登录 = 链上挑战交易(nonce 在交易参数里,后端按交易哈希核对),signature 字段传交易哈希
+      // NEAR 登录 = 链上挑战交易(nonce 在交易参数里,后端按交易哈希核对),signature 字段传交易哈希。
+      // 网页版钱包走整页重定向(不会直接返回哈希):先暂存上下文,跳回后由 App 启动时接住回调完成验签。
+      stashNearLogin({ message, address, nonce, providerName, chainId: active.chainId })
       const signature = await nearLoginChallenge(nonce)
       const { token } = await verifyAgentLogin(message, signature)
       connect(

@@ -199,9 +199,87 @@ export async function disconnectNearWallet(): Promise<void> {
  * 返回交易哈希(作为 /auth/verify 的 signature 字段,后端按哈希向 RPC 核对签名者/nonce/执行状态)。
  * 说明:NEP-413 signMessage 的钱包侧实现(MyNearWallet 等)只回签名不回复签名负载
  * (timestamp 由钱包生成),服务端无法重建 borsh 验签,故 NEAR 登录改用链上挑战。
+ * 注意:网页版钱包(Meteor Web)走整页重定向,不会返回哈希——调用方需先用 stashNearLogin
+ * 暂存登录上下文,重定向回来后在 App 启动时经 takeNearLoginReturn 接住回调完成验签。
  */
 export async function nearLoginChallenge(nonce: string): Promise<string> {
   return nearSignAndSend([nearFunctionCall('login_challenge', { nonce })])
+}
+
+// ------------------------------------------------------------
+// 网页钱包重定向登录的回调承接(Meteor Web / 未装扩展时的 fallback)
+// 网页钱包签完交易整页跳回,URL 带 ?transactionHashes=<hash>(失败带 ?errorCode=...),
+// 跳转前暂存的登录上下文存 sessionStorage,回来后完成 /auth/verify。
+// ------------------------------------------------------------
+
+export interface NearLoginPending {
+  message: string
+  address: string
+  nonce: string
+  providerName: string
+  chainId: number
+  timestamp: number
+}
+
+const LOGIN_STASH_KEY = 'tinyworld-near-login-pending'
+
+/** 发起挑战交易前暂存登录上下文(供重定向回来后完成验签) */
+export function stashNearLogin(pending: Omit<NearLoginPending, 'timestamp'>): void {
+  try {
+    sessionStorage.setItem(LOGIN_STASH_KEY, JSON.stringify({ ...pending, timestamp: Date.now() }))
+  } catch {
+    // sessionStorage 不可用时网页钱包登录无法自动接续(扩展路径不受影响)
+  }
+}
+
+function clearStash(): void {
+  try {
+    sessionStorage.removeItem(LOGIN_STASH_KEY)
+  } catch {}
+}
+
+/** 清掉 URL 上的 transactionHashes/errorCode 等钱包回调参数(不刷新页面) */
+function cleanWalletCallbackParams(): void {
+  try {
+    const url = new URL(window.location.href)
+    for (const k of ['transactionHashes', 'transactionHash', 'errorCode', 'errorMessage', 'accountId']) url.searchParams.delete(k)
+    window.history.replaceState(null, '', url.toString())
+  } catch {}
+}
+
+/**
+ * 应用启动时调用:若当前 URL 是网页钱包签完交易后的重定向回调,返回待完成的登录信息。
+ * 消费一次性(取出即清 stash 并清理 URL 参数)。非回调场景返回 null。
+ */
+export function takeNearLoginReturn():
+  | { kind: 'success'; txHash: string; pending: NearLoginPending }
+  | { kind: 'error'; error: string }
+  | null {
+  let params: URLSearchParams
+  try {
+    params = new URL(window.location.href).searchParams
+  } catch {
+    return null
+  }
+  const txHashes = params.get('transactionHashes') ?? params.get('transactionHash')
+  const errorCode = params.get('errorCode') ?? params.get('errorMessage')
+  if (!txHashes && !errorCode) return null
+
+  let pending: NearLoginPending | null = null
+  try {
+    const raw = sessionStorage.getItem(LOGIN_STASH_KEY)
+    if (raw) pending = JSON.parse(raw) as NearLoginPending
+  } catch {}
+  clearStash()
+  cleanWalletCallbackParams()
+
+  if (errorCode) return { kind: 'error', error: `钱包拒绝了签名(${errorCode})` }
+  const txHash = txHashes!.split(',')[0].trim()
+  if (!txHash) return { kind: 'error', error: '钱包回调缺少交易哈希' }
+  if (!pending) return { kind: 'error', error: '登录会话已过期,请重试(重定向前未暂存上下文或会话已失效)' }
+  // 会话有效期 10 分钟
+  if (Date.now() - pending.timestamp > 10 * 60 * 1000) return { kind: 'error', error: '登录会话已过期,请重试' }
+  return { kind: 'success', txHash, pending }
 }
 
 /** 签名并发送交易(FunctionCall 单合约动作);返回 NEAR tx hash */

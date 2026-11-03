@@ -5,7 +5,8 @@ import { useAppStore } from './store/appStore'
 import { useChainStore } from './store/chainStore'
 import { getActiveProvider, setActiveProvider } from './lib/wallet'
 import { clearActiveSolana, getSolanaProvider } from './lib/walletSolana'
-import { clearActiveNear, initNearSession, onNearAccountsChanged } from './lib/walletNear'
+import { clearActiveNear, initNearSession, onNearAccountsChanged, takeNearLoginReturn } from './lib/walletNear'
+import { verifyAgentLogin } from './lib/agentApi'
 import { useChainConfig } from './store/chainConfigStore'
 import NavBar from './components/NavBar'
 import OnboardingWizard from './components/OnboardingWizard'
@@ -48,11 +49,51 @@ function Toast() {
 }
 
 function WalletEvents() {
-  const { connected, address, disconnect, walletKind, updateLoginChainId } = useAppStore()
+  const { connected, address, disconnect, walletKind, updateLoginChainId, connect, showToast } = useAppStore()
   const clear = useChainStore((s) => s.clear)
   const refresh = useChainStore((s) => s.refresh)
   const active = useChainConfig((s) => s.active)
   const nav = useNavigate()
+
+  // 网页版 NEAR 钱包(Meteor Web)重定向登录回调:签完交易跳回时 URL 带 transactionHashes,
+  // 用暂存的登录上下文完成 /auth/verify 并建立会话(扩展钱包路径不受影响)
+  useEffect(() => {
+    const ret = takeNearLoginReturn()
+    if (!ret) return
+    if (ret.kind === 'error') {
+      showToast(ret.error)
+      return
+    }
+    const { txHash, pending } = ret
+    if (connected && address === pending.address) return // 已是该身份,忽略重复回调
+    ;(async () => {
+      try {
+        const { token } = await verifyAgentLogin(pending.message, txHash)
+        connect(
+          {
+            address: pending.address,
+            signature: txHash,
+            chainId: pending.chainId,
+            nonce: pending.nonce,
+            timestamp: pending.timestamp,
+            provider: pending.providerName,
+          },
+          token,
+          'near',
+        )
+        showToast('NEAR 钱包已连接(网页钱包),正在读取链上资产…')
+        try {
+          await refresh(pending.address)
+        } catch {
+          showToast('已连接钱包,但读取链上资产失败,请稍后重试')
+        }
+        nav('/profile')
+      } catch (e) {
+        showToast(`登录验证失败:${e instanceof Error ? e.message : e}`)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     // Phantom(solana)没有 chainChanged 事件,accountsChanged 由钱包 UI 管理,这里只挂 EVM provider
