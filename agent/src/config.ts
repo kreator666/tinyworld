@@ -61,6 +61,11 @@ interface ChainConfig {
     usdtMint?: string // 测试 USDT mint;未配置则余额恒为 0
     jupiterApiUrl?: string // Jupiter v6 API 地址;空 = 本链不支持兑换(技能隐藏)
   }
+  /** NEAR 家族 DeFi 协议合约地址(testnet 实测存活地址见 knowledge/near-defi-integration-plan.md) */
+  near?: {
+    refExchange?: string // Ref Finance AMM 兑换合约
+    burrow?: string // Burrow 借贷合约
+  }
 }
 export type { ChainConfig }
 
@@ -180,9 +185,8 @@ const CHAINS: Record<string, ChainConfig> = {
     },
   },
   // NEAR testnet:Rust/near-sdk 合约 tinyworld(NEP-171 风格 Soulbound 身份 + 装备部件,见 near/README.md)
-  // 本阶段后端只做读取(view 方法走 JSON-RPC call_function);不发交易,写路径全部 TODO。
   // 单合约同时承载身份与装备,identityAddress 与 partsAddress 指向同一合约。
-  // 合约尚未部署,以下 account_id 为占位,部署后替换(部署后也可经 /admin/chains/:key/config 热更新)。
+  // DeFi 协议合约地址经 RPC 实测存活(2026-11,见 knowledge/near-defi-integration-plan.md)。
   'near-testnet': {
     family: 'near',
     name: 'NEAR Testnet',
@@ -191,6 +195,10 @@ const CHAINS: Record<string, ChainConfig> = {
     rpc: 'https://rpc.testnet.fastnear.com',
     rpcFallbacks: [],
     explorer: 'https://testnet.nearblocks.io',
+    near: {
+      refExchange: 'exchange.ref-dev.testnet', // Ref Finance v2 AMM
+      burrow: 'contract.burrow.testnet', // Burrow 借贷
+    },
     identityAddress: 'tinyworld.testnet', // 占位:合约未部署,部署后替换
     partsAddress: 'tinyworld.testnet', // 与 identityAddress 同一合约(占位)
   },
@@ -228,6 +236,8 @@ export const config = {
   // Agent Solana 热钱包私钥(base58 编码的 64 字节 secret key,defi-swap-sol 经 Jupiter 执行兑换时签名用)。
   // 永远不要打印/提交真实值
   agentSolanaKey: env('AGENT_SOLANA_PRIVATE_KEY', ''),
+  agentNearKey: env('AGENT_NEAR_PRIVATE_KEY', ''), // ed25519:... 私钥;账户 = AGENT_NEAR_ACCOUNT_ID 或公钥隐式地址
+  agentNearAccountId: env('AGENT_NEAR_ACCOUNT_ID', ''),
   // 价格源 URL(可用 env 覆盖;策略引擎熔断验证时故意改错)
   priceCoingeckoUrl: env('PRICE_COINGECKO_URL', 'https://api.coingecko.com/api/v3/simple/price?ids=avalanche-2&vs_currencies=usd'),
   priceGateUrl: env('PRICE_GATE_URL', 'https://api.gateio.ws/api/v4/spot/tickers?currency_pair=AVAX_USDT'),

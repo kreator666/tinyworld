@@ -36,6 +36,8 @@ export interface SkillManifest {
   evmOnly?: boolean
   /** 仅 Solana 家族链可用(如 defi-swap-solana/defi-swap-meteora);后端是否就绪由 chainFeature 判断 */
   solanaOnly?: boolean
+  /** 仅 NEAR 家族链可用(如 defi-swap-ref/defi-lending-burrow) */
+  nearOnly?: boolean
   /** Solana 技能的后端依赖:jupiterApi = 需 cfg.solana.jupiterApiUrl;meteoraPool = 需热钱包私钥 + Meteora 池地址 */
   chainFeature?: 'jupiterApi' | 'meteoraPool'
   /** 协议 gating:对应 chain_protocols 表的 protocol_key(如 dex/lending/jupiter/meteora/orca/raydium/drift/starter-claim)。
@@ -131,6 +133,7 @@ export function isSkillAvailable(chainKey: string, manifest: SkillManifest): boo
   const ctx = getChainContext(chainKey)
   if (manifest.evmOnly && ctx.family !== 'evm') return false
   if (manifest.solanaOnly && ctx.family !== 'solana') return false
+  if (manifest.nearOnly && ctx.family !== 'near') return false
   if (manifest.protocol) {
     const status = protocolStatus(chainKey, manifest.protocol)
     if (status === 'disabled') return false // 显式停用,优先于一切老配置

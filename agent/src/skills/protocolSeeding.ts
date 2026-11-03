@@ -39,6 +39,10 @@ export function deriveProtocolRows(chainKey: string): SeedRow[] {
     if (isMeteoraPoolConfigured()) push('meteora', 'swap-solana', { poolAddress: meteoraPoolAddress().toBase58() })
     push('drift', 'perp', {})
   }
+  if (ctx.family === 'near') {
+    if (cfg.near?.refExchange) push('ref-swap', 'swap-near', { address: cfg.near.refExchange })
+    if (cfg.near?.burrow) push('burrow', 'lending', { address: cfg.near.burrow })
+  }
   return rows
 }
 
