@@ -120,6 +120,7 @@ export default function PaperDoll({
 
   // 刷新角色/装备
   useEffect(() => {
+    let cancelled = false
     const refresh = async () => {
       if (!stageReady) return
       const s = stageRef.current
@@ -139,6 +140,8 @@ export default function PaperDoll({
       if (!headChar || !bodyChar) return
 
       const [bodyTex, headTex] = await Promise.all([load(bodyChar.bodyUrl), load(headChar.headUrl)])
+      // 异步加载期间组件可能已卸载/舞台已销毁,再碰 Pixi 对象会抛 null 异常
+      if (cancelled || stageRef.current !== s) return
       if (!bodyTex || !headTex) return
 
       s.slots.body.removeChildren()
@@ -168,6 +171,7 @@ export default function PaperDoll({
       // 更新 pet
       const petPart = equipped.pet ? getPartByLocalId(equipped.pet) : null
       const petTex = await (petPart ? load(petPart.imageUrl) : load(PET_DEFAULT_URL))
+      if (cancelled || stageRef.current !== s) return
 
       s.slots.pet.removeChildren()
       if (petTex) {
@@ -185,10 +189,14 @@ export default function PaperDoll({
     }
 
     refresh()
+    return () => {
+      cancelled = true
+    }
   }, [equipped.head, equipped.body, equipped.pet, stageReady])
 
   // 单独刷新配饰背景(确保点击配饰时背景立即切换)
   useEffect(() => {
+    let cancelled = false
     const updateAccessory = async () => {
       if (!stageReady) return
       const s = stageRef.current
@@ -206,6 +214,8 @@ export default function PaperDoll({
       const accPart = equipped.accessory ? getPartByLocalId(equipped.accessory) : null
       const imageUrl = accPart ? accPart.imageUrl : ACC_DEFAULT_URL
       const accTex = await load(imageUrl)
+      // 异步加载期间组件可能已卸载/舞台已销毁,再碰 Pixi 对象会抛 null 异常
+      if (cancelled || stageRef.current !== s) return
 
       // 计算总高度:优先用 full refresh 缓存,否则从当前 body/head 读取
       let totalH = totalHRef.current
@@ -232,6 +242,9 @@ export default function PaperDoll({
     }
 
     updateAccessory()
+    return () => {
+      cancelled = true
+    }
   }, [equipped.accessory, equipped.head, equipped.body, stageReady])
   useEffect(() => {
     zoomRef.current = zoom
