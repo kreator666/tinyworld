@@ -9,11 +9,12 @@ const FROM = "tinyworld.testnet";
 const [to, amountNear] = process.argv.slice(2);
 if (!to || !amountNear) { console.error("usage: node transfer.mjs <to> <amountNEAR>"); process.exit(1); }
 
-const RPC = "https://rpc.testnet.fastnear.com"; // rpc.testnet.near.org 已弃用(429)
+const MAINNET = process.env.NEAR_NETWORK === "mainnet";
+const RPC = MAINNET ? "https://rpc.mainnet.fastnear.com" : "https://rpc.testnet.fastnear.com"; // rpc.testnet.near.org 已弃用(429)
 const cred = JSON.parse(readFileSync(join(homedir(), ".near-credentials", `${FROM}.json`), "utf8"));
 const keyStore = new keyStores.InMemoryKeyStore();
-await keyStore.setKey("testnet", FROM, KeyPair.fromString(cred.private_key));
-const near = await connect({ networkId: "testnet", nodeUrl: RPC, keyStore });
+await keyStore.setKey(MAINNET ? "mainnet" : "testnet", FROM, KeyPair.fromString(cred.private_key));
+const near = await connect({ networkId: MAINNET ? "mainnet" : "testnet", nodeUrl: RPC, keyStore });
 const account = await near.account(FROM);
 
 const yocto = BigInt(utils.format.parseNearAmount(amountNear));

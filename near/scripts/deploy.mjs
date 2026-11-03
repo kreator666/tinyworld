@@ -12,12 +12,14 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
-const ACCOUNT_ID = positional[0] || "tinyworld.testnet";
+const MAINNET = process.argv.includes("--mainnet");
+const ACCOUNT_ID = positional[0] || (MAINNET ? "" : "tinyworld.testnet");
+if (!ACCOUNT_ID) { console.error("mainnet 必须显式指定账户: node deploy.mjs <account> --mainnet"); process.exit(1); }
 const CODE_ONLY = process.argv.includes("--code-only");
 const MIGRATE = process.argv.includes("--migrate"); // 结构变更升级:部署后调用 migrate() 迁移状态
-const NETWORK_ID = "testnet";
-const NODE_URL = "https://rpc.testnet.fastnear.com"; // rpc.testnet.near.org 已弃用(429)
-const FAUCET_URL = "https://helper.testnet.near.org/account";
+const NETWORK_ID = MAINNET ? "mainnet" : "testnet";
+const NODE_URL = MAINNET ? "https://rpc.mainnet.fastnear.com" : "https://rpc.testnet.fastnear.com"; // rpc.*.near.org 官方端点已弃用/不稳
+const FAUCET_URL = "https://helper.testnet.near.org/account"; // 仅测试网
 const WASM_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "target", "wasm32-unknown-unknown", "release", "tinyworld_near.wasm");
 
 const credDir = join(homedir(), ".near-credentials");
@@ -58,6 +60,11 @@ async function main() {
   const account = await near.account(ACCOUNT_ID);
 
   if (!(await accountExists(near, ACCOUNT_ID))) {
+    if (MAINNET) {
+      throw new Error(
+        `主网账户 ${ACCOUNT_ID} 不存在。请先从交易所/钱包向该地址转入至少 3 NEAR(隐式账户到账即自动创建),然后重跑本脚本。`
+      );
+    }
     console.log(`creating ${ACCOUNT_ID} via faucet...`);
     const res = await fetch(FAUCET_URL, {
       method: "POST",

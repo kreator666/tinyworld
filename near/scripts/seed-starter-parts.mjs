@@ -6,11 +6,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const CONTRACT = process.argv[2] || "tinyworld.testnet";
-const RPC = "https://rpc.testnet.fastnear.com";
+const MAINNET = process.env.NEAR_NETWORK === "mainnet";
+const RPC = MAINNET ? "https://rpc.mainnet.fastnear.com" : "https://rpc.testnet.fastnear.com";
 const cred = JSON.parse(readFileSync(join(homedir(), ".near-credentials", `${CONTRACT}.json`), "utf8"));
 const keyStore = new keyStores.InMemoryKeyStore();
-await keyStore.setKey("testnet", CONTRACT, KeyPair.fromString(cred.private_key));
-const near = await connect({ networkId: "testnet", nodeUrl: RPC, keyStore });
+await keyStore.setKey(MAINNET ? "mainnet" : "testnet", CONTRACT, KeyPair.fromString(cred.private_key));
+const near = await connect({ networkId: MAINNET ? "mainnet" : "testnet", nodeUrl: RPC, keyStore });
 const account = await near.account(CONTRACT);
 
 // rarity 规律:前 2 普通(0),次 4 稀有(1),后 2 史诗(2);max_supply 给足(对照 EVM 创世件量级)
