@@ -19,9 +19,11 @@ import {
 } from '../lib/walletSolana'
 import {
   buildNearLoginMessage,
-  connectNearWallet,
+  connectNearWalletDirect,
+  hasMeteorExtension,
   nearLoginChallenge,
   stashNearLogin,
+  suppressMeteorExtension,
   NearWalletError,
 } from '../lib/walletNear'
 import { requestNonce, verifyAgentLogin } from '../lib/agentApi'
@@ -112,17 +114,22 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  // NEAR(wallet-selector)登录:connect → /auth/nonce → signMessage → /auth/verify
-  const handlePickNear = async () => {
-    setActingWallet('NEAR')
+  // NEAR 登录:Meteor 插件 / Meteor 网页 两个显式通道,均为链上挑战交易(nonce 在交易参数里,
+  // 后端按交易哈希核对);signature 字段传交易哈希。网页通道全程屏蔽扩展标记强制走网页授权。
+  const handlePickNear = async (webOnly: boolean) => {
+    if (!webOnly && !hasMeteorExtension()) {
+      showToast('未检测到 Meteor 扩展,请改用下方"网页钱包",或先安装扩展')
+      return
+    }
+    setActingWallet(webOnly ? 'MeteorWeb' : 'MeteorExt')
     setPhase('connecting')
+    if (webOnly) suppressMeteorExtension(true)
     try {
-      const { address, providerName } = await connectNearWallet()
+      const { address, providerName } = await connectNearWalletDirect(webOnly)
       setPhase('signing')
       const { nonce } = await requestNonce(address)
       const message = buildNearLoginMessage(address, nonce, active.key)
-      // NEAR 登录 = 链上挑战交易(nonce 在交易参数里,后端按交易哈希核对),signature 字段传交易哈希。
-      // 网页版钱包走整页重定向(不会直接返回哈希):先暂存上下文,跳回后由 App 启动时接住回调完成验签。
+      // 网页版钱包可能整页重定向(不直接返回哈希):先暂存上下文,跳回后由 App 启动时接住回调完成验签。
       stashNearLogin({ message, address, nonce, providerName, chainId: active.chainId })
       const signature = await nearLoginChallenge(nonce)
       const { token } = await verifyAgentLogin(message, signature)
@@ -132,7 +139,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
         'near',
       )
       onClose()
-      showToast(`NEAR 钱包已连接(${active.name}),正在读取链上资产…`)
+      showToast(`NEAR 钱包已连接(${providerName}),正在读取链上资产…`)
       try {
         await refresh(address)
       } catch {
@@ -148,6 +155,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
       }
       showToast(message)
     } finally {
+      suppressMeteorExtension(false)
       setActingWallet(null)
       setPhase('idle')
     }
@@ -248,18 +256,32 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
               )}
             </button>
           ) : isNear ? (
-            <button
-              onClick={handlePickNear}
-              disabled={scanning || !!actingWallet}
-              className="w-full flex items-center gap-3 glass px-4 py-3 transition disabled:opacity-60 hover:border-neon-purple/60"
-            >
-              <span className="text-xl">Ⓝ</span>
-              <span className="font-medium">NEAR 钱包</span>
-              <span className="ml-auto text-xs text-slate-500">Meteor Wallet</span>
-              {phaseText('NEAR') && (
-                <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('NEAR')}</span>
-              )}
-            </button>
+            <div className="space-y-2">
+              <button
+                onClick={() => handlePickNear(false)}
+                disabled={scanning || !!actingWallet}
+                className="w-full flex items-center gap-3 glass px-4 py-3 transition disabled:opacity-60 hover:border-neon-purple/60"
+              >
+                <span className="text-xl">🧩</span>
+                <span className="font-medium">Meteor 插件钱包</span>
+                {!hasMeteorExtension() && <span className="ml-auto text-xs text-slate-500">未安装</span>}
+                {phaseText('MeteorExt') && (
+                  <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('MeteorExt')}</span>
+                )}
+              </button>
+              <button
+                onClick={() => handlePickNear(true)}
+                disabled={scanning || !!actingWallet}
+                className="w-full flex items-center gap-3 glass px-4 py-3 transition disabled:opacity-60 hover:border-neon-purple/60"
+              >
+                <span className="text-xl">🌐</span>
+                <span className="font-medium">Meteor 网页钱包</span>
+                <span className="ml-auto text-xs text-slate-500">免安装 · 浏览器直达</span>
+                {phaseText('MeteorWeb') && (
+                  <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('MeteorWeb')}</span>
+                )}
+              </button>
+            </div>
           ) : (
             wallets.map((w) => (
               <button

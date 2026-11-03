@@ -182,6 +182,58 @@ export async function connectNearWallet(): Promise<NearConnection> {
   })
 }
 
+// ------------------------------------------------------------
+// 插件 / 网页双通道:Meteor SDK 依据 window.meteorCom 是否注入决定走扩展还是网页弹窗。
+// 网页通道在登录流程期间临时屏蔽该标记,强制 SDK 走 wallet.meteorwallet.app 网页授权。
+// ------------------------------------------------------------
+
+/** 是否检测到 Meteor 扩展注入(window.meteorCom 为扩展消息桥) */
+export function hasMeteorExtension(): boolean {
+  return typeof window !== 'undefined' && (window as { meteorCom?: unknown }).meteorCom != null
+}
+
+let savedMeteorCom: unknown = undefined
+let meteorComSuppressed = false
+
+/** 临时屏蔽/恢复扩展标记;网页钱包登录全程(连接 + 挑战交易签名)保持屏蔽 */
+export function suppressMeteorExtension(on: boolean): void {
+  if (typeof window === 'undefined') return
+  const w = window as { meteorCom?: unknown }
+  if (on) {
+    if (!meteorComSuppressed) {
+      savedMeteorCom = w.meteorCom
+      w.meteorCom = null
+      meteorComSuppressed = true
+    }
+  } else if (meteorComSuppressed) {
+    w.meteorCom = savedMeteorCom
+    meteorComSuppressed = false
+  }
+}
+
+/**
+ * 直连登录(不经 wallet-selector 弹窗列表),配合"插件/网页"两个显式按钮:
+ * - webOnly=false:走 Meteor 扩展(未安装会报错,调用前先 hasMeteorExtension 判断)
+ * - webOnly=true :临时屏蔽扩展标记,强制走 wallet.meteorwallet.app 网页授权弹窗
+ * 注意:webOnly 的临时屏蔽由调用方在整个登录流程(含挑战交易签名)外包裹 suppressMeteorExtension
+ */
+export async function connectNearWalletDirect(webOnly: boolean): Promise<NearConnection> {
+  const selector = await ensureSelector()
+  const restored = selector.store.getState().accounts[0]?.accountId
+  if (restored) {
+    activeNearAccount = restored
+    return { address: restored, providerName: webOnly ? 'Meteor 网页钱包' : 'Meteor 扩展' }
+  }
+  const wallet = await selector.wallet()
+  // selector.wallet() 返回全类型联合,signIn 形参是各钱包类型的交集;Meteor 是浏览器钱包,按 BrowserWallet 收窄调用
+  const signIn = wallet.signIn as unknown as (params: { contractId?: string; methodNames?: string[] }) => Promise<void>
+  await signIn({ contractId: getActiveChain().identity, methodNames: [] })
+  const accountId = selector.store.getState().accounts[0]?.accountId
+  if (!accountId) throw new NearWalletError('SIGN_IN_FAILED', '钱包未返回账户,请重试')
+  activeNearAccount = accountId
+  return { address: accountId, providerName: webOnly ? 'Meteor 网页钱包' : 'Meteor 扩展' }
+}
+
 /** 登出并清空本地会话 */
 export async function disconnectNearWallet(): Promise<void> {
   try {
