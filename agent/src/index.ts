@@ -98,38 +98,61 @@ async function reloadChainRegistry(): Promise<void> {
 // ------------------------------------------------------------
 // NEAR JSON-RPC 中继:浏览器/wallet-selector 直连公共 RPC 在用户网络环境下
 // 不稳定(GFW/DNS 污染表现为结构化 -32601/Exceeded providers),统一经服务器转发。
-// 所有用户流量集中单一服务器 IP,fastnear 免费档会 429 限流——按序故障转移:
-// fastnear 优先,官方 near.org 兜底(从阿里云实测可达)。
+// 全部用户流量集中单一服务器 IP,免费公共端点都会 429(fastnear 限流 / near.org 弃用警告),
+// 策略:端点池轮转 + 429 退避重试 + 读请求短缓存(钱包流程常并发相同 view 调用)。
 // ------------------------------------------------------------
 const NEAR_RPC_TARGETS: Record<string, string[]> = {
-  mainnet: ['https://rpc.mainnet.fastnear.com', 'https://rpc.mainnet.near.org'],
-  testnet: ['https://rpc.testnet.fastnear.com', 'https://rpc.testnet.near.org'],
+  mainnet: ['https://rpc.mainnet.fastnear.com', 'https://near.drpc.org', 'https://rpc.mainnet.near.org'],
+  testnet: ['https://rpc.testnet.fastnear.com', 'https://near-testnet.drpc.org', 'https://rpc.testnet.near.org'],
 }
+
+/** 读请求(query/status/gas_price/block/tx 状态等)结果短缓存:同参数 1s 内直接去重 */
+const readCache = new Map<string, { at: number; status: number; text: string }>()
+const READ_CACHE_TTL_MS = 1_000
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 app.post('/near-rpc/:networkId', async (c) => {
   const targets = NEAR_RPC_TARGETS[c.req.param('networkId')]
   if (!targets) return c.json({ error: 'unsupported network' }, 400)
   const body = await c.req.json().catch(() => null)
   if (!body || typeof body !== 'object') return c.json({ error: 'invalid jsonrpc body' }, 400)
+  const method = (body as { method?: string }).method ?? ''
+  const isRead = ['query', 'status', 'gas_price', 'block', 'EXPERIMENTAL_tx_status', 'tx'].includes(method)
+  const cacheKey = isRead ? `${c.req.param('networkId')}:${JSON.stringify(body)}` : null
+  if (cacheKey) {
+    const hit = readCache.get(cacheKey)
+    if (hit && Date.now() - hit.at < READ_CACHE_TTL_MS) {
+      return c.newResponse(hit.text, hit.status as never, { 'Content-Type': 'application/json' })
+    }
+  }
   const payload = JSON.stringify(body)
   let lastErr: unknown = null
   for (const target of targets) {
-    try {
-      const res = await fetch(target, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        signal: AbortSignal.timeout(20_000),
-      })
-      // 限流(429)切换下一个端点;其余状态原样透传(执行错误不重试,防止广播类请求双发)
-      if (res.status === 429) {
-        lastErr = new Error(`${target} 429 rate limited`)
-        continue
+    // 429 多为每秒级限流:同端点退避重试一次再换下一个
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(target, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (res.status === 429) {
+          lastErr = new Error(`${target} 429 rate limited`)
+          if (attempt === 0) await sleep(700)
+          continue
+        }
+        const text = await res.text()
+        if (cacheKey) {
+          readCache.set(cacheKey, { at: Date.now(), status: res.status, text })
+          if (readCache.size > 500) readCache.clear() // 简单防膨胀
+        }
+        return c.newResponse(text, res.status as never, { 'Content-Type': 'application/json' })
+      } catch (err) {
+        lastErr = err
+        break // 网络错误直接换端点
       }
-      const text = await res.text()
-      return c.newResponse(text, res.status as never, { 'Content-Type': 'application/json' })
-    } catch (err) {
-      lastErr = err
     }
   }
   return c.json(
