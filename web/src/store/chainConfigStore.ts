@@ -19,6 +19,7 @@ interface ChainConfigState {
 
 const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? ''
 const SHOW_TESTNETS_KEY = 'tinyworld-show-testnets'
+const ACTIVE_CHAIN_KEY = 'tinyworld-active-chain'
 
 function loadShowTestnets(): boolean {
   try {
@@ -28,9 +29,21 @@ function loadShowTestnets(): boolean {
   }
 }
 
+/** 恢复上次激活的链(仅 mainnet 链或测试网开关打开时的任意链;非法值回退 Avalanche 主网) */
+function loadActiveChain(showTestnets: boolean): ChainContracts {
+  try {
+    const key = localStorage.getItem(ACTIVE_CHAIN_KEY) as ChainKey | null
+    const chain = key ? CONTRACTS_BY_KEY[key] : undefined
+    if (chain && (showTestnets || !chain.testnet)) return chain
+  } catch {
+    // localStorage 不可用时用默认
+  }
+  return CONTRACTS_BY_KEY.avalanche
+}
+
 export const useChainConfig = create<ChainConfigState>((set, get) => ({
   // 默认激活 Avalanche 主网:生产环境已迁移至此,避免用户手动切链
-  active: CONTRACTS_BY_KEY.avalanche,
+  active: loadActiveChain(loadShowTestnets()),
   chains: Object.values(CONTRACTS_BY_KEY),
   showTestnets: loadShowTestnets(),
 
@@ -44,7 +57,12 @@ export const useChainConfig = create<ChainConfigState>((set, get) => ({
       // 关闭测试网时若当前激活链是测试网,自动切到第一个主网
       if (!show && s.active.testnet) {
         const mainnet = s.chains.find((c) => !c.testnet)
-        if (mainnet) return { showTestnets: show, active: mainnet }
+        if (mainnet) {
+          try {
+            localStorage.setItem(ACTIVE_CHAIN_KEY, mainnet.key)
+          } catch {}
+          return { showTestnets: show, active: mainnet }
+        }
       }
       return { showTestnets: show }
     })
@@ -52,7 +70,12 @@ export const useChainConfig = create<ChainConfigState>((set, get) => ({
 
   setActive: (key) => {
     const next = get().chains.find((c) => c.key === key)
-    if (next) set({ active: next })
+    if (next) {
+      try {
+        localStorage.setItem(ACTIVE_CHAIN_KEY, key)
+      } catch {}
+      set({ active: next })
+    }
   },
 
   hydrateFromApi: async () => {
