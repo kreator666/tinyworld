@@ -12,30 +12,46 @@ import '@near-wallet-selector/modal-ui/styles.css'
 import { getActiveChain } from '../store/chainConfigStore'
 
 // ============================================================
-// NEAR 钱包封装(wallet-selector:Meteor)
+// NEAR 钱包封装(wallet-selector:Meteor / Sender / Nightly / HERE)
 // 与 EVM 侧 EIP-6963 封装、Solana 侧 Phantom 封装风格一致:
 // 只做 selector 初始化 / 连接 / 签名,链上读写见 lib/chainNear.ts。
 // NEAR 的"地址"就是 account_id(如 alice.testnet)。
 // 会话由 wallet-selector 持久化在 localStorage(key 含合约地址),
 // 刷新后通过 initNearSession 恢复并校验与登录身份一致。
-// 注1:MyNearWallet 已于 2026 年退役,官方不再接受新应用连接(testnet.mynearwallet.com
-//      明确提示迁移到 Meteor),故不接;Meteor 为其官方继任者。
-// 注2:meteor-wallet 的浏览器 bundle 混有 Node 风格依赖(randombytes 引用 global/process,
-//    靠 vite define 垫片规避);为防其再出运行时错误拖垮整个应用,改为异步按需加载,
-//    加载失败仅跳过该钱包,不影响整体功能。
+// 注1:MyNearWallet 已于 2026 年退役,官方不再接受新应用连接,故不接。
+// 注2:多钱包冗余是刻意为之——NEAR 测试网单点故障频发(2026-11 Meteor 后端
+//     间歇性 -32601,官方 RPC 弃用),钱包模块全部异步按需加载、失败互不影响,
+//     用户可在弹窗里任选可用钱包。
 // ============================================================
 
-/** 加载钱包模块:Meteor 按需异步载,失败跳过(其浏览器 bundle 有 Node 依赖坑);
- *  (MyNearWallet 已退役,见文件头注释) */
-async function loadNearWalletModules(): Promise<Array<ReturnType<typeof import('@near-wallet-selector/meteor-wallet').setupMeteorWallet>>> {
-  const modules: Array<ReturnType<typeof import('@near-wallet-selector/meteor-wallet').setupMeteorWallet>> = []
-  try {
-    const { setupMeteorWallet } = await import('@near-wallet-selector/meteor-wallet')
-    modules.push(setupMeteorWallet())
-  } catch (err) {
-    console.warn('[near] meteor-wallet 模块加载失败,已跳过该钱包(不影响其他功能):', err)
+/** 加载钱包模块:全部异步按需载,单个失败仅跳过该钱包(其浏览器 bundle 可能有 Node 依赖坑)。
+ *  注意:动态导入必须写字面量包名——变量形式的 import() 无法被 Vite 分析/预构建(实测踩坑)。 */
+async function loadNearWalletModules() {
+  const modules: unknown[] = []
+  const add = (m: unknown) => {
+    if (typeof m === 'function') modules.push((m as () => unknown)())
   }
-  return modules
+  try {
+    add((await import('@near-wallet-selector/meteor-wallet')).setupMeteorWallet)
+  } catch (err) {
+    console.warn('[near] meteor-wallet 模块加载失败,已跳过:', err)
+  }
+  try {
+    add((await import('@near-wallet-selector/sender')).setupSender)
+  } catch (err) {
+    console.warn('[near] sender 模块加载失败,已跳过:', err)
+  }
+  try {
+    add((await import('@near-wallet-selector/nightly')).setupNightly)
+  } catch (err) {
+    console.warn('[near] nightly 模块加载失败,已跳过:', err)
+  }
+  try {
+    add((await import('@near-wallet-selector/here-wallet')).setupHereWallet)
+  } catch (err) {
+    console.warn('[near] here-wallet 模块加载失败,已跳过:', err)
+  }
+  return modules as never[]
 }
 
 export class NearWalletError extends Error {
@@ -180,58 +196,6 @@ export async function connectNearWallet(): Promise<NearConnection> {
     })
     modal?.show()
   })
-}
-
-// ------------------------------------------------------------
-// 插件 / 网页双通道:Meteor SDK 依据 window.meteorCom 是否注入决定走扩展还是网页弹窗。
-// 网页通道在登录流程期间临时屏蔽该标记,强制 SDK 走 wallet.meteorwallet.app 网页授权。
-// ------------------------------------------------------------
-
-/** 是否检测到 Meteor 扩展注入(window.meteorCom 为扩展消息桥) */
-export function hasMeteorExtension(): boolean {
-  return typeof window !== 'undefined' && (window as { meteorCom?: unknown }).meteorCom != null
-}
-
-let savedMeteorCom: unknown = undefined
-let meteorComSuppressed = false
-
-/** 临时屏蔽/恢复扩展标记;网页钱包登录全程(连接 + 挑战交易签名)保持屏蔽 */
-export function suppressMeteorExtension(on: boolean): void {
-  if (typeof window === 'undefined') return
-  const w = window as { meteorCom?: unknown }
-  if (on) {
-    if (!meteorComSuppressed) {
-      savedMeteorCom = w.meteorCom
-      w.meteorCom = null
-      meteorComSuppressed = true
-    }
-  } else if (meteorComSuppressed) {
-    w.meteorCom = savedMeteorCom
-    meteorComSuppressed = false
-  }
-}
-
-/**
- * 直连登录(不经 wallet-selector 弹窗列表),配合"插件/网页"两个显式按钮:
- * - webOnly=false:走 Meteor 扩展(未安装会报错,调用前先 hasMeteorExtension 判断)
- * - webOnly=true :临时屏蔽扩展标记,强制走 wallet.meteorwallet.app 网页授权弹窗
- * 注意:webOnly 的临时屏蔽由调用方在整个登录流程(含挑战交易签名)外包裹 suppressMeteorExtension
- */
-export async function connectNearWalletDirect(webOnly: boolean): Promise<NearConnection> {
-  const selector = await ensureSelector()
-  const restored = selector.store.getState().accounts[0]?.accountId
-  if (restored) {
-    activeNearAccount = restored
-    return { address: restored, providerName: webOnly ? 'Meteor 网页钱包' : 'Meteor 扩展' }
-  }
-  const wallet = await selector.wallet()
-  // selector.wallet() 返回全类型联合,signIn 形参是各钱包类型的交集;Meteor 是浏览器钱包,按 BrowserWallet 收窄调用
-  const signIn = wallet.signIn as unknown as (params: { contractId?: string; methodNames?: string[] }) => Promise<void>
-  await signIn({ contractId: getActiveChain().identity, methodNames: [] })
-  const accountId = selector.store.getState().accounts[0]?.accountId
-  if (!accountId) throw new NearWalletError('SIGN_IN_FAILED', '钱包未返回账户,请重试')
-  activeNearAccount = accountId
-  return { address: accountId, providerName: webOnly ? 'Meteor 网页钱包' : 'Meteor 扩展' }
 }
 
 /** 登出并清空本地会话 */

@@ -11,7 +11,10 @@
   },
   "dependencies": {
     "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/here-wallet": "^10.1.4",
     "@near-wallet-selector/modal-ui": "^10.1.4",
+    "@near-wallet-selector/nightly": "^10.1.4",
+    "@near-wallet-selector/sender": "^10.1.4",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
     "buffer": "^6.0.3",
