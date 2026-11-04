@@ -12,7 +12,7 @@ process.env.AGENT_DATA_DIR = DATA_DIR
 const { initSchema, closeDb, listChains, loadChainConfigsFromDb, listChainProtocols, upsertChainProtocol } = await import('../src/db')
 const { applyDbChains, applyDbChainConfigs } = await import('../src/chain/registry')
 const { seedChainProtocols } = await import('../src/skills/protocolSeeding')
-const { ensureDefaultSkills, installSkill, uninstallSkill, getInstalledSkills, getInstalledManifests, getToolsFor, syncSkillsToDb, refreshProtocolCache, loadSkills } =
+const { ensureDefaultSkills, installSkill, uninstallSkill, getInstalledSkills, getInstalledManifests, getToolsFor, syncSkillsToDb, refreshProtocolCache, loadSkills, listSkills } =
   await import('../src/skills')
 
 function assert(cond: unknown, msg: string): void {
@@ -80,7 +80,31 @@ const toolsFuji3 = await getToolsFor(FUJI, TOKEN)
 assert('propose_swap' in toolsFuji3, '恢复 dex 后 propose_swap 应重新加载')
 ok('getToolsFor/getInstalledManifests:协议停用 → 工具与能力摘要同步隐藏,恢复即回来,安装记录保留')
 
-// 4. 卸载
+// 4. NEAR 技能接线(e1c79d5 补齐):loader 按 skill.json 发现 → 默认安装 → 能力摘要
+const NEAR = 'near-testnet'
+const listedNear = listSkills(NEAR).map((m) => m.id)
+assert(listedNear.includes('defi-swap-ref'), `listSkills(${NEAR}) 应含 defi-swap-ref(skill.json 缺失会丢)`)
+assert(listedNear.includes('defi-lending-burrow'), `listSkills(${NEAR}) 应含 defi-lending-burrow`)
+const addedNear = await ensureDefaultSkills(NEAR, TOKEN)
+assert(addedNear.includes('defi-swap-ref') && addedNear.includes('defi-lending-burrow'), `near 默认安装应含两个 NEAR 技能: ${addedNear}`)
+const manifestsNear = await getInstalledManifests(NEAR, TOKEN)
+assert(manifestsNear.length === 6, `near 能力摘要应为 6 项,实际 ${manifestsNear.length} 项: ${manifestsNear.map((m) => m.id)}`)
+for (const id of ['defi-swap-ref', 'defi-lending-burrow']) {
+  const m = manifestsNear.find((x) => x.id === id)
+  assert(m?.nearOnly === true, `${id} 清单 nearOnly 应为 true`)
+  assert(Boolean(m?.protocol && m?.protocolRequired), `${id} 应声明 protocol + protocolRequired`)
+}
+// 非 NEAR 链不受影响:evmOnly/solanaOnly 链的默认集不含 NEAR 技能
+assert(!addedFuji.includes('defi-swap-ref') && !addedFuji.includes('defi-lending-burrow'), 'fuji 默认安装不应含 NEAR 技能')
+assert(!addedSol.includes('defi-swap-ref') && !addedSol.includes('defi-lending-burrow'), 'solana-devnet 默认安装不应含 NEAR 技能')
+// NEAR 链工具集实际可加载(makeTools 与 skill.json tools 声明一致)
+const toolsNear = await getToolsFor(NEAR, TOKEN)
+for (const t of ['propose_swap', 'get_position', 'propose_supply', 'propose_borrow', 'propose_repay', 'propose_withdraw']) {
+  assert(t in toolsNear, `near 工具集应有 ${t}`)
+}
+ok('NEAR 技能:skill.json 发现 + 默认安装 + 能力摘要 6 项 + 工具加载')
+
+// 5. 卸载
 const removed = await uninstallSkill(FUJI, TOKEN, 'defi-swap')
 assert(removed, '卸载 defi-swap 应成功')
 assert(!(await getInstalledSkills(FUJI, TOKEN)).some((s) => s.id === 'defi-swap'), '卸载后安装记录应消失')

@@ -1,0 +1,21 @@
+{
+  "id": "defi-lending-burrow",
+  "name": "NEAR 借贷",
+  "version": "1.0.0",
+  "description": "经 Burrow 在 NEAR 上存款生息/抵押借款/还款/取回(hot_wallet:Agent NEAR 热钱包签名执行)。资产:WNEAR/USDC/USDT/DAI/WETH(testnet fakes)。含只读仓位查询",
+  "tools": [
+    "get_position",
+    "propose_supply",
+    "propose_borrow",
+    "propose_repay",
+    "propose_withdraw"
+  ],
+  "permissions": [],
+  "scope": "owner",
+  "nearOnly": true,
+  "protocol": "burrow",
+  "protocolRequired": true,
+  "runtime": "typescript",
+  "entry": "index.ts",
+  "source": "builtin"
+}

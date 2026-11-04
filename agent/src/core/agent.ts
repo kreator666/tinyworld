@@ -76,6 +76,7 @@ export function buildInstructions(
   const { cfg } = getChainContext(chainKey)
   const chainName = cfg.name
   const isEvm = getChainContext(chainKey).family === 'evm'
+  const isNear = getChainContext(chainKey).family === 'near'
   const nativeSymbol = cfg.defi?.nativeSymbol ?? 'SOL'
   const hasSkill = (id: string) => installed.some((s) => s.id === id)
   const topics = profile.topics.length > 0 ? profile.topics.join('、') : '不限'
@@ -136,7 +137,20 @@ export function buildInstructions(
         `本链暂无理财(借代)协议;主人提到存钱吃利息时,如实回答本链不支持,不要假装执行。`,
       )
     }
-    if (!isEvm && !hasSkill('defi-swap-sol') && !hasSkill('defi-swap-meteora')) {
+    if (isNear && hasSkill('defi-swap-ref')) {
+      ownerToolsLines.push(
+        `当主人要求进行兑换(如"用 0.1 WNEAR 换 USDC"、"把 USDC 换回 WNEAR")时,必须调用 propose_swap 工具;支持 WNEAR↔USDC/USDT/DAI/WETH,由 Ref Finance AMM 路由。调用示例:propose_swap({tokenIn:"WNEAR",tokenOut:"USDC",amountIn:"0.1",reason:"主人主动兑换"})。禁止不调用工具就直接回复"已组装"。`,
+        `NEAR 兑换仅支持 hot_wallet 模式(Agent NEAR 热钱包直接签名执行,需配置 AGENT_NEAR_PRIVATE_KEY);若当前设置是 user_wallet 模式,提示主人先在设置中切回 hot_wallet,不要假装执行。`,
+      )
+    }
+    if (isNear && hasSkill('defi-lending-burrow')) {
+      ownerToolsLines.push(
+        `当主人要求把资金存入 Burrow 赚收益(如"存 10 USDC 吃利息"、"把 WNEAR 理财")时,必须调用 propose_supply 工具;支持 WNEAR/USDC/USDT/DAI/WETH;示例:propose_supply({token:"USDC",amount:"10",reason:"主人主动理财"})。`,
+        `当主人要求抵押借款(如"借 5 USDT")时,必须调用 propose_borrow 工具(需已有存款抵押,健康因子不足会失败);偿还借款用 propose_repay,取回存款用 propose_withdraw(amount 传 "all" 表示全部取出)。`,
+        `主人问借贷仓位/存款收益(如"我在 Burrow 存了多少"、"现在健康因子多少")时,调用 get_position 只读查询,把存款/借款/健康因子用口语报给主人。`,
+      )
+    }
+    if (!isEvm && !hasSkill('defi-swap-sol') && !hasSkill('defi-swap-meteora') && !hasSkill('defi-swap-ref') && !hasSkill('defi-lending-burrow')) {
       ownerToolsLines.push(`本链(${chainName})暂无 DEX 兑换与理财协议,不要向主人提议 swap 或理财;主人提到时如实说明做不到。`)
     }
     if (hasSkill('owner-tuning')) {

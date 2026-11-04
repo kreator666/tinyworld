@@ -162,7 +162,17 @@ export function listSkills(chainKey: string): SkillManifest[] {
  *  (自 2026-09-25 起拒绝所有用户交易,101 InstructionFallbackNotFound,任何公共 SDK
  *  都一样;Drift 已迁移至闭源 Velocity 程序)。自动装上会让用户对话时必踩链上错误;
  *  待接入 Velocity 或链侧恢复后再加入,届时可手动安装测试(读操作仍可用)。 */
-export const DEFAULT_SKILL_IDS = ['social-greeter', 'defi-quote', 'defi-swap', 'defi-lending', 'defi-swap-meteora', 'owner-tuning', 'skill-creator']
+export const DEFAULT_SKILL_IDS = [
+  'social-greeter',
+  'defi-quote',
+  'defi-swap',
+  'defi-lending',
+  'defi-swap-meteora',
+  'defi-swap-ref',
+  'defi-lending-burrow',
+  'owner-tuning',
+  'skill-creator',
+]
 
 /**
  * 确保默认技能已安装(幂等):比对 DB 里现有安装记录,只补缺口。
