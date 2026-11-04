@@ -19,7 +19,8 @@ import {
 } from '../lib/walletSolana'
 import {
   buildNearLoginMessage,
-  connectNearWallet,
+  connectNearWalletById,
+  detectNearWallets,
   nearLoginChallenge,
   stashNearLogin,
   NearWalletError,
@@ -43,6 +44,15 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
   const family = active.family ?? 'evm'
   const isSolana = family === 'solana'
   const isNear = family === 'near'
+  // NEAR 各钱包的安装探测(扩展注入全局对象);弹窗打开时快照一次即可
+  const [nearWalletOptions] = useState(() => detectNearWallets())
+
+  const NEAR_WALLET_ICONS: Record<string, string> = {
+    'meteor-wallet': '☄️',
+    nightly: '🌙',
+    sender: '📨',
+    'here-wallet': '📍',
+  }
 
   const [wallets, setWallets] = useState<DiscoveredWallet[]>([])
   const [scanning, setScanning] = useState(true)
@@ -112,13 +122,13 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  // NEAR(wallet-selector)登录:connect → /auth/nonce → 链上挑战交易 → /auth/verify。
+  // NEAR 登录:按钱包分键直连(插件/网页分离按钮)→ /auth/nonce → 链上挑战交易 → /auth/verify。
   // 挑战交易可能整页重定向(网页钱包),发起前暂存上下文,跳回后由 App 启动时接住回调。
-  const handlePickNear = async () => {
-    setActingWallet('NEAR')
+  const handlePickNear = async (walletId: string, walletName: string, forceWeb = false) => {
+    setActingWallet(walletName)
     setPhase('connecting')
     try {
-      const { address, providerName } = await connectNearWallet()
+      const { address, providerName } = await connectNearWalletById(walletId, forceWeb)
       setPhase('signing')
       const { nonce } = await requestNonce(address)
       const message = buildNearLoginMessage(address, nonce, active.key)
@@ -131,7 +141,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
         'near',
       )
       onClose()
-      showToast(`NEAR 钱包已连接(${active.name}),正在读取链上资产…`)
+      showToast(`NEAR 钱包已连接(${walletName}),正在读取链上资产…`)
       try {
         await refresh(address)
       } catch {
@@ -247,18 +257,47 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
               )}
             </button>
           ) : isNear ? (
-            <button
-              onClick={handlePickNear}
-              disabled={scanning || !!actingWallet}
-              className="w-full flex items-center gap-3 glass px-4 py-3 transition disabled:opacity-60 hover:border-neon-purple/60"
-            >
-              <span className="text-xl">Ⓝ</span>
-              <span className="font-medium">连接 NEAR 钱包</span>
-              <span className="ml-auto text-xs text-slate-500">Meteor / Sender / Nightly / HERE</span>
-              {phaseText('NEAR') && (
-                <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('NEAR')}</span>
+            <div className="space-y-2">
+              {nearWalletOptions
+                .filter((w) => w.installed)
+                .map((w) => (
+                  <button
+                    key={w.id}
+                    onClick={() => handlePickNear(w.id, w.name)}
+                    disabled={scanning || !!actingWallet}
+                    className="w-full flex items-center gap-3 glass px-4 py-3 transition disabled:opacity-60 hover:border-neon-purple/60"
+                  >
+                    <span className="text-xl">{NEAR_WALLET_ICONS[w.id] ?? 'Ⓝ'}</span>
+                    <span className="font-medium">{w.name} 插件钱包</span>
+                    {phaseText(w.name) && (
+                      <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText(w.name)}</span>
+                    )}
+                  </button>
+                ))}
+              {/* Meteor 网页通道:扩展未装/扩展故障时兜底,免安装 */}
+              <button
+                onClick={() => handlePickNear('meteor-wallet', 'Meteor 网页', true)}
+                disabled={scanning || !!actingWallet}
+                className="w-full flex items-center gap-3 glass px-4 py-3 transition disabled:opacity-60 hover:border-neon-purple/60"
+              >
+                <span className="text-xl">🌐</span>
+                <span className="font-medium">Meteor 网页钱包</span>
+                <span className="ml-auto text-xs text-slate-500">免安装</span>
+                {phaseText('Meteor 网页') && (
+                  <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('Meteor 网页')}</span>
+                )}
+              </button>
+              {nearWalletOptions.filter((w) => !w.installed && w.id !== 'meteor-wallet').length > 0 && (
+                <p className="text-[10px] text-slate-500 pt-1">
+                  未安装:
+                  {nearWalletOptions
+                    .filter((w) => !w.installed && w.id !== 'meteor-wallet')
+                    .map((w) => w.name)
+                    .join(' / ')}
+                  (安装后刷新页面即可使用)
+                </p>
               )}
-            </button>
+            </div>
           ) : (
             wallets.map((w) => (
               <button

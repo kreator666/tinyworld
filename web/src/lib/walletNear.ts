@@ -164,6 +164,73 @@ export function onNearAccountsChanged(cb: (accountId: string | null) => void): (
 }
 const cleanups = new Map<(accountId: string | null) => void, () => void>()
 
+// ------------------------------------------------------------
+// 按钱包分键直连(插件 / 网页分离按钮):不经 selector 弹窗列表,每个钱包一个独立按钮。
+// 安装检测依据各钱包的浏览器注入全局对象;forceWeb 仅对 Meteor 有意义(屏蔽扩展标记强制网页授权)。
+// ------------------------------------------------------------
+
+export interface NearWalletOption {
+  id: string // selector 模块 id
+  name: string
+  installed: boolean
+  webFallback?: boolean // 无扩展时的网页通道(仅 Meteor)
+}
+
+/** 探测各 NEAR 钱包扩展注入;返回全部候选(未安装的也列出,UI 决定隐藏或标注) */
+export function detectNearWallets(): NearWalletOption[] {
+  if (typeof window === 'undefined') return []
+  const w = window as unknown as Record<string, unknown>
+  const near = w['near'] as { isSender?: boolean } | undefined
+  return [
+    { id: 'meteor-wallet', name: 'Meteor', installed: w['meteorCom'] != null, webFallback: true },
+    { id: 'nightly', name: 'Nightly', installed: w['nightly'] != null },
+    { id: 'sender', name: 'Sender', installed: near?.isSender === true },
+    { id: 'here-wallet', name: 'HERE', installed: w['hereWallet'] != null },
+  ]
+}
+
+let savedMeteorCom: unknown = undefined
+let meteorComSuppressed = false
+
+/** 临时屏蔽/恢复 Meteor 扩展标记(window.meteorCom);forceWeb 登录全程保持屏蔽 */
+export function suppressMeteorExtension(on: boolean): void {
+  if (typeof window === 'undefined') return
+  const w = window as { meteorCom?: unknown }
+  if (on) {
+    if (!meteorComSuppressed) {
+      savedMeteorCom = w.meteorCom
+      w.meteorCom = null
+      meteorComSuppressed = true
+    }
+  } else if (meteorComSuppressed) {
+    w.meteorCom = savedMeteorCom
+    meteorComSuppressed = false
+  }
+}
+
+/** 按钱包 id 直连登录(不弹 selector 列表);forceWeb 仅 Meteor 使用 */
+export async function connectNearWalletById(walletId: string, forceWeb = false): Promise<NearConnection> {
+  const selector = await ensureSelector()
+  const restored = selector.store.getState().accounts[0]?.accountId
+  if (restored) {
+    activeNearAccount = restored
+    return { address: restored, providerName: walletId }
+  }
+  if (forceWeb) suppressMeteorExtension(true)
+  try {
+    const wallet = await selector.wallet(walletId)
+    // selector.wallet() 返回全类型联合,signIn 形参是各钱包类型交集;NEAR 均为浏览器钱包,按最宽形态调用
+    const signIn = wallet.signIn as unknown as (params: { contractId?: string; methodNames?: string[] }) => Promise<unknown[]>
+    await signIn({ contractId: getActiveChain().identity, methodNames: [] })
+    const accountId = selector.store.getState().accounts[0]?.accountId
+    if (!accountId) throw new NearWalletError('SIGN_IN_FAILED', '钱包未返回账户,请重试')
+    activeNearAccount = accountId
+    return { address: accountId, providerName: walletId }
+  } finally {
+    if (forceWeb) suppressMeteorExtension(false)
+  }
+}
+
 /** 弹 wallet-selector 连接窗口;已签入则直接复用。不签名,签名时机交给调用方(SIWE 登录) */
 export async function connectNearWallet(): Promise<NearConnection> {
   const selector = await ensureSelector()
