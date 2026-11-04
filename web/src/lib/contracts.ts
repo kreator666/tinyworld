@@ -12,7 +12,7 @@ import type { ChainType } from '../types'
 // 当前激活链由 store/chainConfigStore.ts 管理(导航栏按钮切换)。
 // ============================================================
 
-export type ChainKey = 'sepolia' | 'fuji' | 'solana-devnet' | 'avalanche' | 'near-testnet'
+export type ChainKey = 'sepolia' | 'fuji' | 'solana-devnet' | 'avalanche' | 'near-testnet' | 'near-mainnet'
 
 export interface ChainContracts {
   key: ChainKey
@@ -49,6 +49,14 @@ const nearTestnetChain = {
   name: 'NEAR Testnet',
   nativeCurrency: { name: 'NEAR', symbol: 'NEAR', decimals: 24 },
   rpcUrls: { default: { http: ['https://rpc.testnet.near.org'] } },
+} satisfies Chain
+
+// NEAR mainnet 的 viem 链定义:仅作占位(near 不走 viem client),chain_id 399 哨兵
+const nearMainnetChain = {
+  id: 399,
+  name: 'NEAR Mainnet',
+  nativeCurrency: { name: 'NEAR', symbol: 'NEAR', decimals: 24 },
+  rpcUrls: { default: { http: ['https://rpc.mainnet.fastnear.com'] } },
 } satisfies Chain
 
 // 素材(角色库/装备目录)全链共用一套,与链无关;这里只放合约地址等链上信息
@@ -118,6 +126,19 @@ export const CONTRACTS_BY_KEY: Record<ChainKey, ChainContracts> = {
     explorer: 'https://testnet.nearblocks.io',
     testnet: true,
     family: 'near',
+  },
+  // NEAR mainnet(合约 agentverse-did.near,2026-11 部署;testnet:false = 测试网开关关闭时也可见)
+  'near-mainnet': {
+    key: 'near-mainnet',
+    name: 'NEAR Mainnet',
+    chainId: 399,
+    chain: nearMainnetChain,
+    identity: 'agentverse-did.near' as `0x${string}`,
+    parts: 'agentverse-did.near' as `0x${string}`,
+    rpc: 'https://rpc.mainnet.fastnear.com',
+    explorer: 'https://nearblocks.io',
+    family: 'near',
+    testnet: false,
   },
 }
 

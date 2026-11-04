@@ -202,6 +202,21 @@ const CHAINS: Record<string, ChainConfig> = {
     identityAddress: 'tinyworld.testnet', // 占位:合约未部署,部署后替换
     partsAddress: 'tinyworld.testnet', // 与 identityAddress 同一合约(占位)
   },
+  // NEAR mainnet:同一套 tinyworld 合约部署于 agentverse-did.near(2026-11 部署,见 near/README.md)
+  // 主网 RPC 生态健康(fastnear 实测);Burrow 主网合约已失效暂不接入,Ref v2 主网存活。
+  'near-mainnet': {
+    family: 'near',
+    name: 'NEAR Mainnet',
+    chainId: 399, // 哨兵值:与 near-testnet(398)同惯例
+    rpc: 'https://rpc.mainnet.fastnear.com',
+    rpcFallbacks: [],
+    explorer: 'https://nearblocks.io',
+    near: {
+      refExchange: 'v2.ref-finance.near', // Ref Finance v2 AMM(8799 池,2026-11 实测)
+    },
+    identityAddress: 'agentverse-did.near',
+    partsAddress: 'agentverse-did.near',
+  },
 }
 
 const targetKey = env('TARGET_CHAIN', 'sepolia').toLowerCase()

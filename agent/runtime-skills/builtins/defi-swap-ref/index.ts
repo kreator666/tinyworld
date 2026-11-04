@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { getDb } from '../../../src/db'
 import { getChainContext } from '../../../src/chain/registry'
-import { REF_TESTNET_TOKENS, refQuote, refSwap, refTokenDecimals } from '../../../src/chain/ref'
+import { refTokens, refQuote, refSwap, refTokenDecimals } from '../../../src/chain/ref'
 import { isNearWriteReady } from '../../../src/chain/nearWrite'
 import { getSwapMode } from '../../../src/core/settings'
 import type { SkillDef } from '../../../src/skills/registry'
@@ -17,8 +17,6 @@ import type { SkillDef } from '../../../src/skills/registry'
 // ============================================================
 
 const SLIPPAGE_BPS = 100 // 滑点 1%(测试网流动性浅,给宽一点)
-const TOKEN_SYMBOLS = Object.keys(REF_TESTNET_TOKENS) as [string, ...string[]]
-
 /** 已执行的 defi 交易落 tasks 表(审计;字段约定与 EVM/Solana 侧 recordDefiTask 一致) */
 async function recordDefiTask(
   chainKey: string,
@@ -40,6 +38,7 @@ async function recordDefiTask(
 
 /** propose_swap 闭包绑定 chainKey + tokenId:报价 → hot_wallet 执行 → 落审计 */
 function makeProposeSwap(chainKey: string, tokenId: number) {
+  const TOKEN_SYMBOLS = Object.keys(refTokens(chainKey)) as [string, ...string[]]
   return createTool({
     id: 'propose_swap',
     description:
@@ -66,8 +65,8 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
       try {
         const tokenIn = context.tokenIn.toUpperCase()
         const tokenOut = context.tokenOut.toUpperCase()
-        const decimalsIn = await refTokenDecimals(chainKey, REF_TESTNET_TOKENS[tokenIn].contractId)
-        const decimalsOut = await refTokenDecimals(chainKey, REF_TESTNET_TOKENS[tokenOut].contractId)
+        const decimalsIn = await refTokenDecimals(chainKey, refTokens(chainKey)[tokenIn].contractId)
+        const decimalsOut = await refTokenDecimals(chainKey, refTokens(chainKey)[tokenOut].contractId)
         const amountAtomic = BigInt(Math.round(parseFloat(context.amountIn) * 10 ** decimalsIn)).toString()
         if (BigInt(amountAtomic) <= 0n) return { result: '执行失败:amountIn 必须大于 0' }
 

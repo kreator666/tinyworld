@@ -9,13 +9,25 @@ import { nearAgentAccountId, nearCall, nearNativeBalance, nearView, ensureStorag
 // 前置条件:热钱包在 exchange 与 wrap 合约的 NEP-145 storage deposit(ensureStorageDeposit 幂等注册)。
 // ============================================================
 
-/** testnet fakes 代币表(ref-sdk 内置清单;主网迁移时换真实地址即可) */
+/** testnet fakes 代币表(ref-sdk 内置清单) */
 export const REF_TESTNET_TOKENS: Record<string, { contractId: string; symbol: string }> = {
   WNEAR: { contractId: 'wrap.testnet', symbol: 'wNEAR' },
   USDC: { contractId: 'usdc.fakes.testnet', symbol: 'USDC' },
   USDT: { contractId: 'usdt.fakes.testnet', symbol: 'USDT' },
   DAI: { contractId: 'dai.fakes.testnet', symbol: 'DAI' },
   WETH: { contractId: 'weth.fakes.testnet', symbol: 'WETH' },
+}
+
+/** mainnet 代币表(地址经 fastnear 实测存活,2026-11) */
+export const REF_MAINNET_TOKENS: Record<string, { contractId: string; symbol: string }> = {
+  WNEAR: { contractId: 'wrap.near', symbol: 'wNEAR' },
+  USDC: { contractId: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', symbol: 'USDC' }, // 原生 USDC
+  USDT: { contractId: 'dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near', symbol: 'USDT' }, // 桥接 USDT
+}
+
+/** 按链取代币表(以 ChainConfig.chainId 哨兵区分:398=testnet,其余视为 mainnet) */
+export function refTokens(chainKey: string): Record<string, { contractId: string; symbol: string }> {
+  return getChainContext(chainKey).cfg.chainId === 398 ? REF_TESTNET_TOKENS : REF_MAINNET_TOKENS
 }
 
 const decimalsCache = new Map<string, Promise<number>>()
@@ -41,8 +53,8 @@ export async function refTokenDecimals(chainKey: string, tokenContract: string):
 }
 
 export function refToken(chainKey: string, symbol: string): { contractId: string; symbol: string } {
-  const t = REF_TESTNET_TOKENS[symbol.toUpperCase()]
-  if (!t) throw new Error(`不支持的代币: ${symbol}(可选 ${Object.keys(REF_TESTNET_TOKENS).join('/')})`)
+  const t = refTokens(chainKey)[symbol.toUpperCase()]
+  if (!t) throw new Error(`不支持的代币: ${symbol}(可选 ${Object.keys(refTokens(chainKey)).join('/')})`)
   return t
 }
 

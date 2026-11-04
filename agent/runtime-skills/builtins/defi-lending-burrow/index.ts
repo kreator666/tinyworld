@@ -12,7 +12,7 @@ import {
   burrowToHuman,
   burrowToAtomic,
 } from '../../../src/chain/burrow'
-import { REF_TESTNET_TOKENS } from '../../../src/chain/ref'
+import { refTokens } from '../../../src/chain/ref'
 import { isNearWriteReady } from '../../../src/chain/nearWrite'
 import type { SkillDef } from '../../../src/skills/registry'
 
@@ -21,8 +21,6 @@ import type { SkillDef } from '../../../src/skills/registry'
 // 仅 hot_wallet 模式:Agent NEAR 热钱包直接签名广播;user_wallet 暂不支持。
 // 每笔成交落 tasks 表审计;仓位查询 get_position 为只读工具,不触发交易。
 // ============================================================
-
-const TOKEN_SYMBOLS = Object.keys(REF_TESTNET_TOKENS) as [string, ...string[]]
 
 async function recordDefiTask(
   chainKey: string,
@@ -49,6 +47,7 @@ function txUrl(chainKey: string, hash: string): string {
 
 /** 只读仓位查询 */
 function makeGetPosition(chainKey: string, tokenId: number) {
+  const TOKEN_SYMBOLS = Object.keys(refTokens(chainKey)) as [string, ...string[]]
   return createTool({
     id: 'get_position',
     description: '查询 Agent 热钱包在 Burrow 上的借贷仓位(存款/抵押/借款/健康因子),只读不产生交易',
@@ -63,7 +62,7 @@ function makeGetPosition(chainKey: string, tokenId: number) {
             ? '无'
             : list
                 .map(async (a) => {
-                  const sym = Object.values(REF_TESTNET_TOKENS).find((t) => t.contractId === a.token_id)?.symbol ?? a.token_id
+                  const sym = Object.values(refTokens(chainKey)).find((t) => t.contractId === a.token_id)?.symbol ?? a.token_id
                   const human = a.balance ? await burrowToHuman(chainKey, sym, a.balance).catch(() => a.balance) : '?'
                   return `${sym} ${human}`
                 })
@@ -93,6 +92,7 @@ function makeTxTool(opts: {
   paramsOf: (token: string, amountHuman: string) => Record<string, string>
   reasonOf: (ctx: { reason?: string }) => string
 }) {
+  const TOKEN_SYMBOLS = Object.keys(refTokens(opts.chainKey)) as [string, ...string[]]
   return createTool({
     id: opts.id,
     description: opts.description,

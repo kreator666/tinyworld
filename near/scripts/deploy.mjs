@@ -20,7 +20,10 @@ const MIGRATE = process.argv.includes("--migrate"); // 结构变更升级:部署
 const NETWORK_ID = MAINNET ? "mainnet" : "testnet";
 const NODE_URL = MAINNET ? "https://rpc.mainnet.fastnear.com" : "https://rpc.testnet.fastnear.com"; // rpc.*.near.org 官方端点已弃用/不稳
 const FAUCET_URL = "https://helper.testnet.near.org/account"; // 仅测试网
-const WASM_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "target", "wasm32-unknown-unknown", "release", "tinyworld_near.wasm");
+// 优先用 wasm-opt 压缩产物(-Oz,体积约为原始 wasm 的 45%;NEAR 存储费与字节数成正比)
+const RAW_WASM = join(dirname(fileURLToPath(import.meta.url)), "..", "target", "wasm32-unknown-unknown", "release", "tinyworld_near.wasm");
+const OPT_WASM = join(dirname(fileURLToPath(import.meta.url)), "..", "target", "wasm32-unknown-unknown", "release", "tinyworld_near.opt.wasm");
+const WASM_PATH = existsSync(OPT_WASM) ? OPT_WASM : RAW_WASM;
 
 const credDir = join(homedir(), ".near-credentials");
 const credPath = join(credDir, `${ACCOUNT_ID}.json`);
@@ -104,6 +107,17 @@ async function main() {
     ],
   });
   console.log("deployed + initialized (new)");
+
+  if (MAINNET) {
+    // 主网定价:前 100 个免费,之后 0.05 NEAR(测试网默认的 0.5/1 NEAR 主网不可用)
+    const FEE = 5n * 10n ** 22n; // 0.05 NEAR
+    await account.functionCall({
+      contractId: ACCOUNT_ID, methodName: "set_tier_fees",
+      args: { tier1_fee: "0", tier1_end: "100", tier2_fee: FEE.toString(), tier2_end: "1000000", tier3_fee: FEE.toString() },
+      gas: 30n * 10n ** 12n, attachedDeposit: 0n,
+    });
+    console.log("mainnet pricing set (first 100 free, then 0.05 NEAR)");
+  }
 
   // ---- 冒烟 ----
   const call = (method, args, deposit = 0n) =>
