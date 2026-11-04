@@ -253,6 +253,7 @@ export const config = {
   agentSolanaKey: env('AGENT_SOLANA_PRIVATE_KEY', ''),
   agentNearKey: env('AGENT_NEAR_PRIVATE_KEY', ''), // ed25519:... 私钥;账户 = AGENT_NEAR_ACCOUNT_ID 或公钥隐式地址
   agentNearAccountId: env('AGENT_NEAR_ACCOUNT_ID', ''),
+  fastnearApiKey: env('FASTNEAR_API_KEY', ''), // NEAR RPC 中继的 fastnear 认证(Authorization: Bearer),提高免费档限额
   // 价格源 URL(可用 env 覆盖;策略引擎熔断验证时故意改错)
   priceCoingeckoUrl: env('PRICE_COINGECKO_URL', 'https://api.coingecko.com/api/v3/simple/price?ids=avalanche-2&vs_currencies=usd'),
   priceGateUrl: env('PRICE_GATE_URL', 'https://api.gateio.ws/api/v4/spot/tickers?currency_pair=AVAX_USDT'),

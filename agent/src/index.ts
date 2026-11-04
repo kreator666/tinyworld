@@ -127,14 +127,18 @@ app.post('/near-rpc/:networkId', async (c) => {
     }
   }
   const payload = JSON.stringify(body)
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   let lastErr: unknown = null
   for (const target of targets) {
     // 429 多为每秒级限流:同端点退避重试一次再换下一个
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
+        const authHeaders = target.includes('fastnear.com') && config.fastnearApiKey
+          ? { ...headers, Authorization: `Bearer ${config.fastnearApiKey}` }
+          : headers
         const res = await fetch(target, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: authHeaders,
           body: payload,
           signal: AbortSignal.timeout(20_000),
         })
