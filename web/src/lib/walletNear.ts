@@ -211,10 +211,21 @@ export function suppressMeteorExtension(on: boolean): void {
 /** 按钱包 id 直连登录(不弹 selector 列表);forceWeb 仅 Meteor 使用 */
 export async function connectNearWalletById(walletId: string, forceWeb = false): Promise<NearConnection> {
   const selector = await ensureSelector()
-  const restored = selector.store.getState().accounts[0]?.accountId
-  if (restored) {
+  const state = selector.store.getState()
+  const restored = state.accounts[0]?.accountId
+  // 复用会话的前提是钱包也匹配;否则(残留的其他钱包会话,如早前 Meteor 测试网登录)先签出再连,
+  // 否则后续 signAndSendTransactions 会走到旧钱包的签名路径报 "Failed to find matching key"
+  if (restored && state.selectedWalletId === walletId) {
     activeNearAccount = restored
     return { address: restored, providerName: walletId }
+  }
+  if (restored) {
+    try {
+      const old = await selector.wallet()
+      await old.signOut()
+    } catch {
+      // 旧会话签出失败不阻塞,继续以请求的钱包签入
+    }
   }
   if (forceWeb) suppressMeteorExtension(true)
   try {
