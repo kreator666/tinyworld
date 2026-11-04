@@ -95,6 +95,39 @@ async function reloadChainRegistry(): Promise<void> {
   refreshProtocolCache(await listChainProtocols())
 }
 
+// ------------------------------------------------------------
+// NEAR JSON-RPC 中继:浏览器/wallet-selector 直连公共 RPC 在用户网络环境下
+// 不稳定(GFW/DNS 污染表现为结构化 -32601/Exceeded providers),统一经服务器转发。
+// 服务器(阿里云)到 fastnear 实测稳定。前端 selector network.nodeUrl 与 chainNear
+// 的读取都指向本中继。
+// ------------------------------------------------------------
+const NEAR_RPC_TARGETS: Record<string, string> = {
+  mainnet: 'https://rpc.mainnet.fastnear.com',
+  testnet: 'https://rpc.testnet.fastnear.com',
+}
+
+app.post('/near-rpc/:networkId', async (c) => {
+  const target = NEAR_RPC_TARGETS[c.req.param('networkId')]
+  if (!target) return c.json({ error: 'unsupported network' }, 400)
+  const body = await c.req.json().catch(() => null)
+  if (!body || typeof body !== 'object') return c.json({ error: 'invalid jsonrpc body' }, 400)
+  try {
+    const res = await fetch(target, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const text = await res.text()
+    return c.newResponse(text, res.status as never, { 'Content-Type': 'application/json' })
+  } catch (err) {
+    return c.json(
+      { jsonrpc: '2.0', id: (body as { id?: unknown }).id ?? null, error: { code: -32000, message: `RPC relay failed: ${err instanceof Error ? err.message : String(err)}` } },
+      502,
+    )
+  }
+})
+
 // 各链合约地址 + 协议配置查询(前端 hydrate 用;config/protocols 原样透传)
 app.get('/chains', async (c) => {
   try {

@@ -2,7 +2,7 @@ import { keccak256, toBytes } from 'viem'
 import { chainParts, partByChainId, SLOT_TO_CATEGORY } from './contracts'
 import { getActiveChain } from '../store/chainConfigStore'
 import { getPersonaMirror, putPersonaMirror } from './agentApi'
-import { getActiveNearAccount, isValidNearAddress, nearFunctionCall, nearSignAndSend } from './walletNear'
+import { getActiveNearAccount, isValidNearAddress, nearFunctionCall, nearRelayUrl, nearSignAndSend } from './walletNear'
 import type { ChainIdentityState, ChainPartState, MintedAgent } from './chain'
 import type { Equipped } from '../types'
 
@@ -69,8 +69,8 @@ function decodeResult<T>(result: CallFunctionResult | undefined): T | null {
 }
 
 async function nearRpc<T>(method: string, params: unknown, id = 1): Promise<T> {
-  // 主端点失败时轮换备用端点(rpc.testnet.near.org 官方端点已宣布弃用,仅作兜底)
-  const endpoints = [getActiveChain().rpc, 'https://rpc.testnet.near.org']
+  // 首选 agent 中继(服务器转发,规避浏览器网络环境对公共 RPC 的干扰),失败再回落直连
+  const endpoints = [nearRelayUrl(), getActiveChain().rpc, 'https://rpc.testnet.near.org']
   let lastErr: unknown = null
   for (const url of endpoints) {
     try {

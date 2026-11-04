@@ -10,6 +10,7 @@ import {
 import { setupModal, type WalletSelectorModal } from '@near-wallet-selector/modal-ui'
 import '@near-wallet-selector/modal-ui/styles.css'
 import { getActiveChain } from '../store/chainConfigStore'
+import { agentApiBase } from './agentApi'
 
 // ============================================================
 // NEAR 钱包封装(wallet-selector:Meteor / Sender / Nightly / HERE)
@@ -90,6 +91,9 @@ export function getActiveNearAccount(): string | null {
 /** 断开/切链时清空模块级缓存(钱包 selector 的持久存储由 disconnectNearWallet 清除) */
 export function clearActiveNear() {
   activeNearAccount = null
+  selectorPromise = null
+  modal = null
+  selectorChainKey = null
   try {
     localStorage.removeItem(ACCOUNT_MIRROR_KEY)
   } catch {
@@ -97,24 +101,38 @@ export function clearActiveNear() {
   }
 }
 
-/** 构建 selector(幂等);network 跟随激活链配置(合约地址 = identity 字段) */
+/**
+ * NEAR JSON-RPC 中继地址(agent /near-rpc/:network):浏览器直连公共 RPC 在用户网络
+ * 环境下不稳定(经服务器转发,阿里云→fastnear 实测稳定)。钱包 selector 与链上读取统一走这里。
+ */
+export function nearRelayUrl(): string {
+  const base = agentApiBase() || window.location.origin
+  const net = getActiveChain().chainId === 398 ? 'testnet' : 'mainnet'
+  return `${base}/near-rpc/${net}`
+}
+
+/** 构建 selector(幂等);network 跟随激活链配置(合约地址 = identity 字段)。
+ *  切换 NEAR 链(testnet↔mainnet)时重建:中继地址与访问密钥合约都随链变化。 */
+let selectorChainKey: string | null = null
 async function ensureSelector(): Promise<WalletSelector> {
-  if (selectorPromise) return selectorPromise
   const chain = getActiveChain()
+  if (selectorPromise && selectorChainKey === chain.key) return selectorPromise
+  selectorChainKey = chain.key
   selectorPromise = setupWalletSelector({
     network: {
-      networkId: 'testnet',
-      nodeUrl: chain.rpc,
+      networkId: chain.chainId === 398 ? 'testnet' : 'mainnet',
+      nodeUrl: nearRelayUrl(),
     } as Network,
     // v10 参数名:签约时给钱包创建 FunctionCall 访问密钥(空 methodNames = 不限制方法)
     createAccessKeyFor: { contractId: chain.identity, methodNames: [] },
     modules: await loadNearWalletModules(),
   }).catch((err) => {
     selectorPromise = null
+    selectorChainKey = null
     throw err
   })
   const selector = await selectorPromise
-  modal ??= setupModal(selector, { contractId: chain.identity })
+  modal = setupModal(selector, { contractId: chain.identity })
   // 全局订阅:钱包内切换/断开账户时同步缓存(登录态一致性由 App.tsx 强制校验)
   selector.store.observable.subscribe((state) => {
     const accountId = state.accounts[0]?.accountId ?? null
