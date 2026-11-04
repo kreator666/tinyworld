@@ -195,6 +195,8 @@ const CHAINS: Record<string, ChainConfig> = {
     rpc: 'https://rpc.testnet.fastnear.com',
     rpcFallbacks: [],
     explorer: 'https://testnet.nearblocks.io',
+    nativePriceId: 'near', // defi-quote 行情技能:CoinGecko id
+    nativeGatePair: 'NEAR_USDT', // Gate.io 回退行情源
     near: {
       refExchange: 'exchange.ref-dev.testnet', // Ref Finance v2 AMM
       burrow: 'contract.burrow.testnet', // Burrow 借贷
@@ -211,6 +213,8 @@ const CHAINS: Record<string, ChainConfig> = {
     rpc: 'https://rpc.mainnet.fastnear.com',
     rpcFallbacks: [],
     explorer: 'https://nearblocks.io',
+    nativePriceId: 'near',
+    nativeGatePair: 'NEAR_USDT',
     near: {
       refExchange: 'v2.ref-finance.near', // Ref Finance v2 AMM(8799 池,2026-11 实测)
     },

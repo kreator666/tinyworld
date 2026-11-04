@@ -12,7 +12,8 @@ import type { SkillDef } from '../../../src/skills/registry'
 
 /** get_native_price 闭包绑定 chainKey:查该链原生币的美元价格 */
 function makeGetNativePrice(chainKey: string) {
-  const symbol = getChainContext(chainKey).cfg.defi?.nativeSymbol ?? 'SOL'
+  const { family, cfg } = getChainContext(chainKey)
+  const symbol = cfg.defi?.nativeSymbol ?? (family === 'near' ? 'NEAR' : 'SOL')
   return createTool({
     id: 'get_native_price',
     description: `查询 ${symbol} 当前的美元价格(免费行情 API)`,

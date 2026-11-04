@@ -77,7 +77,7 @@ export function buildInstructions(
   const chainName = cfg.name
   const isEvm = getChainContext(chainKey).family === 'evm'
   const isNear = getChainContext(chainKey).family === 'near'
-  const nativeSymbol = cfg.defi?.nativeSymbol ?? 'SOL'
+  const nativeSymbol = cfg.defi?.nativeSymbol ?? (isNear ? 'NEAR' : 'SOL')
   const hasSkill = (id: string) => installed.some((s) => s.id === id)
   const topics = profile.topics.length > 0 ? profile.topics.join('、') : '不限'
   const ownerLine = ctx
