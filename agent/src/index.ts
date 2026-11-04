@@ -98,35 +98,49 @@ async function reloadChainRegistry(): Promise<void> {
 // ------------------------------------------------------------
 // NEAR JSON-RPC 中继:浏览器/wallet-selector 直连公共 RPC 在用户网络环境下
 // 不稳定(GFW/DNS 污染表现为结构化 -32601/Exceeded providers),统一经服务器转发。
-// 服务器(阿里云)到 fastnear 实测稳定。前端 selector network.nodeUrl 与 chainNear
-// 的读取都指向本中继。
+// 所有用户流量集中单一服务器 IP,fastnear 免费档会 429 限流——按序故障转移:
+// fastnear 优先,官方 near.org 兜底(从阿里云实测可达)。
 // ------------------------------------------------------------
-const NEAR_RPC_TARGETS: Record<string, string> = {
-  mainnet: 'https://rpc.mainnet.fastnear.com',
-  testnet: 'https://rpc.testnet.fastnear.com',
+const NEAR_RPC_TARGETS: Record<string, string[]> = {
+  mainnet: ['https://rpc.mainnet.fastnear.com', 'https://rpc.mainnet.near.org'],
+  testnet: ['https://rpc.testnet.fastnear.com', 'https://rpc.testnet.near.org'],
 }
 
 app.post('/near-rpc/:networkId', async (c) => {
-  const target = NEAR_RPC_TARGETS[c.req.param('networkId')]
-  if (!target) return c.json({ error: 'unsupported network' }, 400)
+  const targets = NEAR_RPC_TARGETS[c.req.param('networkId')]
+  if (!targets) return c.json({ error: 'unsupported network' }, 400)
   const body = await c.req.json().catch(() => null)
   if (!body || typeof body !== 'object') return c.json({ error: 'invalid jsonrpc body' }, 400)
-  try {
-    const res = await fetch(target, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(20_000),
-    })
-    const text = await res.text()
-    return c.newResponse(text, res.status as never, { 'Content-Type': 'application/json' })
-  } catch (err) {
-    return c.json(
-      { jsonrpc: '2.0', id: (body as { id?: unknown }).id ?? null, error: { code: -32000, message: `RPC relay failed: ${err instanceof Error ? err.message : String(err)}` } },
-      502,
-    )
+  const payload = JSON.stringify(body)
+  let lastErr: unknown = null
+  for (const target of targets) {
+    try {
+      const res = await fetch(target, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        signal: AbortSignal.timeout(20_000),
+      })
+      // 限流(429)切换下一个端点;其余状态原样透传(执行错误不重试,防止广播类请求双发)
+      if (res.status === 429) {
+        lastErr = new Error(`${target} 429 rate limited`)
+        continue
+      }
+      const text = await res.text()
+      return c.newResponse(text, res.status as never, { 'Content-Type': 'application/json' })
+    } catch (err) {
+      lastErr = err
+    }
   }
+  return c.json(
+    { jsonrpc: '2.0', id: (body as { id?: unknown }).id ?? null, error: { code: -32000, message: `RPC relay failed: ${errMsg(lastErr)}` } },
+    502,
+  )
 })
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
 
 // 各链合约地址 + 协议配置查询(前端 hydrate 用;config/protocols 原样透传)
 app.get('/chains', async (c) => {
