@@ -57,6 +57,8 @@ import { toFunctionSelector, type Hex as ViemHex } from 'viem'
 import { SOL_MINT, usdcMintOf } from './chain/jupiter'
 import { solanaConnection, type FailoverConnection } from './chain/personaSolana'
 import { EXEC_CHAIN_KEY, MAINNET_EXPLORER, MAINNET_USDC_MINT, mainnetConnection, mainnetTxUrl } from './chain/solanaExec'
+import { nearWaitTxFinal, nearFtTransfersOf } from './chain/nearWrite'
+import { refToken, refTokenDecimals } from './chain/ref'
 import { executeProposal, recordDefiTask, describeSwapResult, tokenSymbolOf } from '../runtime-skills/builtins/defi-swap'
 import { executeLendingProposal } from '../runtime-skills/builtins/defi-lending'
 import { executeStakingProposal } from '../runtime-skills/builtins/defi-staking'
@@ -1019,8 +1021,8 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
     return c.json({ error: 'txHash 不能为空' }, 400)
   }
   const action = body?.proposal?.action
-  if (!action || !['swap', 'supply', 'withdraw', 'staking', 'gmx_order'].includes(action)) {
-    return c.json({ error: 'proposal.action 必须是 swap / supply / withdraw / staking / gmx_order' }, 400)
+  if (!action || !['swap', 'supply', 'withdraw', 'staking', 'gmx_order', 'borrow', 'repay'].includes(action)) {
+    return c.json({ error: 'proposal.action 必须是 swap / supply / withdraw / staking / gmx_order / borrow / repay' }, 400)
   }
   const proposal = body.proposal as Proposal
   try {
@@ -1030,6 +1032,10 @@ app.post('/agents/:tokenId/sign-confirm', authRequired, async (c) => {
     // 注意必须 await:confirmSolanaSign 的异步异常要能被下方 catch 兜住,不能逃逸成裸 500
     if (proposal.protocol === 'jupiter' || proposal.protocol === 'meteora') {
       return await confirmSolanaSign(c, chainKey, tokenId, body.txHash, proposal, body.conversationId)
+    }
+    // NEAR 家族(Ref Finance / Burrow):前端钱包已签名自广播('tx' RPC 轮询最终性 + 转账事件解析输出)
+    if (proposal.protocol === 'ref-finance' || proposal.protocol === 'burrow') {
+      return await confirmNearSign(c, chainKey, tokenId, body.txHash, proposal, body.conversationId)
     }
     const receipt = await waitForTxReceipt(chainKey, body.txHash as Hex)
     if (receipt.status !== 'success') {
@@ -1186,6 +1192,104 @@ async function confirmSolanaSign(
   } catch (err) {
     // 落库/追加消息失败不掩盖已确认事实
     return c.json({ ok: true, confirmed: true, amountOut: amountOut?.toString() ?? null, notice: noticeOf(amountOut, true), explorer: txUrl })
+  }
+}
+
+/** NEAR 家族(Ref Finance / Burrow)的 sign-confirm:
+ * 'tx' RPC 轮询最终性(主备轮换,~30s 上限)→ swap 解析转账事件实际到账(NEP-141 EVENT_JSON 或
+ * fakes 老合约的 Transfer 纯文本日志)→ 记 tasks 审计表 → 追加 assistant 消息。
+ * confirm 阶段已无法取交易前余额快照,故输出用事件解析而非余额差值 */
+async function confirmNearSign(
+  c: Context,
+  chainKey: string,
+  tokenId: number,
+  txHash: string,
+  proposal: Proposal,
+  conversationId?: string,
+) {
+  const params = proposal.params
+  const owner = params.owner ?? ''
+  const txUrl = `${getChainContext(chainKey).cfg.explorer}/txns/${txHash}` // NEAR 浏览器(nearblocks)路径为 /txns/
+  const action = proposal.action
+  const tokenSymbol = (params.tokenIn ?? '').toUpperCase()
+  const amountHuman = async (): Promise<string> => {
+    // NEAR 提案的 amountIn 为最小单位字符串(withdraw 'all' 除外),展示时换算回人类单位
+    const raw = params.amountIn ?? ''
+    if (!raw || raw === 'all' || /^\d+(\.\d+)?$/.test(raw)) return raw || '未知'
+    try {
+      const dec = await refTokenDecimals(chainKey, refToken(chainKey, tokenSymbol).contractId)
+      return (Number(raw) / 10 ** dec).toFixed(6)
+    } catch {
+      return raw
+    }
+  }
+  const opName = action === 'swap' ? '兑换' : action === 'supply' ? '存款' : action === 'borrow' ? '借款' : action === 'repay' ? '还款' : '取回'
+  const record = (amountOut: string, status: 'done' | 'failed' = 'done') =>
+    recordDefiTask(chainKey, tokenId, proposal, { txHash, amountOut, usdValue: proposal.estimatedValueUsd ?? null }, status)
+
+  const noticeOf = (amountIn: string, amountOutHuman: string | null, confirmed: boolean, reverted: boolean): string => {
+    const tokenOut = action === 'swap' ? ` → ${(params.tokenOut ?? '').toUpperCase()}` : ''
+    if (reverted) {
+      const back =
+        action === 'supply' || action === 'swap'
+          ? '资金还在你的钱包里,没有动'
+          : action === 'borrow'
+            ? '没有产生新的借款'
+            : action === 'repay'
+              ? '借款没有减少'
+              : '存款还在 Burrow 里'
+      return `刚才那笔${opName}没能成交:${amountIn} ${tokenSymbol}${tokenOut} 的交易在链上执行失败(revert),${back}。要我重新组装一笔吗?`
+    }
+    if (!confirmed) return `你的${opName}交易已广播,链上还没确认到账,我把哈希记下了,稍后帮你盯一下。`
+    if (action === 'swap') {
+      if (amountOutHuman == null) {
+        return `已确认你的兑换成交(${amountIn} ${tokenSymbol} → ${(params.tokenOut ?? '').toUpperCase()}),但实际输出解析失败,明细以浏览器为准:${txUrl}`
+      }
+      return `已确认你的兑换成交:${amountIn} ${tokenSymbol} 换得 ${amountOutHuman} ${(params.tokenOut ?? '').toUpperCase()}。交易哈希 ${txHash},浏览器明细:${txUrl}`
+    }
+    if (action === 'supply') return `已确认你的存款成交:${amountIn} ${tokenSymbol} 已存入 Burrow,利息持续累积,随时可取回。`
+    if (action === 'borrow') return `已确认借款成交:已借出 ${amountIn} ${tokenSymbol} 到你的钱包,留意健康因子,需要还款时叫我。`
+    if (action === 'repay') return `已确认还款成交:${amountIn} ${tokenSymbol} 借款已偿还(从 Burrow 存款余额中扣除)。`
+    return `已确认取回成交:${amountIn} ${tokenSymbol} 已回到你的钱包。`
+  }
+
+  try {
+    // 'tx' RPC 轮询至 SUCCESS/FAILURE;超时抛错 → 下方按待确认处理(与 EVM/Solana 一致)
+    const exec = await nearWaitTxFinal(chainKey, txHash, owner)
+    if ('Failure' in (exec.status ?? {})) {
+      await record('0', 'failed')
+      const notice = noticeOf(await amountHuman(), null, false, true)
+      if (conversationId) await appendAssistantMessage(chainKey, conversationId, notice)
+      return c.json({ ok: true, confirmed: false, reverted: true, notice })
+    }
+    // 仅 swap 解析实际输出:取转账事件(NEP-141 EVENT_JSON / fakes Transfer 日志)中 owner 的入账合计(成功路径无退款,入账即产出)
+    let amountOutHuman: string | null = null
+    if (action === 'swap') {
+      try {
+        const transfers = nearFtTransfersOf(exec, owner)
+        if (transfers && transfers.in > 0n) {
+          const dec = await refTokenDecimals(chainKey, refToken(chainKey, (params.tokenOut ?? '').toUpperCase()).contractId)
+          amountOutHuman = (Number(transfers.in) / 10 ** dec).toFixed(6)
+        }
+      } catch (err) {
+        console.warn('[sign-confirm] NEAR 输出解析失败:', err instanceof Error ? err.message : String(err))
+      }
+    }
+    await record(amountOutHuman ?? '0')
+    const notice = noticeOf(await amountHuman(), amountOutHuman, true, false)
+    if (conversationId) await appendAssistantMessage(chainKey, conversationId, notice)
+    return c.json({ ok: true, confirmed: true, amountOut: amountOutHuman, notice, explorer: txUrl })
+  } catch (err) {
+    // 确认超时/RPC 失败:不阻塞前端,记一笔待确认(金额 0),让 Agent 稍后自查
+    console.warn('[sign-confirm] NEAR 确认失败,按待确认处理:', err instanceof Error ? err.message : String(err))
+    try {
+      await record('0')
+      const notice = noticeOf(await amountHuman(), null, false, false)
+      if (conversationId) await appendAssistantMessage(chainKey, conversationId, notice)
+      return c.json({ ok: true, confirmed: false, amountOut: null, notice })
+    } catch (err2) {
+      return c.json({ ok: true, confirmed: false, amountOut: null, notice: '交易已广播,结果核实遇到故障,签名已记录,稍后帮你确认' })
+    }
   }
 }
 

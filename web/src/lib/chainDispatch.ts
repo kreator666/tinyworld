@@ -5,14 +5,14 @@ import * as evm from './chain'
 import * as sol from './chainSolana'
 import * as near from './chainNear'
 import { getActiveChain } from '../store/chainConfigStore'
-import type { EvmUnsignedTx, SolanaUnsignedTx, UnsignedTx } from './agentApi'
+import type { EvmUnsignedTx, NearUnsignedTx, SolanaUnsignedTx, UnsignedTx } from './agentApi'
 import { broadcastSignedTxs, fetchSolanaBlockhash } from './agentApi'
 import { useAppStore } from '../store/appStore'
 import type { WalletLogin } from '../types'
 import type { ChainContracts } from './contracts'
 import type { ChainIdentityState, ChainPartAsset, ChainPartState, MintedAgent } from './chain'
 import { isValidSolanaAddress } from './chainSolana'
-import { isValidNearAddress } from './walletNear'
+import { isValidNearAddress, getActiveNearAccount, nearFunctionCall, nearSignAndSend } from './walletNear'
 import {
   SolanaWalletError,
   getActiveSolanaAddress,
@@ -204,6 +204,10 @@ function isSolanaUnsignedTx(item: UnsignedTx): item is SolanaUnsignedTx {
   return 'kind' in item && item.kind === 'solana'
 }
 
+function isNearUnsignedTx(item: UnsignedTx): item is NearUnsignedTx {
+  return 'kind' in item && item.kind === 'near'
+}
+
 function deserializeSolanaTx(txBase64: string): Transaction | VersionedTransaction {
   const bytes = new Uint8Array(Buffer.from(txBase64, 'base64'))
   try {
@@ -267,12 +271,44 @@ async function sendSolanaTransactions(unsignedTxs: UnsignedTx[], tokenId: number
   return r.txHashes
 }
 
+/**
+ * NEAR 用户钱包签名模式:
+ * Agent 组装的是 NearUnsignedTx(receiverId + FunctionCall 动作),前端逐笔交 wallet-selector
+ * signAndSendTransactions 签名自广播;交易由 Agent 按链上人格 owner 组装,签名账户必须与
+ * 当前连接钱包一致。网页重定向钱包签名后整页跳转、无法回传结果(返回 void),报中文错误引导用扩展钱包。
+ */
+async function sendNearTransactions(unsignedTxs: UnsignedTx[], owner: string): Promise<string[]> {
+  const walletAddr = getActiveNearAccount()
+  if (!walletAddr) throw new Error('请先连接 NEAR 钱包')
+  if (walletAddr !== owner) {
+    throw new Error(`这笔交易属于账户 ${owner},与当前连接的钱包 ${walletAddr} 不一致,请在钱包里切回该账户后再试`)
+  }
+  const hashes: string[] = []
+  for (const item of unsignedTxs) {
+    if (!isNearUnsignedTx(item)) throw new Error('待签名交易不是 NEAR 格式')
+    try {
+      const hash = await nearSignAndSend(
+        item.actions.map((a) => nearFunctionCall(a.methodName, a.args, a.gas ?? '100000000000000', a.deposit ?? '0')),
+        item.receiverId,
+      )
+      hashes.push(hash)
+    } catch (err) {
+      // 网页版重定向钱包(如 Meteor Web)返回 void,表现为"未返回哈希",引导改用扩展钱包
+      if (err instanceof Error && err.message === 'NEAR 交易未返回哈希') {
+        throw new Error('网页版钱包暂不支持签名交易,请使用扩展钱包')
+      }
+      throw err
+    }
+  }
+  return hashes
+}
+
 export async function sendTransactions(
   owner: string,
   unsignedTxs: UnsignedTx[],
   opts?: { tokenId?: number; protocol?: string },
 ): Promise<string[]> {
-  if (isNear()) throw new Error('NEAR 链暂不支持 Agent 组装的交易,请通过页面直接操作')
+  if (isNear()) return sendNearTransactions(unsignedTxs, owner)
   if (isSolana()) {
     if (!opts?.tokenId) throw new Error('Solana 交易发送缺少 tokenId')
     return sendSolanaTransactions(unsignedTxs, opts.tokenId, opts.protocol)

@@ -2,7 +2,7 @@
   "id": "defi-swap-ref",
   "name": "NEAR 兑换",
   "version": "1.0.0",
-  "description": "经 Ref Finance 在 NEAR 上兑换 WNEAR↔USDC/USDT/DAI/WETH。hot_wallet 模式:Agent NEAR 热钱包签名执行(需 AGENT_NEAR_PRIVATE_KEY);user_wallet 暂不支持",
+  "description": "经 Ref Finance 在 NEAR 上兑换 WNEAR↔USDC/USDT/DAI/WETH。user_wallet 模式:Agent 组装交易、主人钱包签名(默认);hot_wallet 模式:Agent NEAR 热钱包签名执行(需 AGENT_NEAR_PRIVATE_KEY)",
   "tools": [
     "propose_swap"
   ],

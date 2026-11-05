@@ -30,7 +30,7 @@ async function buildGmxCollateralWhitelist(chainKey: string): Promise<string[]> 
 
 export type ExecutionMode = 'hot_wallet' | 'user_wallet'
 
-export type ProposalAction = 'swap' | 'supply' | 'withdraw' | 'staking' | 'unstake' | 'claim_stake' | 'gmx_order'
+export type ProposalAction = 'swap' | 'supply' | 'withdraw' | 'staking' | 'unstake' | 'claim_stake' | 'gmx_order' | 'borrow' | 'repay'
 
 /** 交易提案(defi-swap / defi-lending 生成,审批放行后按 proposal.params 原样执行) */
 export interface Proposal {

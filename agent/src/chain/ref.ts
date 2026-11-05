@@ -1,12 +1,13 @@
 import { getChainContext } from './registry'
-import { nearAgentAccountId, nearCall, nearNativeBalance, nearView, ensureStorageDeposit } from './nearWrite'
+import { nearAgentAccountId, nearCall, nearNativeBalance, nearView, ensureStorageDeposit, nearStorageBalance, NEAR_TX_GAS, DEFAULT_STORAGE_DEPOSIT, type NearUnsignedTx } from './nearWrite'
 
 // ============================================================
 // Ref Finance 兑换(NEAR 家族,defi-swap-ref 技能用;testnet 合约实测存活,见
-// knowledge/near-defi-integration-plan.md)。仅 hot_wallet 模式:Agent 热钱包直接签名执行。
+// knowledge/near-defi-integration-plan.md)。两种模式:
+// - hot_wallet:refSwap 热钱包直发;user_wallet:buildRefSwapTxs 只组装交易,主人钱包逐笔签名
 // 报价:get_pools 选池(两币都在的简单池,取首个匹配)+ get_return;
 // 兑换:NEP-141 ft_transfer_call(msg 带 swap 指令),wNEAR 不足时先 near_deposit 包裹。
-// 前置条件:热钱包在 exchange 与 wrap 合约的 NEP-145 storage deposit(ensureStorageDeposit 幂等注册)。
+// 前置条件:交易方在 exchange 与 wrap 合约的 NEP-145 storage deposit(未注册时需先付可退押金)。
 // ============================================================
 
 /** testnet fakes 代币表(ref-sdk 内置清单) */
@@ -171,4 +172,73 @@ export async function refSwap(
   })
   const txHash = await nearCall(chainKey, tin.contractId, 'ft_transfer_call', { receiver_id: exchange, amount: amountInAtomic, msg }, 1n)
   return { txHash, amountOut }
+}
+
+/**
+ * 组装 Ref 兑换交易(user_wallet 模式;只组装不发交易):
+ * 与 refSwap 同款的报价/滑点/storage 预检/wNEAR 包裹判断,产出 1~3 笔 NearUnsignedTx,
+ * 由主人钱包逐笔签名。返回交易与报价(技能层组 proposal/估值用)。
+ */
+export async function buildRefSwapTxs(
+  chainKey: string,
+  userAccountId: string,
+  tokenInSymbol: string,
+  tokenOutSymbol: string,
+  amountHuman: string,
+  slippageBps = 100,
+): Promise<{ txs: NearUnsignedTx[]; poolId: number; amountOut: string }> {
+  const exchange = refExchange(chainKey)
+  const tin = refToken(chainKey, tokenInSymbol)
+  const tout = refToken(chainKey, tokenOutSymbol)
+  if (tin.contractId === tout.contractId) throw new Error('兑入兑出不能是同一代币')
+  const wrap = refToken(chainKey, 'WNEAR').contractId
+  const decimalsIn = await refTokenDecimals(chainKey, tin.contractId)
+  const amountAtomic = BigInt(Math.round(parseFloat(amountHuman) * 10 ** decimalsIn)).toString()
+  if (BigInt(amountAtomic) <= 0n) throw new Error('amountIn 必须大于 0')
+
+  // 1~3 笔:storage_deposit(按需) → near_deposit(按需) → ft_transfer_call
+  const txs: NearUnsignedTx[] = []
+  // 1) storage 预检:exchange 必须;兑出代币合约的接收方必须;wNEAR 参与时 wrap 也要
+  //    (与 ensureStorageDeposit 同判据:storage_balance_of 无记录或 total=0 才需要注册;兑出代币即 wrap 时去重)
+  const storageTargets = [...new Set([exchange, tout.contractId, ...(tin.contractId === wrap || tout.contractId === wrap ? [wrap] : [])])]
+  for (const contract of storageTargets) {
+    const bal = await nearStorageBalance(chainKey, contract, userAccountId)
+    if (bal && BigInt(bal.total) > 0n) continue
+    txs.push({
+      kind: 'near',
+      receiverId: contract,
+      actions: [{ methodName: 'storage_deposit', args: {}, gas: NEAR_TX_GAS, deposit: DEFAULT_STORAGE_DEPOSIT }],
+      description: `在 ${contract} 注册存储押金(0.25N,可退还)`,
+    })
+  }
+
+  // 2) wNEAR 余额不足则先包裹原生 NEAR(差额)
+  if (tin.contractId === wrap) {
+    const bal = BigInt(await refFtBalance(chainKey, tin.contractId, userAccountId))
+    if (bal < BigInt(amountAtomic)) {
+      const need = BigInt(amountAtomic) - bal
+      txs.push({
+        kind: 'near',
+        receiverId: wrap,
+        actions: [{ methodName: 'near_deposit', args: {}, gas: NEAR_TX_GAS, deposit: need.toString() }],
+        description: `包裹 ${(Number(need) / 1e24).toFixed(4)} NEAR 为 wNEAR(兑换支付需要)`,
+      })
+    }
+  }
+
+  // 3) 报价 + 滑点保护,ft_transfer_call 一笔完成兑换
+  const { poolId, amountOut } = await refQuote(chainKey, tokenInSymbol, tokenOutSymbol, amountAtomic)
+  const minAmountOut = (BigInt(amountOut) * BigInt(10_000 - slippageBps)) / 10_000n
+  if (minAmountOut <= 0n) throw new Error('滑点后最小产出为 0,拒绝交易')
+  const msg = JSON.stringify({
+    force: 0,
+    actions: [{ pool_id: poolId, token_in: tin.contractId, token_out: tout.contractId, min_amount_out: minAmountOut.toString() }],
+  })
+  txs.push({
+    kind: 'near',
+    receiverId: tin.contractId,
+    actions: [{ methodName: 'ft_transfer_call', args: { receiver_id: exchange, amount: amountAtomic, msg }, gas: NEAR_TX_GAS, deposit: '1' }],
+    description: `经 Ref Finance 用 ${amountHuman} ${tin.symbol} 兑换 ${tout.symbol}(滑点 ≤${slippageBps / 100}%)`,
+  })
+  return { txs, poolId, amountOut }
 }

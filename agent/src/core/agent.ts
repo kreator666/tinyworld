@@ -7,6 +7,7 @@ import { loadPersona, type LoadedPersona, getWalletAssets } from '../chain/perso
 import { getChainContext, defaultChainKey } from '../chain/registry'
 import type { UnsignedTx } from '../chain/defi'
 import type { SolanaUnsignedTx } from '../chain/solanaExec'
+import type { NearUnsignedTx } from '../chain/nearWrite'
 import type { Proposal, ProposalAction } from '../policy/engine'
 import { retrieveContext, writeEpisodic } from './memory'
 import { buildShareableProfile } from './ownerFacts'
@@ -33,8 +34,8 @@ export type ChatMessage =
 
 export interface SignTxAction {
   type: 'sign_tx'
-  /** EVM 未签名交易(0x hex)或 Solana 未签名交易(base64,kind='solana'),由前端按链族分别处理 */
-  unsignedTxs: (UnsignedTx | SolanaUnsignedTx)[]
+  /** EVM 未签名交易(0x hex)、Solana 未签名交易(base64,kind='solana')或 NEAR 未签名 FunctionCall(kind='near'),由前端按链族分别处理 */
+  unsignedTxs: (UnsignedTx | SolanaUnsignedTx | NearUnsignedTx)[]
   note?: string
   /** 用户钱包签名模式:Agent 组装交易时对应的提案,签名完成后回传后端记 tasks 表(限额/审计) */
   proposal?: {
@@ -140,7 +141,7 @@ export function buildInstructions(
     if (isNear && hasSkill('defi-swap-ref')) {
       ownerToolsLines.push(
         `当主人要求进行兑换(如"用 0.1 WNEAR 换 USDC"、"把 USDC 换回 WNEAR")时,必须调用 propose_swap 工具;支持 WNEAR↔USDC/USDT/DAI/WETH,由 Ref Finance AMM 路由。调用示例:propose_swap({tokenIn:"WNEAR",tokenOut:"USDC",amountIn:"0.1",reason:"主人主动兑换"})。禁止不调用工具就直接回复"已组装"。`,
-        `NEAR 兑换仅支持 hot_wallet 模式(Agent NEAR 热钱包直接签名执行,需配置 AGENT_NEAR_PRIVATE_KEY);若当前设置是 user_wallet 模式,提示主人先在设置中切回 hot_wallet,不要假装执行。`,
+        `如果 propose_swap 返回需要钱包签名(verdict=sign),你要用口语告诉主人:"我已组装好交易,请点击下方【签名并发送】按钮,在钱包里完成签名;首次使用 Ref 需支付可退的存储押金。",不要只说"请签名"而不提按钮。`,
       )
     }
     if (isNear && hasSkill('defi-lending-burrow')) {
@@ -148,6 +149,7 @@ export function buildInstructions(
         `当主人要求把资金存入 Burrow 赚收益(如"存 10 USDC 吃利息"、"把 WNEAR 理财")时,必须调用 propose_supply 工具;支持 WNEAR/USDC/USDT/DAI/WETH;示例:propose_supply({token:"USDC",amount:"10",reason:"主人主动理财"})。`,
         `当主人要求抵押借款(如"借 5 USDT")时,必须调用 propose_borrow 工具(需已有存款抵押,健康因子不足会失败);偿还借款用 propose_repay,取回存款用 propose_withdraw(amount 传 "all" 表示全部取出)。`,
         `主人问借贷仓位/存款收益(如"我在 Burrow 存了多少"、"现在健康因子多少")时,调用 get_position 只读查询,把存款/借款/健康因子用口语报给主人。`,
+        `存取/借还也可能返回 verdict=sign(主人钱包签名模式);此时同样提醒主人点击下方【签名并发送】按钮,在钱包里完成签名;首次使用 Burrow 需支付可退的存储押金。`,
       )
     }
     if (!isEvm && !hasSkill('defi-swap-sol') && !hasSkill('defi-swap-meteora') && !hasSkill('defi-swap-ref') && !hasSkill('defi-lending-burrow')) {
@@ -361,7 +363,7 @@ export async function runAgentTurn(
       if (result?.verdict === 'sign' && Array.isArray(result.unsignedTxs)) {
         action = {
           type: 'sign_tx',
-          unsignedTxs: result.unsignedTxs as (UnsignedTx | SolanaUnsignedTx)[],
+          unsignedTxs: result.unsignedTxs as (UnsignedTx | SolanaUnsignedTx | NearUnsignedTx)[],
           note: result.note as string | undefined,
           proposal: result.proposal as SignTxAction['proposal'] | undefined,
         }

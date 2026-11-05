@@ -118,7 +118,15 @@ export interface SolanaUnsignedTx {
   description: string
 }
 
-export type UnsignedTx = EvmUnsignedTx | SolanaUnsignedTx
+/** NEAR 未签名交易(用户钱包签名模式;agent 经 Ref/Burrow 组装,前端逐笔交钱包 signAndSendTransactions) */
+export interface NearUnsignedTx {
+  kind: 'near'
+  receiverId: string // 交易接收合约(exchange/wrap/代币/burrow 等)
+  actions: Array<{ methodName: string; args: Record<string, unknown>; gas?: string; deposit?: string }>
+  description: string
+}
+
+export type UnsignedTx = EvmUnsignedTx | SolanaUnsignedTx | NearUnsignedTx
 
 export interface SignTxAction {
   type: 'sign_tx'

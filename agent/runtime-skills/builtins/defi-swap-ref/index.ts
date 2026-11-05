@@ -3,16 +3,20 @@ import { z } from 'zod'
 import { createTool } from '@mastra/core/tools'
 import { getDb } from '../../../src/db'
 import { getChainContext } from '../../../src/chain/registry'
-import { refTokens, refQuote, refSwap, refTokenDecimals } from '../../../src/chain/ref'
+import { loadPersona } from '../../../src/chain/persona'
+import { refTokens, refQuote, refSwap, refTokenDecimals, buildRefSwapTxs } from '../../../src/chain/ref'
 import { isNearWriteReady } from '../../../src/chain/nearWrite'
 import { getSwapMode } from '../../../src/core/settings'
+import { getNativePriceUsd } from '../../../src/core/price'
+import { setPendingSignAction, type SignTxAction } from '../../../src/core/agent'
 import type { SkillDef } from '../../../src/skills/registry'
 
 // ============================================================
 // 内置技能 defi-swap-ref:NEAR 家族兑换(WNEAR↔USDC/USDT/DAI/WETH),经 Ref Finance AMM。
-// 仅 hot_wallet 模式:Agent NEAR 热钱包(AGENT_NEAR_PRIVATE_KEY)直接签名广播;
-// user_wallet 模式暂不支持(NEAR 签名链路待接入,切换时会提示改回 hot_wallet)。
-// 前置:NEP-145 storage deposit 由 chain/ref.ts 幂等注册;wNEAR 不足自动 near_deposit 包裹。
+// 两种执行模式(与 EVM 侧对齐,读 Agent 设置的 swap_mode):
+// - user_wallet(默认):Agent 只组装交易(storage_deposit/near_deposit/ft_transfer_call 1~3 笔),
+//   由主人钱包逐笔签名;首次使用需付可退的 NEP-145 storage 押金(0.25N/笔)
+// - hot_wallet:Agent NEAR 热钱包(AGENT_NEAR_PRIVATE_KEY)直接签名广播
 // 测试网简化版:不走策略引擎与人工审批,每笔成交落 tasks 表审计(与 Solana 侧同表同 type)。
 // ============================================================
 
@@ -36,13 +40,29 @@ async function recordDefiTask(
   ])
 }
 
-/** propose_swap 闭包绑定 chainKey + tokenId:报价 → hot_wallet 执行 → 落审计 */
+/** 估值:WNEAR 按链原生币价,稳定币按 $1,其余(WETH 等)无可靠价给 null(与 EVM estimateValueUsd 同思路) */
+async function estimateRefValueUsd(chainKey: string, tokenSymbol: string, amountHuman: string): Promise<number | null> {
+  const amount = parseFloat(amountHuman)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+  if (['USDC', 'USDT', 'DAI'].includes(tokenSymbol)) return amount
+  if (tokenSymbol === 'WNEAR') {
+    try {
+      const { usd } = await getNativePriceUsd(chainKey)
+      return amount * usd
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/** propose_swap 闭包绑定 chainKey + tokenId:报价 → user_wallet 组装签名 / hot_wallet 执行 → 落审计 */
 function makeProposeSwap(chainKey: string, tokenId: number) {
   const TOKEN_SYMBOLS = Object.keys(refTokens(chainKey)) as [string, ...string[]]
   return createTool({
     id: 'propose_swap',
     description:
-      '发起一笔 NEAR 链上兑换(WNEAR↔USDC/USDT/DAI/WETH),由 Ref Finance AMM 路由。Agent 热钱包直接签名执行,成交后返回交易哈希与浏览器链接。',
+      '发起一笔 NEAR 链上兑换(WNEAR↔USDC/USDT/DAI/WETH),由 Ref Finance AMM 路由。user_wallet 模式:Agent 组装交易、主人钱包签名;hot_wallet 模式:Agent 热钱包直接签名执行,成交后返回交易哈希与浏览器链接。',
     inputSchema: z.object({
       tokenIn: z.enum(TOKEN_SYMBOLS).describe(`支付币种:${TOKEN_SYMBOLS.join(' / ')}`),
       tokenOut: z.enum(TOKEN_SYMBOLS).describe(`目标币种:${TOKEN_SYMBOLS.join(' / ')}`),
@@ -50,15 +70,13 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
       reason: z.string().describe('这笔兑换的理由(会写进审计记录)'),
     }),
     outputSchema: z.object({
-      result: z.string().optional(),
       verdict: z.string().optional(),
+      unsignedTxs: z.array(z.any()).optional(),
       note: z.string().optional(),
+      result: z.string().optional(),
       error: z.string().optional(),
     }),
     execute: async ({ context }) => {
-      if (!isNearWriteReady()) {
-        return { result: '执行失败:未配置 AGENT_NEAR_PRIVATE_KEY(NEAR 热钱包),无法执行兑换' }
-      }
       if (context.tokenIn === context.tokenOut) {
         return { result: '执行失败:tokenIn 与 tokenOut 不能相同' }
       }
@@ -72,14 +90,37 @@ function makeProposeSwap(chainKey: string, tokenId: number) {
 
         const quote = await refQuote(chainKey, tokenIn, tokenOut, amountAtomic)
         const amountOutHuman = (Number(quote.amountOut) / 10 ** decimalsOut).toFixed(6)
-
         const executionMode = await getSwapMode(chainKey, tokenId)
+
         if (executionMode === 'user_wallet') {
-          return {
-            result: `报价成功(约 ${amountOutHuman} ${tokenOut}),但 NEAR 兑换当前仅支持 hot_wallet 执行模式,请先在设置中切换执行模式`,
+          // 只组装不发交易:storage_deposit(按需)→ near_deposit(按需)→ ft_transfer_call,主人钱包逐笔签名
+          const persona = await loadPersona(chainKey, tokenId)
+          const owner = persona.owner
+          const { txs, amountOut } = await buildRefSwapTxs(chainKey, owner, tokenIn, tokenOut, context.amountIn, SLIPPAGE_BPS)
+          const amountOutMin = (BigInt(amountOut) * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n
+          const estimatedValueUsd = await estimateRefValueUsd(chainKey, tokenIn, context.amountIn)
+          const note = `约可换得 ≥${amountOutHuman} ${tokenOut}(估值 $${estimatedValueUsd?.toFixed(4) ?? '未知'});请点击聊天区下方的【签名并发送】按钮,在钱包里完成签名(${txs.length} 笔交易)。首次使用 Ref 需支付可退还的存储押金(每笔 0.25N)`
+          const action: SignTxAction = {
+            type: 'sign_tx',
+            unsignedTxs: txs,
+            note,
+            proposal: {
+              action: 'swap',
+              protocol: 'ref-finance',
+              chainId: getChainContext(chainKey).cfg.chainId,
+              params: { tokenIn, tokenOut, amountIn: amountAtomic, amountOutMin: amountOutMin.toString(), owner },
+              executionMode: 'user_wallet',
+              estimatedValueUsd,
+              reason: context.reason,
+            },
           }
+          setPendingSignAction(chainKey, tokenId, action)
+          return { verdict: 'sign', unsignedTxs: txs, note, proposal: action.proposal }
         }
 
+        if (!isNearWriteReady()) {
+          return { result: '执行失败:未配置 AGENT_NEAR_PRIVATE_KEY(NEAR 热钱包),无法执行兑换;也可在设置中切换为用户钱包签名模式' }
+        }
         const { txHash, amountOut } = await refSwap(chainKey, tokenIn, tokenOut, amountAtomic, SLIPPAGE_BPS)
         await recordDefiTask(
           chainKey,
@@ -108,7 +149,7 @@ export const defiSwapRef: SkillDef = {
     id: 'defi-swap-ref',
     name: 'NEAR 兑换',
     version: '1.0.0',
-    description: '经 Ref Finance 在 NEAR 上兑换 WNEAR↔USDC/USDT/DAI/WETH。hot_wallet 模式:Agent NEAR 热钱包签名执行(需 AGENT_NEAR_PRIVATE_KEY);user_wallet 暂不支持',
+    description: '经 Ref Finance 在 NEAR 上兑换 WNEAR↔USDC/USDT/DAI/WETH。user_wallet 模式:Agent 组装交易、主人钱包签名(默认);hot_wallet 模式:Agent NEAR 热钱包签名执行(需 AGENT_NEAR_PRIVATE_KEY)',
     tools: ['propose_swap'],
     permissions: [],
     scope: 'owner', // 资产操作,仅限主人对话
