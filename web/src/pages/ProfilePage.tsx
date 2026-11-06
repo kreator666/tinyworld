@@ -25,9 +25,11 @@ import {
 } from '../lib/agentApi'
 import { approveApproval, getApprovals, rejectApproval, type Approval } from '../lib/agentApi'
 import { explorerTx } from '../store/chainConfigStore'
+import { useI18n } from '../i18n'
 
 // 兑换执行模式切换(M4):热钱包自动 vs 用户钱包签名
 function SwapModeSection({ tokenId }: { tokenId: number }) {
+  const { t } = useI18n()
   const showToast = useAppStore((s) => s.showToast)
   const [mode, setMode] = useState<SwapMode>('user_wallet')
   const [loading, setLoading] = useState(true)
@@ -36,7 +38,7 @@ function SwapModeSection({ tokenId }: { tokenId: number }) {
   useEffect(() => {
     getSwapMode(tokenId)
       .then((m) => setMode(m))
-      .catch(() => showToast('读取兑换模式失败'))
+      .catch(() => showToast(t('profile.swapMode.loadFail')))
       .finally(() => setLoading(false))
   }, [tokenId])
 
@@ -46,9 +48,9 @@ function SwapModeSection({ tokenId }: { tokenId: number }) {
     try {
       await setSwapMode(tokenId, next)
       setMode(next)
-      showToast(next === 'user_wallet' ? '已切换为"我的钱包签名"模式' : '已切换为"热钱包自动执行"模式')
+      showToast(next === 'user_wallet' ? t('profile.swapMode.switchedUser') : t('profile.swapMode.switchedHot'))
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '切换失败')
+      showToast(err instanceof Error ? err.message : t('profile.common.switchFail'))
     } finally {
       setSaving(false)
     }
@@ -57,10 +59,10 @@ function SwapModeSection({ tokenId }: { tokenId: number }) {
   return (
     <div className="glass p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold">💱 兑换执行模式</h3>
+        <h3 className="font-semibold">{t('profile.swapMode.title')}</h3>
       </div>
       {loading ? (
-        <p className="text-xs text-slate-500 animate-pulse">读取中…</p>
+        <p className="text-xs text-slate-500 animate-pulse">{t('profile.common.loading')}</p>
       ) : (
         <div className="space-y-2">
           <button
@@ -72,8 +74,8 @@ function SwapModeSection({ tokenId }: { tokenId: number }) {
                 : 'glass border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <div className="font-medium">🔥 热钱包自动执行</div>
-            <div className="text-[10px] text-slate-500 mt-0.5">Agent 用专属热钱包自动签名、上链,限额内无需你操作</div>
+            <div className="font-medium">{t('profile.swapMode.hotTitle')}</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">{t('profile.swapMode.hotDesc')}</div>
           </button>
           <button
             onClick={() => change('user_wallet')}
@@ -84,8 +86,8 @@ function SwapModeSection({ tokenId }: { tokenId: number }) {
                 : 'glass border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <div className="font-medium">🔑 我的钱包签名</div>
-            <div className="text-[10px] text-slate-500 mt-0.5">Agent 只组装交易,由你的钱包签名,Agent 负责广播;Gas 你自己付</div>
+            <div className="font-medium">{t('profile.swapMode.userTitle')}</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">{t('profile.swapMode.userDesc')}</div>
           </button>
         </div>
       )}
@@ -96,6 +98,7 @@ function SwapModeSection({ tokenId }: { tokenId: number }) {
 // 任务审批中心:Agent 的 DeFi 提案超限后在这里由本人放行/拒绝(M4)
 // 用户资金路径(如 USDC→AVAX)需要主人钱包先完成 ERC20 approve,再调用后端放行
 function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string }) {
+  const { t } = useI18n()
   const showToast = useAppStore((s) => s.showToast)
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [offline, setOffline] = useState(false)
@@ -124,19 +127,19 @@ function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string
         if (a.signatureRequest) {
           await ensureTargetChain()
           const { token, spender, amount } = a.signatureRequest
-          showToast('请在钱包中确认 USDC approve 授权')
+          showToast(t('profile.approval.approveNeeded'))
           await approveErc20(address, token, spender, BigInt(amount))
-          showToast('USDC 授权已上链,正在放行执行')
+          showToast(t('profile.approval.approvedOnChain'))
         }
         const r = await approveApproval(a.id)
-        showToast(r.txHash ? '✅ 已放行并执行上链' : '已放行')
+        showToast(r.txHash ? t('profile.approval.executed') : t('profile.approval.approved'))
       } else {
         await rejectApproval(a.id)
-        showToast('已拒绝该提案')
+        showToast(t('profile.approval.rejected'))
       }
       await reload()
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '操作失败')
+      showToast(err instanceof Error ? err.message : t('profile.common.actionFail'))
     } finally {
       setActing(null)
     }
@@ -145,13 +148,13 @@ function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string
   const describe = (a: Approval) => {
     const p = a.proposal
     if (p.action === 'swap' && p.params) {
-      return `兑换 ${p.params.amountIn} ${p.params.tokenIn} → ${p.params.tokenOut}`
+      return t('profile.approval.descSwap', { amountIn: p.params.amountIn ?? '', tokenIn: p.params.tokenIn ?? '', tokenOut: p.params.tokenOut ?? '' })
     }
     if (p.action === 'supply' && p.params) {
-      return `存入 Aave ${p.params.amountIn} ${p.params.tokenIn} 赚收益`
+      return t('profile.approval.descSupply', { amountIn: p.params.amountIn ?? '', tokenIn: p.params.tokenIn ?? '' })
     }
     if (p.action === 'withdraw' && p.params) {
-      return `从 Aave 取回 ${p.params.amountIn} ${p.params.tokenOut ?? p.params.tokenIn}`
+      return t('profile.approval.descWithdraw', { amount: p.params.tokenOut ?? p.params.tokenIn ?? '' })
     }
     return p.action
   }
@@ -164,9 +167,9 @@ function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string
   return (
     <div className="glass p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold">🖋️ 任务审批中心</h3>
+        <h3 className="font-semibold">{t('profile.approval.title')}</h3>
         {pending.length > 0 && (
-          <span className="tag !text-[10px] border-amber-400/50 text-amber-300">{pending.length} 待审批</span>
+          <span className="tag !text-[10px] border-amber-400/50 text-amber-300">{t('profile.approval.pending', { count: pending.length })}</span>
         )}
       </div>
 
@@ -176,14 +179,16 @@ function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string
             <div key={a.id} className="glass !rounded-xl p-3 border-amber-400/30">
               <div className="text-sm font-medium">{describe(a)}</div>
               <div className="text-[11px] text-slate-500 mt-1">
-                {a.proposal.estimatedValueUsd != null && <>约 ${a.proposal.estimatedValueUsd.toFixed(2)} · </>}
+                {a.proposal.estimatedValueUsd != null && <>{t('profile.approval.about', { usd: a.proposal.estimatedValueUsd.toFixed(2) })} · </>}
                 {a.proposal.protocol} · {new Date(a.created_at).toLocaleString('zh-CN')}
               </div>
-              {a.agent_reason && <p className="text-xs text-slate-400 mt-1.5">Agent 理由:{a.agent_reason}</p>}
+              {a.agent_reason && <p className="text-xs text-slate-400 mt-1.5">{t('profile.approval.agentReason', { reason: a.agent_reason })}</p>}
               {a.signatureRequest && (
                 <p className="text-xs text-amber-300 mt-1.5">
-                  ⚠️ 该提案需先用你的钱包对 {a.signatureRequest.tokenSymbol} 授权({a.signatureRequest.spender.slice(0, 6)}…
-                  {a.signatureRequest.spender.slice(-4)}),放行时会弹出签名
+                  {t('profile.approval.needApprove', {
+                    tokenSymbol: a.signatureRequest.tokenSymbol,
+                    spender: a.signatureRequest.spender.slice(0, 6) + '…' + a.signatureRequest.spender.slice(-4),
+                  })}
                 </p>
               )}
               <div className="flex gap-2 mt-3">
@@ -192,14 +197,14 @@ function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string
                   disabled={acting === a.id}
                   onClick={() => act(a, 'approve')}
                 >
-                  {acting === a.id ? '执行中…' : '✅ 放行并执行'}
+                  {acting === a.id ? t('profile.approval.executing') : t('profile.approval.approveBtn')}
                 </button>
                 <button
                   className="btn-ghost flex-1 !text-xs !py-1.5 hover:border-rose-400/50 hover:text-rose-300"
                   disabled={acting === a.id}
                   onClick={() => act(a, 'reject')}
                 >
-                  ❌ 拒绝
+                  {t('profile.approval.rejectBtn')}
                 </button>
               </div>
             </div>
@@ -209,18 +214,18 @@ function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string
 
       {history.length > 0 && (
         <div className="border-t border-white/10 pt-3">
-          <div className="text-xs text-slate-500 mb-2">最近处理</div>
+          <div className="text-xs text-slate-500 mb-2">{t('profile.approval.recent')}</div>
           <div className="space-y-1.5">
             {history.map((a) => (
               <div key={a.id} className="flex items-center justify-between text-xs">
                 <span className="text-slate-400 truncate">{describe(a)}</span>
                 {a.status === 'executed' && a.tx_hash ? (
                   <a className="text-neon-cyan hover:underline shrink-0 ml-2" href={explorerTx(a.tx_hash)} target="_blank" rel="noreferrer">
-                    已上链 ↗
+                    {t('profile.approval.onChain')}
                   </a>
                 ) : (
                   <span className={`shrink-0 ml-2 ${a.status === 'rejected' ? 'text-rose-400' : a.status === 'failed' ? 'text-amber-400' : 'text-slate-500'}`}>
-                    {a.status === 'rejected' ? '已拒绝' : a.status === 'failed' ? '执行失败' : a.status}
+                    {a.status === 'rejected' ? t('profile.approval.statusRejected') : a.status === 'failed' ? t('profile.approval.statusFailed') : a.status}
                   </span>
                 )}
               </div>
@@ -234,6 +239,7 @@ function ApprovalCenter({ tokenId, address }: { tokenId: number; address: string
 
 // Agent 运行时状态面板:记忆统计 + 技能安装/卸载(M2)
 function AgentStatusPanel({ tokenId }: { tokenId: number }) {
+  const { t } = useI18n()
   const showToast = useAppStore((s) => s.showToast)
   const [status, setStatus] = useState<AgentStatus | null>(null)
   const [allSkills, setAllSkills] = useState<SkillInfo[]>([])
@@ -260,14 +266,14 @@ function AgentStatusPanel({ tokenId }: { tokenId: number }) {
     try {
       if (installed) {
         await uninstallSkill(tokenId, skill.id)
-        showToast(`已卸载技能「${skill.name}」`)
+        showToast(t('profile.agent.skillUninstalled', { name: skill.name }))
       } else {
         const r = await installSkill(tokenId, skill.id)
-        showToast(`已安装技能「${skill.name}」${r.note ? `(${r.note})` : ''}`)
+        showToast(t('profile.agent.skillInstalled', { name: skill.name, note: r.note ? `(${r.note})` : '' }))
       }
       await reload()
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '操作失败')
+      showToast(err instanceof Error ? err.message : t('profile.common.actionFail'))
     } finally {
       setActing(null)
     }
@@ -276,31 +282,31 @@ function AgentStatusPanel({ tokenId }: { tokenId: number }) {
   return (
     <div className="glass p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold">📡 Agent 状态</h3>
+        <h3 className="font-semibold">{t('profile.agent.title')}</h3>
         {status && (
           <span className={`tag !text-[10px] ${status.personaFromChain ? 'border-neon-cyan/40 text-neon-cyan' : 'text-slate-500'}`}>
-            {status.personaFromChain ? '人格已上链' : '默认人格'}
+            {status.personaFromChain ? t('profile.agent.personaOnChain') : t('profile.agent.defaultPersona')}
           </span>
         )}
       </div>
       {offline ? (
-        <p className="text-xs text-slate-500">Agent 服务未启动(cd agent && npm run dev)</p>
+        <p className="text-xs text-slate-500">{t('profile.agent.offline')}</p>
       ) : !status ? (
-        <p className="text-xs text-slate-500 animate-pulse">读取中…</p>
+        <p className="text-xs text-slate-500 animate-pulse">{t('profile.common.loading')}</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2 mb-4">
             <div className="glass !rounded-xl p-2.5 text-center">
               <div className="text-lg font-bold bg-neon-grad bg-clip-text text-transparent">{status.episodicCount}</div>
-              <div className="text-[10px] text-slate-500">情景记忆</div>
+              <div className="text-[10px] text-slate-500">{t('profile.agent.episodic')}</div>
             </div>
             <div className="glass !rounded-xl p-2.5 text-center">
               <div className="text-lg font-bold bg-neon-grad bg-clip-text text-transparent">{status.semanticCount}</div>
-              <div className="text-[10px] text-slate-500">语义记忆</div>
+              <div className="text-[10px] text-slate-500">{t('profile.agent.semantic')}</div>
             </div>
           </div>
-          <div className="text-xs font-medium text-neon-purple mb-2">技能({status.skills.length}/{allSkills.length})</div>
-          <p className="text-[10px] text-slate-500 mb-2 -mt-1">内置技能默认全部启用,可按需卸载/装回</p>
+          <div className="text-xs font-medium text-neon-purple mb-2">{t('profile.agent.skills', { installed: status.skills.length, total: allSkills.length })}</div>
+          <p className="text-[10px] text-slate-500 mb-2 -mt-1">{t('profile.agent.skillsHint')}</p>
           <div className="space-y-2">
             {allSkills.map((sk) => {
               const installed = status.skills.some((s) => s.id === sk.id)
@@ -319,12 +325,12 @@ function AgentStatusPanel({ tokenId }: { tokenId: number }) {
                     disabled={acting === sk.id}
                     onClick={() => toggleSkill(sk)}
                   >
-                    {acting === sk.id ? '处理中…' : installed ? '✓ 已安装' : '安装'}
+                    {acting === sk.id ? t('profile.agent.processing') : installed ? t('profile.agent.installed') : t('profile.agent.install')}
                   </button>
                 </div>
               )
             })}
-            {allSkills.length === 0 && <p className="text-[10px] text-slate-500">暂无可安装技能</p>}
+            {allSkills.length === 0 && <p className="text-[10px] text-slate-500">{t('profile.agent.noSkills')}</p>}
           </div>
         </>
       )}
@@ -352,6 +358,7 @@ function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: (v: bool
 // 页面 3:个人主页(Agent 展示 + 控制台)
 // /profile = 自己的主页(含 Agent 控制台);/profile/:tokenId = 他人主页(仅公开信息 + 社交按钮)
 export default function ProfilePage() {
+  const { t } = useI18n()
   const active = useChainConfig((s) => s.active)
   const nav = useNavigate()
   const { tokenId: paramTokenId } = useParams()
@@ -391,7 +398,7 @@ export default function ProfilePage() {
           equipped: a.equipped,
         }),
       )
-      .catch(() => setOtherError('该 Agent 不存在或已被销毁'))
+      .catch(() => setOtherError(t('profile.main.notFound')))
       .finally(() => setOtherLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visitingTokenId, isSelf])
@@ -445,7 +452,7 @@ export default function ProfilePage() {
         try {
           const json = decodeURIComponent(escape(atob(uri.slice(DATA_PREFIX.length))))
           if (keccak256(toBytes(json)) !== contentHash.toLowerCase()) {
-            showToast('⚠️ 链上人格配置校验和不匹配,已忽略')
+            showToast(t('profile.main.personaChecksum'))
             return
           }
           const profile = JSON.parse(json) as AIProfile
@@ -470,7 +477,7 @@ export default function ProfilePage() {
   const chainDid: DIDIdentity | null =
     isSelf && tokenId > 0
       ? {
-          name: didName || safeDid?.name || '未命名 Agent',
+          name: didName || safeDid?.name || t('profile.main.unnamed'),
           bio: safeDid?.bio ?? '',
           chain: active.name,
           mintedAt: safeDid?.mintedAt ?? '—',
@@ -487,11 +494,11 @@ export default function ProfilePage() {
         <div className="mx-auto max-w-md px-4 py-24 text-center">
           <div className="text-5xl mb-4">🪪</div>
           {otherLoading ? (
-            <p className="text-slate-300 mb-6 animate-pulse">链上 Agent 读取中…</p>
+            <p className="text-slate-300 mb-6 animate-pulse">{t('profile.main.chainLoading')}</p>
           ) : (
             <>
-              <p className="text-slate-300 mb-6">{otherError ?? '链上 Agent 读取中…'}</p>
-              {otherError && <Link to="/chat" className="btn-ghost inline-block">返回消息</Link>}
+              <p className="text-slate-300 mb-6">{otherError ?? t('profile.main.chainLoading')}</p>
+              {otherError && <Link to="/chat" className="btn-ghost inline-block">{t('profile.main.backToChat')}</Link>}
             </>
           )}
         </div>
@@ -501,15 +508,15 @@ export default function ProfilePage() {
       return (
         <div className="mx-auto max-w-md px-4 py-24 text-center">
           <div className="text-5xl mb-4">🪪</div>
-          <p className="text-slate-300 mb-6">链上 Agent 读取中…</p>
+          <p className="text-slate-300 mb-6">{t('profile.main.chainLoading')}</p>
         </div>
       )
     }
     return (
       <div className="mx-auto max-w-md px-4 py-24 text-center">
         <div className="text-5xl mb-4">🪪</div>
-        <p className="text-slate-300 mb-6">你还没有铸造自己的 Agent,先去铸造工坊创建一个吧</p>
-        <Link to="/mint" className="btn-primary inline-block">前往铸造工坊</Link>
+        <p className="text-slate-300 mb-6">{t('profile.main.noAgent')}</p>
+        <Link to="/mint" className="btn-primary inline-block">{t('profile.main.goMint')}</Link>
       </div>
     )
   }
@@ -534,7 +541,7 @@ export default function ProfilePage() {
       return
     }
     const chatTokenId = isSelf ? (tokenId > 0 ? tokenId : undefined) : (visitingTokenId ?? undefined)
-    ensureChatWith(view.name, view.address.slice(0, 6) + '...' + view.address.slice(-4), '🧑‍🎤', mode, form.template + '型 AI', {
+    ensureChatWith(view.name, view.address.slice(0, 6) + '...' + view.address.slice(-4), '🧑‍🎤', mode, t('profile.main.aiType', { template: form.template }), {
       agentTokenId: chatTokenId,
     })
     nav('/chat')
@@ -543,15 +550,15 @@ export default function ProfilePage() {
   const save = async () => {
     saveAIProfile(form)
     if (!connected || !address) {
-      showToast('请先连接钱包')
+      showToast(t('profile.main.connectFirst'))
       return
     }
     if (!onTargetChain) {
-      showToast(`当前钱包不匹配 ${active.name},请断开并重新连接对应钱包`)
+      showToast(t('profile.main.walletMismatch', { name: active.name }))
       return
     }
     if (tokenId === 0) {
-      showToast('尚未铸造 Agent 身份,无法同步人格配置上链')
+      showToast(t('profile.main.noIdentity'))
       return
     }
     // 激活链上已有 DID 时,人格配置真正写链(setPersona:URI + keccak256 内容哈希)
@@ -560,7 +567,7 @@ export default function ProfilePage() {
       const json = JSON.stringify(form)
       const uri = `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`
       await setPersonaOnChain(address, tokenId, uri, keccak256(toBytes(json)))
-      showToast('✅ 人格配置已保存并同步上链,绑定 Agent 身份')
+      showToast(t('profile.main.personaSaved'))
     } catch (err) {
       showToast(explainChainError(err))
     } finally {
@@ -570,7 +577,7 @@ export default function ProfilePage() {
   const reset = () => {
     resetAIProfile()
     setForm(useAppStore.getState().aiProfile)
-    showToast('AI 人设已重置为默认')
+    showToast(t('profile.main.personaReset'))
   }
 
   return (
@@ -582,21 +589,21 @@ export default function ProfilePage() {
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-2xl font-bold">{view.name}</h2>
             <span className="tag border-neon-cyan/40 text-neon-cyan">{view.chain}</span>
-            <span className="tag text-slate-400">铸造于 {view.mintedAt}</span>
+            <span className="tag text-slate-400">{t('profile.main.mintedAt', { date: view.mintedAt })}</span>
           </div>
-          <div className="text-xs text-slate-500 font-mono mt-1.5">所属钱包:{view.address}</div>
+          <div className="text-xs text-slate-500 font-mono mt-1.5">{t('profile.main.ownerWallet', { address: view.address })}</div>
           <div className="text-xs mt-1">
-            <a className="text-neon-purple hover:underline cursor-pointer font-mono" onClick={() => showToast('演示环境:已复制合约链接')}>
-              合约:{view.contract} ↗
+            <a className="text-neon-purple hover:underline cursor-pointer font-mono" onClick={() => showToast(t('profile.main.contractCopied'))}>
+              {t('profile.main.contract', { contract: view.contract })}
             </a>
           </div>
           {view.bio && <p className="text-sm text-slate-400 mt-2">{view.bio}</p>}
           {/* 数据标签(真实统计:活跃度=近7天活跃占比,社交互动=收发消息总数,NFT=链上余额) */}
           <div className="grid grid-cols-3 gap-3 mt-4">
             {[
-              { label: 'Agent 活跃度', value: stats ? `${stats.activityPercent}%` : '—' },
-              { label: '社交互动数', value: stats ? String(stats.socialInteractions) : '—' },
-              { label: '持有 NFT 装备', value: nftCount != null ? String(nftCount) : '—' },
+              { label: t('profile.main.statActivity'), value: stats ? `${stats.activityPercent}%` : '—' },
+              { label: t('profile.main.statSocial'), value: stats ? String(stats.socialInteractions) : '—' },
+              { label: t('profile.main.statNft'), value: nftCount != null ? String(nftCount) : '—' },
             ].map((s) => (
               <div key={s.label} className="glass !rounded-xl p-3 text-center">
                 <div className="text-xl font-bold bg-neon-grad bg-clip-text text-transparent">{s.value}</div>
@@ -608,26 +615,26 @@ export default function ProfilePage() {
 
         {/* 中央纸娃娃 */}
         <div className="glass p-6 flex flex-col items-center">
-          <div className="cursor-pointer" onClick={() => setZoomMeta(true)} title="点击查看链上元数据">
+          <div className="cursor-pointer" onClick={() => setZoomMeta(true)} title={t('profile.main.zoomTitle')}>
             <PaperDoll equipped={view.equipped} size="lg" />
           </div>
-          <p className="text-xs text-slate-500 mt-3">点击纸娃娃查看链上藏品元数据</p>
+          <p className="text-xs text-slate-500 mt-3">{t('profile.main.zoomHint')}</p>
           {/* 社交按钮:本人主页只保留"和 Agent 聊",其余是给访客用的 */}
           <div className="flex flex-wrap gap-2 mt-4 justify-center">
             {!isSelf && (
-              <button className="btn-primary !text-sm" onClick={() => chat('human')}>💬 和本人真人聊</button>
+              <button className="btn-primary !text-sm" onClick={() => chat('human')}>{t('profile.main.chatHuman')}</button>
             )}
-            <button className="btn-primary !text-sm" onClick={() => chat('ai')}>🤖 和 Agent 聊</button>
+            <button className="btn-primary !text-sm" onClick={() => chat('ai')}>{t('profile.main.chatAi')}</button>
             {!isSelf && (
               <>
-                <button className="btn-ghost !text-sm" onClick={() => { toggleFavorite(targetId); showToast(favored ? '已取消收藏' : '已收藏该 Agent') }}>
-                  {favored ? '★ 已收藏' : '☆ 收藏'}
+                <button className="btn-ghost !text-sm" onClick={() => { toggleFavorite(targetId); showToast(favored ? t('profile.main.unfavorited') : t('profile.main.favorited')) }}>
+                  {favored ? t('profile.main.favored') : t('profile.main.favorite')}
                 </button>
-                <button className="btn-ghost !text-sm" onClick={() => showToast(`全部装备:${equippedItems.map((i) => i!.name).join('、') || '无'}`)}>
-                  🎒 查看装备
+                <button className="btn-ghost !text-sm" onClick={() => showToast(t('profile.main.allEquipped', { items: equippedItems.map((i) => i!.name).join(t('profile.main.equipSeparator')) || t('profile.main.noEquip') }))}>
+                  {t('profile.main.viewEquip')}
                 </button>
-                <button className="btn-ghost !text-sm" onClick={() => { toggleFollow(targetId); showToast(followed ? '已取消关注' : '已关注该 Agent') }}>
-                  {followed ? '✓ 已关注' : '+ 关注'}
+                <button className="btn-ghost !text-sm" onClick={() => { toggleFollow(targetId); showToast(followed ? t('profile.main.unfollowed') : t('profile.main.followedToast')) }}>
+                  {followed ? t('profile.main.following') : t('profile.main.follow')}
                 </button>
               </>
             )}
@@ -649,12 +656,12 @@ export default function ProfilePage() {
         {/* ④ Agent 控制台:人格/行为/权限配置(长表单,可折叠) */}
         <div className="glass neon-border p-5">
           <button className="w-full flex items-center justify-between" onClick={() => setConsoleOpen((v) => !v)}>
-            <h3 className="font-semibold">🤖 Agent 控制台</h3>
+            <h3 className="font-semibold">{t('profile.main.console')}</h3>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-slate-500 hidden sm:block">
-                {form.template} · {form.tone}{form.emergency ? ' · 🚨已接管' : ''}
+                {form.template} · {form.tone}{form.emergency ? t('profile.main.emergencyBadge') : ''}
               </span>
-              <span className="tag !text-[10px] text-slate-500">仅本人可见</span>
+              <span className="tag !text-[10px] text-slate-500">{t('profile.main.onlySelf')}</span>
               <span className={`text-slate-400 transition-transform ${consoleOpen ? 'rotate-180' : ''}`}>▾</span>
             </div>
           </button>
@@ -662,23 +669,23 @@ export default function ProfilePage() {
           <>
           {/* 模块 1:人格基础设定 */}
           <div className="border-t border-white/10 mt-3 pt-3">
-            <div className="text-sm font-medium text-neon-purple mb-2">① 人格基础设定</div>
-            <label className="text-xs text-slate-400">基础人设模板</label>
+            <div className="text-sm font-medium text-neon-purple mb-2">{t('profile.main.personaTitle')}</div>
+            <label className="text-xs text-slate-400">{t('profile.main.templateLabel')}</label>
             <select className="input mt-1" value={form.template} onChange={(e) => set('template', e.target.value)}>
-              {personaTemplates.map((t) => <option key={t} value={t}>{t}</option>)}
+              {personaTemplates.map((tp) => <option key={tp} value={tp}>{tp}</option>)}
             </select>
-            <label className="text-xs text-slate-400 mt-3 block">自定义性格描述</label>
+            <label className="text-xs text-slate-400 mt-3 block">{t('profile.main.personalityLabel')}</label>
             <textarea
               className="input mt-1 h-16 resize-none"
-              placeholder="例:话少毒舌、喜欢分享 Web3 知识、讨厌空话"
+              placeholder={t('profile.main.personalityPlaceholder')}
               value={form.personality}
               onChange={(e) => set('personality', e.target.value)}
             />
-            <label className="text-xs text-slate-400 mt-3 block">语气风格</label>
+            <label className="text-xs text-slate-400 mt-3 block">{t('profile.main.toneLabel')}</label>
             <div className="grid grid-cols-2 gap-2 mt-1">
-              {toneOptions.map((t) => (
-                <button key={t} onClick={() => set('tone', t)} className={`px-2 py-1.5 rounded-lg text-xs transition ${form.tone === t ? 'bg-neon-grad text-white' : 'glass text-slate-300'}`}>
-                  {t}
+              {toneOptions.map((tn) => (
+                <button key={tn} onClick={() => set('tone', tn)} className={`px-2 py-1.5 rounded-lg text-xs transition ${form.tone === tn ? 'bg-neon-grad text-white' : 'glass text-slate-300'}`}>
+                  {tn}
                 </button>
               ))}
             </div>
@@ -686,49 +693,49 @@ export default function ProfilePage() {
 
           {/* 模块 2:行为习惯设置 */}
           <div className="border-t border-white/10 mt-4 pt-3">
-            <div className="text-sm font-medium text-neon-purple mb-2">② 行为习惯设置</div>
-            <label className="text-xs text-slate-400">回复速度</label>
+            <div className="text-sm font-medium text-neon-purple mb-2">{t('profile.main.habitTitle')}</div>
+            <label className="text-xs text-slate-400">{t('profile.main.replySpeedLabel')}</label>
             <div className="grid grid-cols-2 gap-2 mt-1">
-              <button onClick={() => set('replySpeed', 'instant')} className={`px-2 py-1.5 rounded-lg text-xs transition ${form.replySpeed === 'instant' ? 'bg-neon-grad text-white' : 'glass text-slate-300'}`}>秒级快速回复</button>
-              <button onClick={() => set('replySpeed', 'human')} className={`px-2 py-1.5 rounded-lg text-xs transition ${form.replySpeed === 'human' ? 'bg-neon-grad text-white' : 'glass text-slate-300'}`}>模拟人类延迟 30s-5min</button>
+              <button onClick={() => set('replySpeed', 'instant')} className={`px-2 py-1.5 rounded-lg text-xs transition ${form.replySpeed === 'instant' ? 'bg-neon-grad text-white' : 'glass text-slate-300'}`}>{t('profile.main.replyInstant')}</button>
+              <button onClick={() => set('replySpeed', 'human')} className={`px-2 py-1.5 rounded-lg text-xs transition ${form.replySpeed === 'human' ? 'bg-neon-grad text-white' : 'glass text-slate-300'}`}>{t('profile.main.replyHuman')}</button>
             </div>
-            <label className="text-xs text-slate-400 mt-3 block">聊天偏好</label>
+            <label className="text-xs text-slate-400 mt-3 block">{t('profile.main.topicsLabel')}</label>
             <div className="flex flex-wrap gap-2 mt-1">
-              {topicOptions.map((t) => (
+              {topicOptions.map((tp) => (
                 <button
-                  key={t}
-                  onClick={() => set('topics', form.topics.includes(t) ? form.topics.filter((x) => x !== t) : [...form.topics, t])}
-                  className={`px-2.5 py-1 rounded-full text-xs transition ${form.topics.includes(t) ? 'bg-neon-grad text-white' : 'glass text-slate-400'}`}
+                  key={tp}
+                  onClick={() => set('topics', form.topics.includes(tp) ? form.topics.filter((x) => x !== tp) : [...form.topics, tp])}
+                  className={`px-2.5 py-1 rounded-full text-xs transition ${form.topics.includes(tp) ? 'bg-neon-grad text-white' : 'glass text-slate-400'}`}
                 >
-                  {t}
+                  {tp}
                 </button>
               ))}
             </div>
-            <label className="text-xs text-slate-400 mt-3 block">规避话题黑名单(逗号分隔)</label>
-            <input className="input mt-1" placeholder="例:政治, 炒币带单" value={form.blacklist} onChange={(e) => set('blacklist', e.target.value)} />
-            <label className="text-xs text-slate-400 mt-3 block">社交行为</label>
+            <label className="text-xs text-slate-400 mt-3 block">{t('profile.main.blacklistLabel')}</label>
+            <input className="input mt-1" placeholder={t('profile.main.blacklistPlaceholder')} value={form.blacklist} onChange={(e) => set('blacklist', e.target.value)} />
+            <label className="text-xs text-slate-400 mt-3 block">{t('profile.main.socialLabel')}</label>
             <div className="grid grid-cols-3 gap-2 mt-1">
-              {([['greet', '主动打招呼'], ['share', '主动分享藏品'], ['passive', '被动等待']] as const).map(([k, l]) => (
-                <button key={k} onClick={() => set('socialMode', k)} className={`px-2 py-1.5 rounded-lg text-xs transition ${form.socialMode === k ? 'bg-neon-grad text-white' : 'glass text-slate-300'}`}>{l}</button>
+              {([['greet', 'profile.main.socialGreet'], ['share', 'profile.main.socialShare'], ['passive', 'profile.main.socialPassive']] as const).map(([k, l]) => (
+                <button key={k} onClick={() => set('socialMode', k)} className={`px-2 py-1.5 rounded-lg text-xs transition ${form.socialMode === k ? 'bg-neon-grad text-white' : 'glass text-slate-300'}`}>{t(l)}</button>
               ))}
             </div>
           </div>
 
           {/* 模块 3:AI 权限开关 */}
           <div className="border-t border-white/10 mt-4 pt-3">
-            <div className="text-sm font-medium text-neon-purple mb-1">③ AI 权限开关</div>
-            <Toggle on={form.autoGreet} onChange={(v) => set('autoGreet', v)} label="自动接待访客" desc="有人进入主页时 AI 主动发起对话" />
-            <Toggle on={form.autoReply} onChange={(v) => set('autoReply', v)} label="自动回复私信" desc="离线时 AI 全权代为聊天" />
-            <Toggle on={form.memory} onChange={(v) => set('memory', v)} label="记忆功能" desc="记住过往聊天记录,保持人设统一" />
-            <Toggle on={form.emergency} onChange={(v) => set('emergency', v)} label="🚨 紧急接管" desc="一键暂停 AI,所有消息转为仅本人可见" />
+            <div className="text-sm font-medium text-neon-purple mb-1">{t('profile.main.permTitle')}</div>
+            <Toggle on={form.autoGreet} onChange={(v) => set('autoGreet', v)} label={t('profile.main.autoGreetLabel')} desc={t('profile.main.autoGreetDesc')} />
+            <Toggle on={form.autoReply} onChange={(v) => set('autoReply', v)} label={t('profile.main.autoReplyLabel')} desc={t('profile.main.autoReplyDesc')} />
+            <Toggle on={form.memory} onChange={(v) => set('memory', v)} label={t('profile.main.memoryLabel')} desc={t('profile.main.memoryDesc')} />
+            <Toggle on={form.emergency} onChange={(v) => set('emergency', v)} label={t('profile.main.emergencyLabel')} desc={t('profile.main.emergencyDesc')} />
           </div>
 
           {/* 底部操作 */}
           <div className="flex gap-2 mt-4">
             <button className="btn-primary flex-1 !text-sm" onClick={save} disabled={saving}>
-              {saving ? '上链中…' : '保存人格配置'}
+              {saving ? t('profile.main.saving') : t('profile.main.save')}
             </button>
-            <button className="btn-ghost !text-sm" onClick={reset}>重置 AI 人设</button>
+            <button className="btn-ghost !text-sm" onClick={reset}>{t('profile.main.reset')}</button>
           </div>
           </>
           )}
@@ -741,7 +748,7 @@ export default function ProfilePage() {
         <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm grid place-items-center p-4" onClick={() => setZoomMeta(false)}>
           <div className="glass neon-border max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start">
-              <h3 className="font-semibold">链上藏品元数据</h3>
+              <h3 className="font-semibold">{t('profile.main.metaTitle')}</h3>
               <button onClick={() => setZoomMeta(false)} className="text-slate-400 hover:text-white">✕</button>
             </div>
             <div className="flex justify-center my-4">

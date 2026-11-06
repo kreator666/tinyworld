@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Equipped } from '../types'
+import { t } from '../i18n'
 import { emptyEquipped } from './appStore'
 import {
   equipPart,
@@ -77,7 +78,7 @@ export const useChainStore = create<ChainState>((set, get) => ({
   },
 
   equip: async (address, slot, partChainId) => {
-    if (get().tokenId === 0) throw new Error('尚未铸造 Agent 身份')
+    if (get().tokenId === 0) throw new Error(t('catalog.chainError.notMinted'))
     try {
       const hash = await equipPart(address, get().tokenId, slot, partChainId)
       await get().refresh(address)
@@ -88,7 +89,7 @@ export const useChainStore = create<ChainState>((set, get) => ({
   },
 
   unequip: async (address, slot) => {
-    if (get().tokenId === 0) throw new Error('尚未铸造 Agent 身份')
+    if (get().tokenId === 0) throw new Error(t('catalog.chainError.notMinted'))
     try {
       const hash = await unequipPart(address, get().tokenId, slot)
       await get().refresh(address)

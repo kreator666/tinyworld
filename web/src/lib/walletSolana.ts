@@ -1,4 +1,5 @@
 import { Buffer } from 'buffer'
+import { t } from '../i18n'
 
 // ============================================================
 // Solana 钱包封装(Phantom):与 EVM 侧 EIP-6963 手写封装风格一致,
@@ -64,7 +65,7 @@ export interface SolanaConnection {
 export async function connectSolanaWallet(): Promise<SolanaConnection> {
   const provider = getSolanaProvider()
   if (!provider) {
-    throw new SolanaWalletError('PHANTOM_NOT_FOUND', '未检测到 Phantom 钱包,请先安装扩展')
+    throw new SolanaWalletError('PHANTOM_NOT_FOUND', t('chainMsg.solana.notInstalled'))
   }
   let publicKey: { toBase58(): string }
   try {
@@ -73,9 +74,9 @@ export async function connectSolanaWallet(): Promise<SolanaConnection> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (/reject|denied|declined|cancel/i.test(msg)) {
-      throw new SolanaWalletError('USER_REJECTED', '用户拒绝了钱包连接')
+      throw new SolanaWalletError('USER_REJECTED', t('chainMsg.wallet.connectRejected'))
     }
-    throw new SolanaWalletError('CONNECT_FAILED', `连接 Phantom 失败: ${msg}`)
+    throw new SolanaWalletError('CONNECT_FAILED', t('chainMsg.solana.connectFailed', { msg }))
   }
   const address = publicKey.toBase58()
   activeSolanaProvider = provider
@@ -98,7 +99,7 @@ export async function solanaSignAndSend(tx: unknown): Promise<string> {
 export async function solanaSignTransaction(tx: unknown): Promise<unknown> {
   const provider = requireSolanaProvider()
   if (!provider.signTransaction) {
-    throw new SolanaWalletError('UNSUPPORTED', '当前钱包不支持 signTransaction(多签名交易)')
+    throw new SolanaWalletError('UNSUPPORTED', t('chainMsg.solana.unsupportedSignTx'))
   }
   try {
     return await provider.signTransaction(tx)
@@ -120,7 +121,7 @@ export async function solanaSignMessage(message: Uint8Array): Promise<Uint8Array
 
 export function requireSolanaProvider(): SolanaWalletProvider {
   if (!activeSolanaProvider) {
-    throw new SolanaWalletError('NOT_CONNECTED', '未检测到已连接的 Phantom 钱包,请先连接')
+    throw new SolanaWalletError('NOT_CONNECTED', t('chainMsg.solana.requireConnected'))
   }
   return activeSolanaProvider
 }
@@ -128,13 +129,10 @@ export function requireSolanaProvider(): SolanaWalletProvider {
 function normalizeSignError(err: unknown): Error {
   const msg = err instanceof Error ? err.message : String(err)
   if (/reject|denied|declined|cancel/i.test(msg)) {
-    return new SolanaWalletError('SIGN_REJECTED', '你取消了钱包操作')
+    return new SolanaWalletError('SIGN_REJECTED', t('chainMsg.error.userRejected'))
   }
   if (/unexpected error|internal error/i.test(msg)) {
-    return new SolanaWalletError(
-      'SIGN_FAILED',
-      'Phantom 签名失败:通常是钱包当前账户与交易签名人不一致,或钱包网络(cluster)与交易网络不匹配。请检查 Phantom 当前账户与网络设置后重试',
-    )
+    return new SolanaWalletError('SIGN_FAILED', t('chainMsg.solana.signFailedHint'))
   }
   return err instanceof Error ? err : new Error(msg)
 }

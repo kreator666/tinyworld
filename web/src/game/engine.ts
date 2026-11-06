@@ -1,4 +1,5 @@
 import type { DollSprites } from './sprite'
+import { t } from '../i18n'
 
 // ============================================================
 // DID 大冒险:2D 卷轴动作游戏引擎(Canvas 2D,框架无关)
@@ -747,7 +748,7 @@ export class Game {
     c.fillStyle = CYAN
     c.font = 'bold 16px system-ui, sans-serif'
     c.textAlign = 'center'
-    c.fillText('终点 GOAL', cx, PORTAL.y - 16 + Math.sin(this.t * 2.5) * 4)
+    c.fillText(t('game.goal'), cx, PORTAL.y - 16 + Math.sin(this.t * 2.5) * 4)
     c.textAlign = 'left'
   }
 

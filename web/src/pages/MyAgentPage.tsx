@@ -16,6 +16,7 @@ import {
 import { sendTransactions } from '../lib/chainDispatch'
 import PixelRoom from '../components/PixelRoom'
 import type { AgentStatus } from '../types'
+import { useI18n } from '../i18n'
 
 /** 消息文本渲染:把 URL 变成可点击链接(链上确认消息里的浏览器明细等) */
 function renderMessageContent(content: string) {
@@ -33,6 +34,7 @@ function renderMessageContent(content: string) {
 
 // 我的 Agent 助手(豆包式):只属于自己的 Agent 对话,支持多个会话,历史存后端
 export default function MyAgentPage() {
+  const { t } = useI18n()
   const showToast = useAppStore((s) => s.showToast)
   const { tokenId, didName, equipped: chainEquipped } = useChainStore()
   const address = useAppStore((s) => s.address)
@@ -114,7 +116,7 @@ export default function MyAgentPage() {
       setActiveId(c.id)
       reloadConversations()
     } catch {
-      showToast('创建会话失败,请确认 agent 服务已启动')
+      showToast(t('myAgent.toast.createFail'))
     }
   }
 
@@ -124,7 +126,7 @@ export default function MyAgentPage() {
       if (activeId === id) setActiveId(null)
       reloadConversations(false)
     } catch {
-      showToast('删除失败')
+      showToast(t('myAgent.toast.deleteFail'))
     }
   }
 
@@ -154,13 +156,13 @@ export default function MyAgentPage() {
       const msgs = await listMessages(cid)
       setMessages(msgs)
       setHappyUntil(Date.now() + 3000) // 收到回复,小屋撒花庆祝一下
-      if (r.refused) showToast('人格开关拦截了这次回复')
+      if (r.refused) showToast(t('myAgent.toast.refused'))
       if (r.action?.type === 'sign_tx') {
         setPendingSignTx({ unsignedTxs: r.action.unsignedTxs, note: r.action.note, proposal: r.action.proposal })
       }
       reloadConversations()
     } catch (err) {
-      showToast(err instanceof TypeError ? 'Agent 服务未启动(cd agent && npm run dev)' : '发送失败,请重试')
+      showToast(err instanceof TypeError ? t('myAgent.toast.serviceDown') : t('myAgent.toast.sendFail'))
     } finally {
       setSending(false)
     }
@@ -178,29 +180,29 @@ export default function MyAgentPage() {
       const swapTxHash = txHashes[txHashes.length - 1]
       setSigning(false)
       setConfirming(true)
-      showToast('交易已广播,正在等链上确认结果…')
+      showToast(t('myAgent.toast.broadcasted'))
       if (pendingSignTx.proposal) {
         try {
           // 后端会等回执、解析 Swap 实际输出,并在会话里追加一条确认消息
           const r = await confirmSign(tokenId, swapTxHash, pendingSignTx.proposal, activeId ?? undefined)
-          showToast(r.confirmed ? '兑换已确认,结果已发到对话里' : '交易已广播,确认结果稍后由 Agent 告知')
+          showToast(r.confirmed ? t('myAgent.toast.swapConfirmed') : t('myAgent.toast.swapPending'))
           if (activeId) {
             const msgs = await listMessages(activeId)
             setMessages(msgs)
           }
         } catch (e) {
           console.warn('上报签名结果到 Agent 服务失败', e)
-          showToast('链上结果核实失败,交易可能已成功;刷新页面查看最新对话')
+          showToast(t('myAgent.toast.verifyFail'))
         }
       } else {
-        showToast(`交易已广播:${swapTxHash.slice(0, 12)}…`)
+        showToast(t('myAgent.toast.txBroadcasted', { hash: swapTxHash.slice(0, 12) }))
       }
       setPendingSignTx(null)
       setConfirming(false)
     } catch (err) {
       // MetaMask 等 provider 拒绝时抛的是 {code,message} 普通对象而非 Error,兜底文案会吞掉真实原因
       const msg = err instanceof Error ? err.message : (err as { message?: unknown } | null)?.message
-      showToast(typeof msg === 'string' && msg ? `签名或发送失败:${msg}` : '签名或发送失败')
+      showToast(typeof msg === 'string' && msg ? t('myAgent.toast.signFail', { message: msg }) : t('myAgent.toast.signFailPlain'))
     } finally {
       setSigning(false)
       setConfirming(false)
@@ -211,26 +213,26 @@ export default function MyAgentPage() {
     return (
       <div className="mx-auto max-w-md px-4 py-24 text-center">
         <div className="text-5xl mb-4">🤖</div>
-        <p className="text-slate-300 mb-6">先铸造你的 Agent,才能拥有专属助手</p>
-        <Link to="/mint" className="btn-primary inline-block">前往铸造工坊</Link>
+        <p className="text-slate-300 mb-6">{t('myAgent.mintFirst')}</p>
+        <Link to="/mint" className="btn-primary inline-block">{t('myAgent.goMint')}</Link>
       </div>
     )
   }
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
-      <h2 className="text-2xl font-bold mb-1">我的 Agent 助手</h2>
-      <p className="text-sm text-slate-400 mb-5">只属于你的 {didName || 'Agent'},对话只有你能看到,它记得你们聊过的一切</p>
+      <h2 className="text-2xl font-bold mb-1">{t('myAgent.title')}</h2>
+      <p className="text-sm text-slate-400 mb-5">{t('myAgent.subtitle', { name: didName || 'Agent' })}</p>
 
       <div className="grid lg:grid-cols-[260px_1fr] gap-4 h-[calc(100vh-13rem)]">
         {/* 左:会话列表 */}
         <div className="glass p-3 flex flex-col overflow-hidden">
-          <button className="btn-primary w-full !text-sm !py-2 mb-3" onClick={newConversation}>➕ 新对话</button>
+          <button className="btn-primary w-full !text-sm !py-2 mb-3" onClick={newConversation}>{t('myAgent.newChat')}</button>
           <div className="flex-1 overflow-y-auto space-y-1.5">
-            {offline && <p className="text-xs text-slate-500 px-2 py-6 text-center">Agent 服务未启动<br />(cd agent && npm run dev)</p>}
-            {!offline && loadingList && <p className="text-xs text-slate-500 px-2 py-6 text-center animate-pulse">读取中…</p>}
+            {offline && <p className="text-xs text-slate-500 px-2 py-6 text-center">{t('myAgent.offline1')}<br />{t('myAgent.offline2')}</p>}
+            {!offline && loadingList && <p className="text-xs text-slate-500 px-2 py-6 text-center animate-pulse">{t('myAgent.loading')}</p>}
             {!offline && !loadingList && conversations.length === 0 && (
-              <p className="text-xs text-slate-500 px-2 py-6 text-center">还没有对话,点击上方"新对话"开始</p>
+              <p className="text-xs text-slate-500 px-2 py-6 text-center">{t('myAgent.empty')}</p>
             )}
             {conversations.map((c) => (
               <div
@@ -243,7 +245,7 @@ export default function MyAgentPage() {
                 <span className="text-sm truncate flex-1 text-left">{c.title}</span>
                 <button
                   className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-300 text-xs shrink-0 transition"
-                  title="删除对话"
+                  title={t('myAgent.deleteTitle')}
                   onClick={(e) => {
                     e.stopPropagation()
                     removeConversation(c.id)
@@ -272,7 +274,7 @@ export default function MyAgentPage() {
           <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-4">
             {!activeId && (
               <div className="h-full grid place-items-center text-slate-500 text-sm">
-                开始一个新对话,或从左侧选择历史对话
+                {t('myAgent.noActive')}
               </div>
             )}
             {messages.map((m) => (
@@ -286,43 +288,43 @@ export default function MyAgentPage() {
                 </div>
               </div>
             ))}
-            {sending && <div className="text-xs text-slate-500 animate-pulse">🤖 正在思考…</div>}
+            {sending && <div className="text-xs text-slate-500 animate-pulse">{t('myAgent.thinking')}</div>}
             {pendingSignTx && !signing && (
               <div className="flex justify-start">
                 <div className="max-w-[85%] glass rounded-xl p-3 border border-neon-purple/40">
                   <div className="text-sm flex items-center gap-2">
                     <span>🔏</span>
-                    <span>需要你的钱包签名以完成兑换</span>
+                    <span>{t('myAgent.needSign')}</span>
                   </div>
                   {pendingSignTx.note && <p className="text-xs text-slate-400 mt-1.5">{pendingSignTx.note}</p>}
                   <div className="text-[10px] text-slate-500 mt-1.5">
-                    共 {pendingSignTx.unsignedTxs.length} 笔待签交易
+                    {t('myAgent.txCount', { count: pendingSignTx.unsignedTxs.length })}
                   </div>
                   <button
                     className="btn-primary w-full mt-3 !text-xs !py-1.5"
                     onClick={signAndBroadcast}
                     disabled={!address || signing}
                   >
-                    签名并发送
+                    {t('myAgent.signSend')}
                   </button>
-                  {!address && <p className="text-[10px] text-rose-400 mt-1.5">请先连接钱包</p>}
+                  {!address && <p className="text-[10px] text-rose-400 mt-1.5">{t('myAgent.connectFirst')}</p>}
                 </div>
               </div>
             )}
-            {signing && <div className="text-xs text-slate-500 animate-pulse">⏳ 等待钱包签名…</div>}
-            {confirming && <div className="text-xs text-slate-500 animate-pulse">⛓️ 正在等链上确认,稍后我会主动告诉你结果…</div>}
+            {signing && <div className="text-xs text-slate-500 animate-pulse">{t('myAgent.waitingSign')}</div>}
+            {confirming && <div className="text-xs text-slate-500 animate-pulse">{t('myAgent.confirming')}</div>}
           </div>
           <div className="border-t border-white/10 p-3 flex items-center gap-2">
             <input
               className="input flex-1"
-              placeholder={activeId ? '继续说…' : '输入消息,开始新对话…'}
+              placeholder={activeId ? t('myAgent.inputContinue') : t('myAgent.inputNew')}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && send()}
               disabled={sending}
             />
             <button className="btn-primary !py-2" onClick={send} disabled={sending}>
-              {sending ? '发送中…' : '发送'}
+              {sending ? t('myAgent.sending') : t('myAgent.send')}
             </button>
           </div>
           </div>

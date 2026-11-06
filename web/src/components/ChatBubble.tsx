@@ -1,9 +1,11 @@
 import type { Message } from '../types'
 import { nftLibrary } from '../mock/data'
 import { rarityDot } from './NFTCard'
+import { useI18n } from '../i18n'
 
 // 聊天消息气泡:AI 分身消息带机器人标识,真人无
 export default function ChatBubble({ msg }: { msg: Message }) {
+  const { t } = useI18n()
   const mine = msg.from === 'me'
   const nft = msg.kind === 'nft' ? nftLibrary.find((i) => i.id === msg.nftId) : null
 
@@ -11,7 +13,7 @@ export default function ChatBubble({ msg }: { msg: Message }) {
     <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
       <div className={`max-w-[75%] ${mine ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
         {msg.ai && !mine && (
-          <span className="text-[10px] text-neon-cyan flex items-center gap-1">🤖 对方 Agent</span>
+          <span className="text-[10px] text-neon-cyan flex items-center gap-1">{t('bubble.aiBadge')}</span>
         )}
         <div
           className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
@@ -28,7 +30,7 @@ export default function ChatBubble({ msg }: { msg: Message }) {
               <div>
                 <div className="font-medium text-xs">{nft.name}</div>
                 <div className="text-[10px] opacity-75 mt-0.5">
-                  {rarityDot[nft.rarity]} {nft.rarity} · {nft.chain} · NFT 分享
+                  {rarityDot[nft.rarity]} {nft.rarity} · {nft.chain} · {t('bubble.nftShare')}
                 </div>
               </div>
             </div>

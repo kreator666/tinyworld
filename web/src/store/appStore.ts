@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AIProfile, ChatSession, DIDIdentity, Equipped, NFTCategory, NFTItem, WalletLogin } from '../types'
-import { aiReplies, nftLibrary } from '../mock/data'
+import { t } from '../i18n'
+import { aiReplyKeys, nftLibrary } from '../mock/data'
 
 export const emptyEquipped: Equipped = { head: null, body: null, accessory: null, pet: null }
 
@@ -152,7 +153,7 @@ export const useAppStore = create<AppState>()(
           peerAddress: agent.owner.slice(0, 6) + '...' + agent.owner.slice(-4),
           peerEmoji: '🤖',
           mode: 'ai',
-          aiTag: '链上 Agent',
+          aiTag: t('catalog.chat.chainAgentTag'),
           online: false,
           selfAgent,
           agentTokenId: agent.tokenId,
@@ -174,7 +175,7 @@ export const useAppStore = create<AppState>()(
           setTimeout(() => {
             const reply = {
               id: `m${msgSeq++}`, from: 'peer' as const, kind: 'text' as const,
-              text: aiReplies[Math.floor(Math.random() * aiReplies.length)],
+              text: t(aiReplyKeys[Math.floor(Math.random() * aiReplyKeys.length)]),
               time: now(), ai: true,
             }
             set((s) => ({
@@ -209,7 +210,7 @@ export const useAppStore = create<AppState>()(
           selfAgent: opts?.selfAgent, agentTokenId: opts?.agentTokenId,
           messages: [{
             id: `m${msgSeq++}`, from: 'peer', kind: 'text',
-            text: mode === 'ai' ? `你好,我是 ${peerName} 的 Agent,本人离线时由我代为交流~` : `你好,我是 ${peerName}。`,
+            text: mode === 'ai' ? t('catalog.chat.greetingAi', { name: peerName }) : t('catalog.chat.greetingHuman', { name: peerName }),
             time: now(), ai: mode === 'ai',
           }],
         }

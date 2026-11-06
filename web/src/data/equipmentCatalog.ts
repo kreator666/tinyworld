@@ -1,4 +1,5 @@
 import type { NFTCategory, NFTItem, Rarity } from '../types'
+import { t } from '../i18n'
 import { getCharacterById } from './characterCatalog'
 
 // ============================================================
@@ -177,7 +178,7 @@ export function getCharacterDisplay(category: NFTCategory, localId: string): { n
   const index = localId.split('-')[1]
   const char = getCharacterById(`character-${index}`)
   return {
-    name: `角色 ${index}`,
+    name: t('catalog.characterName', { index }),
     imageUrl: char ? (category === 'head' ? char.headUrl : char.bodyUrl) : '',
   }
 }

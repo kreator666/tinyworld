@@ -11,23 +11,25 @@ import { isWalletOnActiveChain, fetchStarterClaimState, claimStarterPack, fetchM
 import { formatUnits } from 'viem'
 import { explorerAddress, explorerTx, useChainConfig } from '../store/chainConfigStore'
 import { getCharacterDisplay, getPartByChainId } from '../data/equipmentCatalog'
+import { useI18n } from '../i18n'
 
-const tabs: { key: NFTCategory | 'did'; label: string }[] = [
-  { key: 'did', label: 'Agent 主身份' },
-  { key: 'head', label: '头部' },
-  { key: 'body', label: '身体' },
-  { key: 'accessory', label: '配饰' },
-  { key: 'pet', label: '宠物' },
+const tabs: { key: NFTCategory | 'did'; labelKey: string }[] = [
+  { key: 'did', labelKey: 'backpack.tab.did' },
+  { key: 'head', labelKey: 'backpack.tab.head' },
+  { key: 'body', labelKey: 'backpack.tab.body' },
+  { key: 'accessory', labelKey: 'backpack.tab.accessory' },
+  { key: 'pet', labelKey: 'backpack.tab.pet' },
 ]
 
 const SLOT_MAP = { head: 0, body: 1, accessory: 2, pet: 3 }
 
 // 资产背包:数据来源为链上合约(当前目标链)
 export default function BackpackPage() {
+  const { t } = useI18n()
   const active = useChainConfig((s) => s.active)
   const { connected, address, login } = useAppStore()
   const { tokenId, didName, equipped, parts, loading, error, refresh, equip, unequip, isAdmin, checkAdmin, mintParts, clear } = useChainStore()
-  const [tab, setTab] = useState<(typeof tabs)[number]['key']>('did')
+  const [tab, setTab] = useState<NFTCategory | 'did'>('did')
   const [acting, setActing] = useState<string | null>(null)
   const [lastTx, setLastTx] = useState<string | null>(null)
   // 新手大礼包:EVM 需已配置 partsClaim 合约;NEAR 为身份合约内置 claim(2026-11 已支持);
@@ -78,7 +80,7 @@ export default function BackpackPage() {
       const hash = await claimStarterPack(address, tokenId)
       setLastTx(hash)
       setClaimed(true)
-      showToast('大礼包已开箱,4 件装备已自动穿上!')
+      showToast(t('backpack.claim.opened'))
       await refresh(address)
     } catch (err) {
       showToast(explainChainError(err))
@@ -95,9 +97,9 @@ export default function BackpackPage() {
     try {
       const hash = await equip(address, slot, part.id)
       setLastTx(hash)
-      showToast(`已为 Agent 穿戴「${part.name}」`)
+      showToast(t('backpack.equip.done', { name: part.name }))
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '链上穿戴失败')
+      showToast(err instanceof Error ? err.message : t('backpack.equip.fail'))
     } finally {
       setActing(null)
     }
@@ -110,9 +112,9 @@ export default function BackpackPage() {
     try {
       const hash = await unequip(address, slot)
       setLastTx(hash)
-      showToast('已卸下链上装备')
+      showToast(t('backpack.equip.unequipDone'))
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '链上卸下失败')
+      showToast(err instanceof Error ? err.message : t('backpack.equip.unequipFail'))
     } finally {
       setActing(null)
     }
@@ -149,7 +151,7 @@ export default function BackpackPage() {
       try {
         const hash = await buyPartFromMarket(address, chainId, 1, price)
         setLastTx(hash)
-        showToast(`已购买「${name}」×1，到背包查看`)
+        showToast(t('backpack.buy.done', { name }))
         await refresh(address)
       } catch (err) {
         showToast(explainChainError(err))
@@ -159,16 +161,16 @@ export default function BackpackPage() {
       return
     }
     if (!isAdmin) {
-      showToast(`「${name}」尚未上架，购买市场合约未部署`)
+      showToast(t('backpack.buy.notListed', { name }))
       return
     }
     setActing(`buy-${chainId}`)
     try {
       const hash = await mintParts(address, address, [BigInt(chainId)], [1n])
       setLastTx(hash)
-      showToast(`已铸造「${name}」×1 到你的背包`)
+      showToast(t('backpack.buy.minted', { name }))
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '链上铸造失败')
+      showToast(err instanceof Error ? err.message : t('backpack.buy.mintFail'))
     } finally {
       setActing(null)
     }
@@ -182,36 +184,36 @@ export default function BackpackPage() {
   // 新手大礼包卡片:单按钮一键领取,随机 4 件套自动穿戴;4 个槽位展示神秘礼盒
   const renderStarterClaim = () => {
     if (!claimReady || claimed !== false) return null
-    const slots: { label: string; emoji: string }[] = [
-      { label: '头部', emoji: '🎁' },
-      { label: '身体', emoji: '🎁' },
-      { label: '配饰', emoji: '🎁' },
-      { label: '宠物', emoji: '🎁' },
+    const slots: { labelKey: string; emoji: string }[] = [
+      { labelKey: 'backpack.tab.head', emoji: '🎁' },
+      { labelKey: 'backpack.tab.body', emoji: '🎁' },
+      { labelKey: 'backpack.tab.accessory', emoji: '🎁' },
+      { labelKey: 'backpack.tab.pet', emoji: '🎁' },
     ]
     return (
       <div className="glass neon-border p-5 mb-6">
         <div className="flex items-center gap-3">
           <span className="w-11 h-11 rounded-xl bg-neon-grad grid place-items-center text-2xl shadow-neon-purple">🎁</span>
           <div>
-            <div className="font-semibold">领取新手大礼包</div>
+            <div className="font-semibold">{t('backpack.claim.title')}</div>
             <div className="text-xs text-slate-400 mt-0.5">
-              新用户福利:一次开箱随机获得 4 件装备(头/身/配饰/宠物 各 1 件)并自动穿上,每地址限一次
+              {t('backpack.claim.desc')}
             </div>
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           {slots.map((s) => (
-            <div key={s.label} className="rounded-xl border border-white/10 p-3 text-center">
+            <div key={s.labelKey} className="rounded-xl border border-white/10 p-3 text-center">
               <div className="w-full h-20 grid place-items-center text-3xl rounded-lg bg-slate-900/60">{s.emoji}</div>
-              <div className="mt-2 text-sm text-slate-300">{s.label}</div>
-              <div className="mt-1 text-[11px] text-slate-500">随机 1 件</div>
+              <div className="mt-2 text-sm text-slate-300">{t(s.labelKey)}</div>
+              <div className="mt-1 text-[11px] text-slate-500">{t('backpack.claim.randomOne')}</div>
             </div>
           ))}
         </div>
         <button className="btn-primary w-full mt-4" disabled={claiming} onClick={doClaim}>
-          {claiming ? '开箱中…' : '一键领取并自动穿戴'}
+          {claiming ? t('backpack.claim.claiming') : t('backpack.claim.button')}
         </button>
-        <div className="mt-2 text-[11px] text-slate-500 text-center">首次领取可能需要签署最多 3 笔交易(托管授权 + 代穿授权 + 领取)</div>
+        <div className="mt-2 text-[11px] text-slate-500 text-center">{t('backpack.claim.hint')}</div>
       </div>
     )
   }
@@ -220,23 +222,23 @@ export default function BackpackPage() {
     if (!connected || !onTargetChain) {
       return (
         <div className="glass p-10 text-center text-slate-500 max-w-md">
-          {connected ? `⚠️ 请切换到 ${active.name} 网络以查看链上资产` : '请先连接钱包以查看链上资产'}
+          {connected ? t('backpack.switchNetwork', { name: active.name }) : t('backpack.connectFirst')}
           <br />
-          <Link to="/mint" className="btn-primary inline-block mt-4 text-sm">去铸造 Agent</Link>
+          <Link to="/mint" className="btn-primary inline-block mt-4 text-sm">{t('backpack.goMint')}</Link>
         </div>
       )
     }
 
-    if (loading && parts.length === 0) return <div className="glass p-10 text-center text-slate-500 max-w-md">链上资产读取中…</div>
-    if (error) return <div className="glass p-10 text-center text-rose-400 max-w-md">读取失败: {error}</div>
+    if (loading && parts.length === 0) return <div className="glass p-10 text-center text-slate-500 max-w-md">{t('backpack.loading')}</div>
+    if (error) return <div className="glass p-10 text-center text-rose-400 max-w-md">{t('backpack.readFail', { msg: error })}</div>
 
     if (tab === 'did') {
       if (tokenId === 0) {
         return (
           <div className="glass p-10 text-center text-slate-500 max-w-md">
-            尚未铸造 Agent 主身份
+            {t('backpack.noIdentity')}
             <br />
-            <Link to="/mint" className="btn-primary inline-block mt-4 text-sm">去铸造</Link>
+            <Link to="/mint" className="btn-primary inline-block mt-4 text-sm">{t('backpack.goMintShort')}</Link>
           </div>
         )
       }
@@ -246,7 +248,7 @@ export default function BackpackPage() {
             <div className="flex items-center gap-4">
               <span className="w-14 h-14 rounded-xl bg-neon-grad grid place-items-center text-2xl shadow-neon-purple">🪪</span>
               <div>
-                <div className="font-semibold">{didName} · 主身份 NFT</div>
+                <div className="font-semibold">{t('backpack.didTitle', { name: didName })}</div>
                 <div className="text-xs text-slate-500 font-mono mt-0.5">tokenId: {tokenId}</div>
               </div>
             </div>
@@ -254,16 +256,16 @@ export default function BackpackPage() {
               <div>chain: {active.name}</div>
               <div>contract: <a className="text-neon-cyan hover:underline" href={explorerAddress(active.identity)} target="_blank" rel="noreferrer">DIDIdentity</a></div>
               <div>owner: {address}</div>
-              <div>数量: 1(专属)</div>
+              <div>{t('backpack.countLabel')}</div>
             </div>
             {lastTx && (
               <div className="mt-3 text-[10px] text-slate-500">
-                最近交易: <a className="text-neon-cyan hover:underline" href={explorerTx(lastTx)} target="_blank" rel="noreferrer">{lastTx.slice(0, 14)}…</a>
+                {t('backpack.lastTx')}<a className="text-neon-cyan hover:underline" href={explorerTx(lastTx)} target="_blank" rel="noreferrer">{lastTx.slice(0, 14)}…</a>
               </div>
             )}
           </div>
           <div className="glass p-5 flex flex-col items-center">
-            <div className="text-sm text-slate-400 mb-2">当前链上装备</div>
+            <div className="text-sm text-slate-400 mb-2">{t('backpack.currentEquip')}</div>
             <PaperDoll equipped={equipped} size="lg" />
           </div>
         </div>
@@ -277,7 +279,7 @@ export default function BackpackPage() {
         const local = nftLibrary.find((i) => i.id === p.localId)
         return { ...p, local }
       })
-    if (list.length === 0) return <div className="glass p-10 text-center text-slate-500 max-w-md">该分类下暂无链上配件</div>
+    if (list.length === 0) return <div className="glass p-10 text-center text-slate-500 max-w-md">{t('backpack.emptyCategory')}</div>
 
     return (
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -311,7 +313,7 @@ export default function BackpackPage() {
           return (
             <div key={p.id} className="relative">
               <NFTCard item={item} />
-              <div className="mt-2 text-[11px] text-slate-500 font-mono truncate">链上 id: {p.id}</div>
+              <div className="mt-2 text-[11px] text-slate-500 font-mono truncate">{t('backpack.chainId', { id: p.id })}</div>
               <div className="mt-2 flex gap-2">
                 {worn ? (
                   <button
@@ -319,16 +321,16 @@ export default function BackpackPage() {
                     disabled={acting === tab}
                     onClick={() => doUnequip(tab as NFTCategory)}
                   >
-                    {acting === tab ? '上链中…' : '✓ 穿戴中 · 卸下'}
+                    {acting === tab ? t('backpack.txPending') : t('backpack.wornBtn')}
                   </button>
                 ) : p.balance > 0 ? (
                   <button
                     className="flex-1 btn-primary !text-xs !py-1.5"
                     disabled={acting === p.localId || tokenId === 0}
-                    title={tokenId === 0 ? '请先铸造 Agent' : undefined}
+                    title={tokenId === 0 ? t('backpack.needMint') : undefined}
                     onClick={() => doEquip(p.localId, tab as NFTCategory)}
                   >
-                    {acting === p.localId ? '上链中…' : '穿戴'}
+                    {acting === p.localId ? t('backpack.txPending') : t('backpack.equipBtn')}
                   </button>
                 ) : (
                   <button
@@ -336,18 +338,21 @@ export default function BackpackPage() {
                     disabled={acting === `buy-${p.id}`}
                     title={
                       marketPrices[p.id] !== undefined
-                        ? '市场直售:平台铸造 1 份到你的钱包'
+                        ? t('backpack.buyMarketTitle')
                         : isAdmin
-                          ? '铸造 1 份到当前钱包'
-                          : '该装备未上架,购买市场合约未部署'
+                          ? t('backpack.mintTitle')
+                          : t('backpack.notListedTitle')
                     }
                     onClick={() => doBuy(p.id, p.name)}
                   >
                     {acting === `buy-${p.id}`
-                      ? '交易中…'
+                      ? t('backpack.buying')
                       : marketPrices[p.id] !== undefined
-                        ? `购买 · ${formatUnits(marketPrices[p.id], active.chain.nativeCurrency.decimals)} ${active.chain.nativeCurrency.symbol}`
-                        : '购买'}
+                        ? t('backpack.buyPrice', {
+                            price: formatUnits(marketPrices[p.id], active.chain.nativeCurrency.decimals),
+                            symbol: active.chain.nativeCurrency.symbol,
+                          })
+                        : t('backpack.buyBtn')}
                   </button>
                 )}
               </div>
@@ -360,21 +365,21 @@ export default function BackpackPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
-      <h2 className="text-2xl font-bold mb-1">资产背包</h2>
-      <p className="text-sm text-slate-400 mb-5">链上资产(连接 {active.name} 后自动读取)</p>
+      <h2 className="text-2xl font-bold mb-1">{t('backpack.title')}</h2>
+      <p className="text-sm text-slate-400 mb-5">{t('backpack.subtitle', { name: active.name })}</p>
 
       {renderStarterClaim()}
 
       <div className="flex gap-2 mb-6 flex-wrap">
-        {tabs.map((t) => (
+        {tabs.map((tb) => (
           <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
+            key={tb.key}
+            onClick={() => setTab(tb.key)}
             className={`px-4 py-2 rounded-xl text-sm transition ${
-              tab === t.key ? 'bg-neon-grad text-white shadow-neon-purple' : 'glass text-slate-300 hover:border-neon-purple/50'
+              tab === tb.key ? 'bg-neon-grad text-white shadow-neon-purple' : 'glass text-slate-300 hover:border-neon-purple/50'
             }`}
           >
-            {t.label}
+            {t(tb.labelKey)}
           </button>
         ))}
       </div>

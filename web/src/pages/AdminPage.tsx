@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PublicKey } from '@solana/web3.js'
+import { t, useI18n } from '../i18n'
 import { isWalletOnActiveChain } from '../lib/chainDispatch'
 import { isValidNearAddress } from '../lib/walletNear'
 import type { NFTCategory, Rarity } from '../types'
@@ -15,14 +16,24 @@ import {
 import { explorerTx, useChainConfig } from '../store/chainConfigStore'
 import { rarityDot, rarityStyle } from '../components/NFTCard'
 
-const TABS: { key: NFTCategory; label: string }[] = [
-  { key: 'head', label: '头部' },
-  { key: 'body', label: '身体' },
-  { key: 'accessory', label: '配饰' },
-  { key: 'pet', label: '宠物' },
+const TABS: { key: NFTCategory; labelKey: string }[] = [
+  { key: 'head', labelKey: 'head' },
+  { key: 'body', labelKey: 'body' },
+  { key: 'accessory', labelKey: 'accessory' },
+  { key: 'pet', labelKey: 'pet' },
 ]
 
 const RARITIES: Rarity[] = ['普通', '稀有', '史诗', '传说']
+
+/** Rarity 数据值(链上/目录共用)到词典 key 的映射 */
+const RARITY_KEYS: Record<Rarity, string> = {
+  普通: 'common',
+  稀有: 'rare',
+  史诗: 'epic',
+  传说: 'legend',
+}
+
+const rarityLabel = (r: Rarity) => t(`admin.rarity.${RARITY_KEYS[r]}`)
 
 // 地址校验:EVM 0x / Solana base58 / NEAR account_id(按激活链族;格式都接受,铸造时以链上程序为准)
 function isAddress(v: string, family: 'evm' | 'solana' | 'near' = 'evm'): boolean {
@@ -40,6 +51,7 @@ function isAddress(v: string, family: 'evm' | 'solana' | 'near' = 'evm'): boolea
 }
 
 export default function AdminPage() {
+  const { t } = useI18n()
   const active = useChainConfig((s) => s.active)
   const { connected, address, login } = useAppStore()
   const { isAdmin, adminLoading, partStates, checkAdmin, refreshPartStates, registerParts, mintParts, error } = useChainStore()
@@ -83,7 +95,7 @@ export default function AdminPage() {
     if (!address || !isAdmin) return
     const unregistered = tabParts.filter((p) => !stateMap.get(p.chainId)?.registered)
     if (unregistered.length === 0) {
-      showToast('本类所有装备都已注册，无需重复操作')
+      showToast(t('admin.register.allDone'))
       return
     }
     const parts = unregistered.map((p) => ({
@@ -105,9 +117,9 @@ export default function AdminPage() {
           if (p.txHash) setLastTx(p.txHash)
         },
       )
-      showToast(`✅ ${TABS.find((t) => t.key === tab)?.label} ${parts.length} 件未注册装备已上链`)
+      showToast(t('admin.register.done', { label: t(`admin.tab.${tab}`), count: parts.length }))
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '注册失败')
+      showToast(err instanceof Error ? err.message : t('admin.register.fail'))
     } finally {
       setRegProgress(null)
     }
@@ -117,7 +129,7 @@ export default function AdminPage() {
     if (!address || !isAdmin) return
     const to = recipient.trim() || address
     if (!isAddress(to, active.family ?? 'evm')) {
-      showToast('请输入有效的钱包地址(0x、Solana 或 NEAR 账户)')
+      showToast(t('admin.mint.invalidAddress'))
       return
     }
 
@@ -132,7 +144,7 @@ export default function AdminPage() {
     })).filter((b) => b.items.length > 0 && mintAmounts[b.rarity] > 0)
 
     if (batches.length === 0) {
-      showToast('没有可铸造的装备（请检查是否已注册或 maxSupply 是否已满）')
+      showToast(t('admin.mint.noMintable'))
       return
     }
 
@@ -148,10 +160,10 @@ export default function AdminPage() {
         const hash = await mintParts(address, to, ids, amounts)
         setLastTx(hash)
       }
-      showToast(`✅ 已向 ${to.slice(0, 6)}…${to.slice(-4)} 铸造 ${tab} 配件`)
+      showToast(t('admin.mint.done', { addr: `${to.slice(0, 6)}…${to.slice(-4)}`, label: t(`admin.tab.${tab}`) }))
       await refreshPartStates()
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '铸造失败')
+      showToast(err instanceof Error ? err.message : t('admin.mint.fail'))
     } finally {
       setMintProgress(null)
     }
@@ -161,9 +173,9 @@ export default function AdminPage() {
     return (
       <div className="mx-auto max-w-7xl px-4 py-10">
         <div className="glass p-10 text-center text-slate-400 max-w-md mx-auto">
-          请先连接钱包以进入管理员页面
+          {t('admin.connectFirst')}
           <br />
-          <Link to="/" className="btn-primary inline-block mt-4 text-sm">返回首页</Link>
+          <Link to="/" className="btn-primary inline-block mt-4 text-sm">{t('admin.backHome')}</Link>
         </div>
       </div>
     )
@@ -173,7 +185,7 @@ export default function AdminPage() {
     return (
       <div className="mx-auto max-w-7xl px-4 py-10">
         <div className="glass p-10 text-center text-amber-400 max-w-md mx-auto">
-          管理员页面需切换到 {active.name} 网络
+          {t('admin.wrongNetwork', { name: active.name })}
         </div>
       </div>
     )
@@ -182,7 +194,7 @@ export default function AdminPage() {
   if (checking) {
     return (
       <div className="mx-auto max-w-7xl px-4 py-10">
-        <div className="glass p-10 text-center text-slate-400 max-w-md mx-auto">正在校验管理员权限…</div>
+        <div className="glass p-10 text-center text-slate-400 max-w-md mx-auto">{t('admin.checking')}</div>
       </div>
     )
   }
@@ -191,9 +203,9 @@ export default function AdminPage() {
     return (
       <div className="mx-auto max-w-7xl px-4 py-10">
         <div className="glass border border-rose-500/40 p-10 text-center max-w-md mx-auto">
-          <p className="text-rose-400 font-semibold">⚠ 当前地址没有管理员权限</p>
+          <p className="text-rose-400 font-semibold">{t('admin.noPermission')}</p>
           <p className="text-sm text-slate-400 mt-2">
-            只有 DIDParts 合约 owner 或被授权的 minter 才能发行装备。
+            {t('admin.noPermissionDetail')}
           </p>
           <p className="text-xs font-mono text-slate-500 mt-4 break-all">{address}</p>
         </div>
@@ -205,20 +217,20 @@ export default function AdminPage() {
     <div className="mx-auto max-w-7xl px-4 py-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <div>
-          <h2 className="text-2xl font-bold">装备发行后台</h2>
+          <h2 className="text-2xl font-bold">{t('admin.title')}</h2>
           <p className="text-sm text-slate-400 mt-1">
-            在 {active.name} 上注册装备并运营发放；新装备注册是市场/大礼包上架的前提。当前地址：
+            {t('admin.intro', { name: active.name })}
             <span className="font-mono text-neon-cyan">{address?.slice(0, 6)}…{address?.slice(-4)}</span>
           </p>
         </div>
         <div className="flex gap-2">
-          <Link to="/admin/arena" className="btn-ghost text-xs">竞技场管理 →</Link>
+          <Link to="/admin/arena" className="btn-ghost text-xs">{t('admin.toArena')}</Link>
           <button
             className="btn-ghost text-xs"
             onClick={() => address && refreshPartStates()}
             disabled={adminLoading}
           >
-            {adminLoading ? '刷新中…' : '刷新链上状态'}
+            {adminLoading ? t('admin.refreshing') : t('admin.refresh')}
           </button>
           {lastTx && (
             <a
@@ -227,7 +239,7 @@ export default function AdminPage() {
               target="_blank"
               rel="noreferrer"
             >
-              最近交易
+              {t('admin.lastTx')}
             </a>
           )}
         </div>
@@ -235,21 +247,21 @@ export default function AdminPage() {
 
       {error && (
         <div className="glass border border-rose-500/40 p-4 mb-6 text-sm text-rose-400">
-          链上错误: {error}
+          {t('admin.chainError', { msg: error })}
         </div>
       )}
 
       {/* 类别标签 */}
       <div className="flex gap-2 mb-6 flex-wrap">
-        {TABS.map((t) => (
+        {TABS.map((x) => (
           <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
+            key={x.key}
+            onClick={() => setTab(x.key)}
             className={`px-4 py-2 rounded-xl text-sm transition ${
-              tab === t.key ? 'bg-neon-grad text-white shadow-neon-purple' : 'glass text-slate-300 hover:border-neon-purple/50'
+              tab === x.key ? 'bg-neon-grad text-white shadow-neon-purple' : 'glass text-slate-300 hover:border-neon-purple/50'
             }`}
           >
-            {t.label}
+            {t(`admin.tab.${x.key}`)}
           </button>
         ))}
       </div>
@@ -260,11 +272,11 @@ export default function AdminPage() {
         <div className="glass p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">
-              {TABS.find((t) => t.key === tab)?.label}装备目录
-              <span className="text-slate-400 text-xs font-normal ml-2">共 {tabParts.length} 件</span>
+              {t('admin.catalogTitle', { label: t(`admin.tab.${tab}`) })}
+              <span className="text-slate-400 text-xs font-normal ml-2">{t('admin.countTotal', { count: tabParts.length })}</span>
             </h3>
             <span className={`text-xs ${allRegistered ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {allRegistered ? '✓ 本类已全部注册' : '⚠ 尚有未注册装备'}
+              {allRegistered ? t('admin.allRegistered') : t('admin.someUnregistered')}
             </span>
           </div>
 
@@ -305,7 +317,7 @@ export default function AdminPage() {
                   <div className="text-xs font-medium truncate" title={displayName}>{displayName}</div>
                   <div className="flex items-center justify-between mt-1.5">
                     <span className={`tag ${rarityStyle[p.rarity]} text-[10px]`}>
-                      {rarityDot[p.rarity]} {p.rarity}
+                      {rarityDot[p.rarity]} {rarityLabel(p.rarity)}
                     </span>
                     <span className="text-[10px] text-slate-500 font-mono">#{p.chainId}</span>
                   </div>
@@ -313,15 +325,15 @@ export default function AdminPage() {
                     {state ? (
                       <>
                         <div className={state.registered ? 'text-emerald-400' : 'text-amber-400'}>
-                          {state.registered ? '✓ 已注册' : '未注册'}
+                          {state.registered ? t('admin.stateRegistered') : t('admin.stateUnregistered')}
                         </div>
-                        <div>max: {state.maxSupply.toLocaleString()} / 已铸: {state.totalSupply.toLocaleString()}</div>
+                        <div>{t('admin.maxMinted', { max: state.maxSupply.toLocaleString(), minted: state.totalSupply.toLocaleString() })}</div>
                         <div className={state.mintable ? 'text-slate-400' : 'text-rose-400'}>
-                          {state.mintable ? '可铸造' : '已关闭'}
+                          {state.mintable ? t('admin.mintable') : t('admin.closed')}
                         </div>
                       </>
                     ) : (
-                      <div className="text-slate-500">读取中…</div>
+                      <div className="text-slate-500">{t('admin.reading')}</div>
                     )}
                   </div>
                 </div>
@@ -333,14 +345,14 @@ export default function AdminPage() {
         {/* 右侧：发行操作 */}
         <div className="space-y-4">
           <div className="glass p-5">
-            <h3 className="font-semibold mb-3">1. 注册本类全部装备</h3>
+            <h3 className="font-semibold mb-3">{t('admin.register.step')}</h3>
             <p className="text-xs text-slate-400 mb-4">
-              将 30 件 {TABS.find((t) => t.key === tab)?.label}装备注册到链上。每笔注册需要钱包确认一次交易。
+              {t('admin.register.desc', { count: 30, label: t(`admin.tab.${tab}`) })}
             </p>
             {regProgress ? (
               <div className="space-y-2">
                 <div className="text-sm text-neon-cyan">
-                  注册中 {regProgress.current}/{regProgress.total}：{regProgress.name}
+                  {t('admin.register.progress', { current: regProgress.current, total: regProgress.total, name: regProgress.name })}
                 </div>
                 <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                   <div
@@ -355,37 +367,35 @@ export default function AdminPage() {
                 onClick={doRegisterCategory}
                 disabled={regProgress !== null || adminLoading}
               >
-                注册 {TABS.find((t) => t.key === tab)?.label} (30 笔)
+                {t('admin.register.btn', { label: t(`admin.tab.${tab}`), count: 30 })}
               </button>
             )}
           </div>
 
           <div className="glass p-5">
-            <h3 className="font-semibold mb-3">2. 按稀有度铸造本类(运营发放)</h3>
+            <h3 className="font-semibold mb-3">{t('admin.mint.step')}</h3>
             <p className="text-xs text-slate-400 mb-4">
-              定向铸造给指定地址,适用于<b>活动空投 / 中奖 / 补偿</b>等运营场景。
-              常规装备获取已走<b>新手大礼包</b>(免费)与<b>铸造直售市场</b>(付费),
-              请勿用本功能做大规模常规分发——它绕过市场定价与大礼包限领,会破坏经济可预测性。
+              {t('admin.mint.descBefore')}<b>{t('admin.mint.descB1')}</b>{t('admin.mint.descMid1')}<b>{t('admin.mint.descB2')}</b>{t('admin.mint.descMid2')}<b>{t('admin.mint.descB3')}</b>{t('admin.mint.descAfter')}
             </p>
             <div className="mb-4">
-              <label className="text-xs text-slate-400">接收地址</label>
+              <label className="text-xs text-slate-400">{t('admin.mint.recipient')}</label>
               <input
                 className="input mt-1"
-                placeholder="接收地址(0x 或 Solana),留空则发给自己"
+                placeholder={t('admin.mint.recipientPlaceholder')}
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
               />
               {!recipient.trim() && (
-                <p className="text-[10px] text-slate-500 mt-1">留空将铸造到当前连接地址</p>
+                <p className="text-[10px] text-slate-500 mt-1">{t('admin.mint.recipientHint')}</p>
               )}
             </div>
 
             <div className="space-y-3 mb-4">
               {RARITIES.map((rarity) => (
                 <div key={rarity} className="flex items-center justify-between">
-                  <span className={`text-xs ${rarityStyle[rarity]}`}>{rarityDot[rarity]} {rarity}</span>
+                  <span className={`text-xs ${rarityStyle[rarity]}`}>{rarityDot[rarity]} {rarityLabel(rarity)}</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-500">每件铸造</span>
+                    <span className="text-[10px] text-slate-500">{t('admin.mint.perItem')}</span>
                     <input
                       type="number"
                       min={0}
@@ -398,7 +408,7 @@ export default function AdminPage() {
                         }))
                       }
                     />
-                    <span className="text-[10px] text-slate-500">份</span>
+                    <span className="text-[10px] text-slate-500">{t('admin.mint.copies')}</span>
                   </div>
                 </div>
               ))}
@@ -407,7 +417,7 @@ export default function AdminPage() {
             {mintProgress ? (
               <div className="space-y-2">
                 <div className="text-sm text-neon-cyan">
-                  铸造中 {mintProgress.current}/{mintProgress.total}：{mintProgress.rarity}
+                  {t('admin.mint.progress', { current: mintProgress.current, total: mintProgress.total, rarity: rarityLabel(mintProgress.rarity) })}
                 </div>
                 <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                   <div
@@ -422,12 +432,12 @@ export default function AdminPage() {
                 onClick={doMintCategory}
                 disabled={mintProgress !== null || adminLoading}
               >
-                铸造 {TABS.find((t) => t.key === tab)?.label}
+                {t('admin.mint.btn', { label: t(`admin.tab.${tab}`) })}
               </button>
             )}
 
             <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
-              系统会按 普通/稀有/史诗/传说 分 4 组逐件铸造(每组内每个装备一笔交易)。已注册且未超过 maxSupply 的装备才会被铸造。
+              {t('admin.mint.note')}
             </p>
           </div>
         </div>

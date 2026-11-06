@@ -1,4 +1,5 @@
 import type { NFTItem, Rarity } from '../types'
+import { useI18n } from '../i18n'
 
 export const rarityStyle: Record<Rarity, string> = {
   普通: 'border-slate-400/40 text-slate-300',
@@ -23,6 +24,7 @@ export default function NFTCard({
   onClick?: () => void
   actions?: React.ReactNode
 }) {
+  const { t } = useI18n()
   return (
     <div
       onClick={onClick}
@@ -63,7 +65,7 @@ export default function NFTCard({
       </div>
       <div className="flex items-center justify-between mt-4">
         <span className={`text-[11px] ${item.owned ? 'text-emerald-400' : 'text-slate-500'}`}>
-          {item.owned ? '✓ 已持有' : '未持有'}
+          {item.owned ? t('nftcard.owned') : t('nftcard.notOwned')}
         </span>
         {actions}
       </div>

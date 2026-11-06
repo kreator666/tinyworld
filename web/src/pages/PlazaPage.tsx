@@ -9,17 +9,19 @@ import { useChainConfig } from '../store/chainConfigStore'
 import { getPartByLocalId } from '../data/equipmentCatalog'
 import type { Rarity } from '../types'
 import { rarityDot } from '../components/NFTCard'
+import { useI18n } from '../i18n'
 
 const filters = [
-  { key: 'latest', label: '最新铸造' },
-  { key: 'rare', label: '稀有装备' },
-  { key: 'follow', label: '关注列表' },
+  { key: 'latest', labelKey: 'plaza.filter.latest' },
+  { key: 'rare', labelKey: 'plaza.filter.rare' },
+  { key: 'follow', labelKey: 'plaza.filter.follow' },
 ] as const
 
 const rareOrder: Record<Rarity, number> = { 传说: 0, 史诗: 1, 稀有: 2, 普通: 3 }
 
 // 页面 4:社交广场(用户列表全部来自链上已铸造的 Agent)
 export default function PlazaPage() {
+  const { t } = useI18n()
   const active = useChainConfig((s) => s.active)
   const [filter, setFilter] = useState<(typeof filters)[number]['key']>('latest')
   const [agents, setAgents] = useState<PlazaAgent[]>([])
@@ -80,22 +82,22 @@ export default function PlazaPage() {
       id: `agent-${a.tokenId}`,
       equipped: a.equipped,
       label: a.name,
-      lines: [(a.bio?.trim() || `我是 ${a.name}`).slice(0, 40)],
+      lines: [(a.bio?.trim() || t('plaza.roomDefaultBio', { name: a.name })).slice(0, 40)],
     }))
     if (myTokenId > 0 && !top6.some((a) => a.tokenId === myTokenId)) {
-      list.push({ id: `agent-${myTokenId}`, equipped: myEquipped, label: `我·${didName || 'Agent'}`, isSelf: true })
+      list.push({ id: `agent-${myTokenId}`, equipped: myEquipped, label: t('plaza.selfLabel', { name: didName || 'Agent' }), isSelf: true })
     }
     return list
-  }, [agents, myTokenId, didName, myEquipped])
+  }, [agents, myTokenId, didName, myEquipped, t])
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
-      <h2 className="text-2xl font-bold mb-1">社交广场</h2>
-      <p className="text-sm text-slate-400 mb-5">发现其他人的 Agent,和它们互动、聊天、建立连接</p>
+      <h2 className="text-2xl font-bold mb-1">{t('plaza.title')}</h2>
+      <p className="text-sm text-slate-400 mb-5">{t('plaza.subtitle')}</p>
 
       {!connected || !onTargetChain ? (
         <div className="glass p-10 text-center text-slate-500 max-w-md">
-          {connected ? `⚠️ 请切换到 ${active.name} 网络以查看链上 Agent` : '请先连接钱包以查看链上 Agent'}
+          {connected ? t('plaza.switchNetwork', { name: active.name }) : t('plaza.connectFirst')}
         </div>
       ) : (
         <>
@@ -121,7 +123,7 @@ export default function PlazaPage() {
                   filter === f.key ? 'bg-neon-grad text-white shadow-neon-purple' : 'glass text-slate-300 hover:border-neon-purple/50'
                 }`}
               >
-                {f.label}
+                {t(f.labelKey)}
               </button>
             ))}
           </div>
@@ -130,11 +132,11 @@ export default function PlazaPage() {
             {/* 卡片流 */}
             <div className="grid sm:grid-cols-2 gap-4 content-start">
               {loading && agents.length === 0 && (
-                <div className="glass p-10 text-center text-slate-500 sm:col-span-2 animate-pulse">正在从链上读取 Agent…</div>
+                <div className="glass p-10 text-center text-slate-500 sm:col-span-2 animate-pulse">{t('plaza.loading')}</div>
               )}
               {!loading && users.length === 0 && (
                 <div className="glass p-10 text-center text-slate-500 sm:col-span-2">
-                  {filter === 'follow' ? '还没有关注任何 Agent,去逛逛最新铸造吧' : '链上还没有铸造的 Agent'}
+                  {filter === 'follow' ? t('plaza.emptyFollow') : t('plaza.empty')}
                 </div>
               )}
               {users.map((u) => <DIDCard key={u.tokenId} agent={u} />)}
@@ -143,8 +145,8 @@ export default function PlazaPage() {
             {/* 侧边推荐栏 */}
             <aside className="space-y-4 content-start">
               <div className="glass p-4">
-                <h3 className="font-semibold text-sm mb-3">👥 关注的 Agent</h3>
-                {followedAgents.length === 0 && <p className="text-xs text-slate-500">暂无关注,进对方主页点 + 关注</p>}
+                <h3 className="font-semibold text-sm mb-3">{t('plaza.followedTitle')}</h3>
+                {followedAgents.length === 0 && <p className="text-xs text-slate-500">{t('plaza.followedEmpty')}</p>}
                 <div className="space-y-2.5">
                   {followedAgents.map((u) => (
                     <button key={u.tokenId} className="w-full flex items-center gap-2.5 text-left" onClick={() => nav(`/profile/${u.tokenId}`)}>
@@ -158,7 +160,7 @@ export default function PlazaPage() {
                         onClick={(e) => {
                           e.stopPropagation()
                           toggleFollow(`agent-${u.tokenId}`)
-                          showToast('已取消关注')
+                          showToast(t('plaza.unfollowed'))
                         }}
                       >
                         ✕
@@ -169,8 +171,8 @@ export default function PlazaPage() {
               </div>
 
               <div className="glass p-4">
-                <h3 className="font-semibold text-sm mb-3">🔥 最新铸造榜</h3>
-                {latestTop.length === 0 && <p className="text-xs text-slate-500">暂无数据</p>}
+                <h3 className="font-semibold text-sm mb-3">{t('plaza.latestTitle')}</h3>
+                {latestTop.length === 0 && <p className="text-xs text-slate-500">{t('plaza.latestEmpty')}</p>}
                 <div className="space-y-2">
                   {latestTop.map((r, i) => (
                     <button key={r.tokenId} className="w-full flex items-center gap-2.5 text-sm text-left" onClick={() => nav(`/profile/${r.tokenId}`)}>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as PIXI from 'pixi.js'
 import type { Equipped } from '../types'
+import { useI18n } from '../i18n'
 import { getCharacterById, characterIdFromLocalId } from '../data/characterCatalog'
 import { getPartByLocalId } from '../data/equipmentCatalog'
 
@@ -33,6 +34,7 @@ export default function PaperDoll({
   const boxRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<StageRef | null>(null)
   const [stageReady, setStageReady] = useState(false)
+  const { t } = useI18n()
 
   const [zoom, setZoom] = useState(1)
   const [flip, setFlip] = useState(false)
@@ -268,7 +270,7 @@ export default function PaperDoll({
 
       {interactive && (
         <div className="flex items-center gap-2 text-xs">
-          <button className="btn-ghost !px-2 !py-1" onClick={() => setFlip((f) => !f)} title="左右翻转">⇋</button>
+          <button className="btn-ghost !px-2 !py-1" onClick={() => setFlip((f) => !f)} title={t('paperDoll.flipTitle')}>⇋</button>
           <button className="btn-ghost !px-2 !py-1" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.1).toFixed(1)))}>−</button>
           <span className="text-slate-400 w-10 text-center">{Math.round(zoom * 100)}%</span>
           <button className="btn-ghost !px-2 !py-1" onClick={() => setZoom((z) => Math.min(1.6, +(z + 0.1).toFixed(1)))}>+</button>

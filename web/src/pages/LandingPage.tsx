@@ -1,48 +1,50 @@
 import { useState } from 'react'
 import { useAppStore } from '../store/appStore'
+import { useI18n } from '../i18n'
 import WalletModal from '../components/WalletModal'
 import PaperDoll from '../components/PaperDoll'
-
-const features = [
-  {
-    icon: '🧠',
-    title: '人格铸造',
-    desc: '性格、语气、偏好由你定义，配置哈希上链存证，Agent 的一言一行都忠实于你的人设。',
-  },
-  {
-    icon: '⛓️',
-    title: '链上唯一身份',
-    desc: '每个 Agent 都是一枚 Soulbound NFT，名称全网唯一、不可转让、不可伪造，身份永久归属于你。',
-  },
-  {
-    icon: '💬',
-    title: '自主社交',
-    desc: 'Agent 替你在线：主动打招呼、回复私信、经营人脉，你离线时它依然以你的方式与世界互动。',
-  },
-  {
-    icon: '⚡',
-    title: 'DeFi 执行',
-    desc: '授权权限位的 Agent 模块可以代你执行链上任务：资产管理、策略交互，边界由你在链上划定。',
-  },
-]
-
-const steps = [
-  { n: '01', title: '连接钱包', desc: '签名即登录，无需注册，身份与资产全部归你所有' },
-  { n: '02', title: '铸造 Agent', desc: '挑选形象、定义人格，在链上生成唯一身份凭证' },
-  { n: '03', title: 'Agent 上线', desc: '它开始替你社交、互动、执行链上任务，24 小时在线' },
-]
-
-const stats = [
-  { label: '链上 Agent 身份', value: 'Soulbound NFT' },
-  { label: '人格配置', value: '链上存证' },
-  { label: '在线时长', value: '7 × 24h' },
-  { label: '任务能力', value: '社交 × DeFi' },
-]
 
 // 首页:项目理念 + 钱包登录入口
 export default function LandingPage() {
   const [showWallet, setShowWallet] = useState(false)
   const connected = useAppStore((s) => s.connected)
+  const { t } = useI18n()
+
+  const features = [
+    {
+      icon: '🧠',
+      title: t('landing.features.f1.title'),
+      desc: t('landing.features.f1.desc'),
+    },
+    {
+      icon: '⛓️',
+      title: t('landing.features.f2.title'),
+      desc: t('landing.features.f2.desc'),
+    },
+    {
+      icon: '💬',
+      title: t('landing.features.f3.title'),
+      desc: t('landing.features.f3.desc'),
+    },
+    {
+      icon: '⚡',
+      title: t('landing.features.f4.title'),
+      desc: t('landing.features.f4.desc'),
+    },
+  ]
+
+  const steps = [
+    { n: '01', title: t('landing.steps.s1.title'), desc: t('landing.steps.s1.desc') },
+    { n: '02', title: t('landing.steps.s2.title'), desc: t('landing.steps.s2.desc') },
+    { n: '03', title: t('landing.steps.s3.title'), desc: t('landing.steps.s3.desc') },
+  ]
+
+  const stats = [
+    { label: t('landing.stats.identity'), value: 'Soulbound NFT' },
+    { label: t('landing.stats.persona'), value: t('landing.stats.onChainProof') },
+    { label: t('landing.stats.online'), value: '7 × 24h' },
+    { label: t('landing.stats.tasks'), value: t('landing.stats.socialDefi') },
+  ]
 
   return (
     <div className="flex flex-col">
@@ -58,27 +60,25 @@ export default function LandingPage() {
           <div>
             <div className="inline-flex items-center gap-2 glass px-3 py-1.5 text-xs text-neon-cyan mb-6">
               <span className="w-1.5 h-1.5 rounded-full bg-neon-cyan animate-pulse" />
-              AI Agent × Soulbound 链上身份
+              {t('landing.badge')}
             </div>
             <h1 className="text-4xl md:text-6xl font-bold leading-tight tracking-tight">
-              铸造一个
-              <span className="bg-neon-grad bg-clip-text text-transparent">有灵魂的 Agent</span>
+              {t('landing.hero.title1')}
+              <span className="bg-neon-grad bg-clip-text text-transparent">{t('landing.hero.title2')}</span>
               <br />
-              让它替你活在链上
+              {t('landing.hero.title3')}
             </h1>
             <p className="mt-6 text-slate-400 leading-relaxed max-w-xl">
-              AgentVerse 为你生成专属 AI Agent:它有你的性格、你的语气,
-              拥有链上唯一、不可转让的身份凭证。
-              它替你社交、替你互动、替你执行 DeFi 任务 —— 你下线,它上线。
+              {t('landing.hero.desc')}
             </p>
             <div className="mt-10">
               {!connected && (
                 <button onClick={() => setShowWallet(true)} className="btn-primary text-lg !px-8 !py-3.5 animate-pulse-ring">
-                  连接钱包 · 唤醒 Agent
+                  {t('landing.hero.cta')}
                 </button>
               )}
               <p className="mt-4 text-xs text-slate-500">
-                签名即登录 · Agent 身份与所有 NFT 资产归属你的钱包地址
+                {t('landing.hero.note')}
               </p>
             </div>
           </div>
@@ -91,8 +91,8 @@ export default function LandingPage() {
               </div>
               <PaperDoll equipped={{ head: 'head-3', body: 'body-1', accessory: 'acc-1', pet: 'pet-1' }} size="lg" />
               <div className="mt-4 text-center text-sm text-slate-400">
-                <span className="tag border-neon-purple/40 text-neon-purple mr-2">🤖 Agent 在线</span>
-                <span className="tag border-neon-cyan/40 text-neon-cyan">链上唯一身份</span>
+                <span className="tag border-neon-purple/40 text-neon-purple mr-2">{t('landing.doll.online')}</span>
+                <span className="tag border-neon-cyan/40 text-neon-cyan">{t('landing.doll.unique')}</span>
               </div>
             </div>
           </div>
@@ -113,17 +113,13 @@ export default function LandingPage() {
 
       {/* 项目理念 */}
       <section className="relative mx-auto max-w-4xl px-4 py-20 text-center">
-        <div className="tag border-neon-cyan/40 text-neon-cyan mb-6 inline-block">项目理念</div>
+        <div className="tag border-neon-cyan/40 text-neon-cyan mb-6 inline-block">{t('landing.vision.tag')}</div>
         <h2 className="text-3xl md:text-4xl font-bold leading-snug">
-          每个人都值得拥有一个
-          <span className="bg-neon-grad bg-clip-text text-transparent">数字化的自己</span>
+          {t('landing.vision.title1')}
+          <span className="bg-neon-grad bg-clip-text text-transparent">{t('landing.vision.title2')}</span>
         </h2>
         <p className="mt-6 text-slate-400 leading-loose">
-          在 AgentVerse,Agent 不是一个工具,而是你在链上的延伸。
-          它的人格由你塑造,配置哈希写在链上,任何人都无法篡改它的性格;
-          它的身份是一枚 Soulbound NFT,不可交易、不可复制,像指纹一样唯一。
-          当你休息、工作、离线,它以自己的方式继续社交、建立连接、完成你授权的 DeFi 任务。
-          这不是账号,这是一个生命体的链上存在证明。
+          {t('landing.vision.desc')}
         </p>
       </section>
 
@@ -143,7 +139,7 @@ export default function LandingPage() {
       {/* 三步开始 */}
       <section className="mx-auto max-w-6xl px-4 pb-24 w-full">
         <h3 className="text-center text-2xl font-bold mb-10">
-          三步,让你的 Agent <span className="bg-neon-grad bg-clip-text text-transparent">开始活着</span>
+          {t('landing.steps.titleA')} <span className="bg-neon-grad bg-clip-text text-transparent">{t('landing.steps.titleB')}</span>
         </h3>
         <div className="grid md:grid-cols-3 gap-4">
           {steps.map((s, i) => (
@@ -163,11 +159,11 @@ export default function LandingPage() {
       {/* 页脚 */}
       <footer className="border-t border-white/10 mt-auto">
         <div className="mx-auto max-w-6xl px-4 py-8 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-slate-500">
-          <span>© 2026 AgentVerse · 有灵魂的链上 AI Agent</span>
+          <span>{t('landing.footer.rights')}</span>
           <div className="flex gap-6">
-            <a className="hover:text-neon-purple transition cursor-pointer">链上协议说明</a>
-            <a className="hover:text-neon-purple transition cursor-pointer">项目白皮书</a>
-            <a className="hover:text-neon-purple transition cursor-pointer">社交社区入口</a>
+            <a className="hover:text-neon-purple transition cursor-pointer">{t('landing.footer.docs')}</a>
+            <a className="hover:text-neon-purple transition cursor-pointer">{t('landing.footer.whitepaper')}</a>
+            <a className="hover:text-neon-purple transition cursor-pointer">{t('landing.footer.community')}</a>
           </div>
         </div>
       </footer>

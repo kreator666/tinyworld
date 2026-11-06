@@ -5,6 +5,7 @@ import { getPersonaMirror, putPersonaMirror } from './agentApi'
 import { getActiveNearAccount, isValidNearAddress, nearFunctionCall, nearRelayUrl, nearSignAndSend } from './walletNear'
 import type { ChainIdentityState, ChainPartState, MintedAgent } from './chain'
 import type { Equipped } from '../types'
+import { t } from '../i18n'
 
 // ============================================================
 // NEAR 链交互层(tinyworld 合约:testnet,身份 NEP-171 Soulbound + 装备部件)
@@ -31,10 +32,10 @@ function contractId(): string {
 /** 当前连接的 NEAR 账户(account_id);未连接或登录身份不一致时抛错 */
 function requireNearAccount(owner?: string): string {
   const account = owner ?? getActiveNearAccount()
-  if (!account || !isValidNearAddress(account)) throw new Error('NEAR 钱包未连接,请先连接 NEAR 钱包')
+  if (!account || !isValidNearAddress(account)) throw new Error(t('chainMsg.near.notConnected'))
   const connected = getActiveNearAccount()
   if (connected && connected !== account) {
-    throw new Error('当前 NEAR 账户已切换,与登录身份不一致,请重新连接钱包后再试')
+    throw new Error(t('chainMsg.near.accountSwitched'))
   }
   return account
 }
@@ -80,10 +81,10 @@ async function nearRpc<T>(method: string, params: unknown, id = 1): Promise<T> {
         body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
         signal: AbortSignal.timeout(15_000),
       })
-      if (!res.ok) throw new Error(`NEAR RPC 请求失败(${res.status})`)
+      if (!res.ok) throw new Error(t('chainMsg.near.rpcFailed', { status: res.status }))
       const data = (await res.json()) as RpcResponse<T>
-      if (data.error) throw new Error(`NEAR RPC 错误: ${data.error.message}`)
-      if (data.result === undefined) throw new Error('NEAR RPC 返回格式异常')
+      if (data.error) throw new Error(t('chainMsg.near.rpcError', { msg: data.error.message }))
+      if (data.result === undefined) throw new Error(t('chainMsg.near.rpcFormat'))
       return data.result
     } catch (err) {
       lastErr = err
@@ -255,7 +256,7 @@ export async function fetchAgentPublic(tokenId: number): Promise<{
   equipped: Equipped
 }> {
   const identity = await callView<IdentityView>('get_identity', { token_id: u64(tokenId) })
-  if (!identity) throw new Error(`Agent #${tokenId} 不存在`)
+  if (!identity) throw new Error(t('chainMsg.agent.notFound', { id: tokenId }))
   return { tokenId, name: identity.name, owner: identity.owner_id, bio: '', equipped: equippedToLocal(identity) }
 }
 
@@ -287,7 +288,7 @@ export async function fetchAgentsPublic(tokenIds: number[]): Promise<{
 const PERSONA_DATA_PREFIX = 'data:application/json;base64,'
 
 const decodePersonaJson = (uri: string): string => {
-  if (!uri.startsWith(PERSONA_DATA_PREFIX)) throw new Error('人格配置 URI 格式异常')
+  if (!uri.startsWith(PERSONA_DATA_PREFIX)) throw new Error(t('chainMsg.persona.uriInvalid'))
   return decodeURIComponent(escape(atob(uri.slice(PERSONA_DATA_PREFIX.length))))
 }
 
@@ -357,7 +358,7 @@ export async function fetchStarterClaimState(address: string): Promise<boolean> 
 export async function claimStarterPack(owner: string, _tokenId: number): Promise<string> {
   requireNearAccount(owner)
   const claimed = await fetchStarterClaimState(owner)
-  if (claimed) throw new Error('该账户已领取过新手大礼包')
+  if (claimed) throw new Error(t('chainMsg.starter.alreadyClaimed'))
   return sendCall('claim_starter_pack', {}, '0')
 }
 
@@ -376,9 +377,9 @@ async function sendCall(methodName: string, args: Record<string, unknown>, depos
 export async function mintIdentity(owner: string, name: string, _profileURI: string): Promise<string> {
   requireNearAccount(owner)
   const trimmed = name.trim()
-  if (trimmed.length < 1 || trimmed.length > 64) throw new Error('名称不符合要求(1-64 字符)')
+  if (trimmed.length < 1 || trimmed.length > 64) throw new Error(t('chainMsg.error.invalidName'))
   const fee = await callView<string>('get_current_fee', {})
-  if (fee === null) throw new Error('链上费率读取失败,请稍后重试')
+  if (fee === null) throw new Error(t('chainMsg.fee.readFailed'))
   return sendCall('mint_identity', { name: trimmed }, fee)
 }
 
@@ -386,8 +387,8 @@ export async function mintIdentity(owner: string, name: string, _profileURI: str
 export async function equipPart(owner: string, tokenId: number, slot: number, partChainId: number): Promise<string> {
   requireNearAccount(owner)
   const part = await callView<PartView>('get_part', { part_id: u64(partChainId) })
-  if (!part || !part.registered) throw new Error('该配件尚未注册,请先注册')
-  if (part.slot !== slot) throw new Error('配件插槽与目标插槽不匹配')
+  if (!part || !part.registered) throw new Error(t('chainMsg.error.partNotRegistered'))
+  if (part.slot !== slot) throw new Error(t('chainMsg.error.slotMismatch'))
   return sendCall('equip', { token_id: u64(tokenId), part_id: u64(partChainId), slot })
 }
 
@@ -395,7 +396,7 @@ export async function equipPart(owner: string, tokenId: number, slot: number, pa
 export async function unequipPart(owner: string, tokenId: number, slot: number): Promise<string> {
   requireNearAccount(owner)
   const equipped = await callView<(string | null)[]>('get_equipped', { token_id: u64(tokenId) })
-  if (!equipped || !equipped[slot]) throw new Error('该插槽没有装备中的配件')
+  if (!equipped || !equipped[slot]) throw new Error(t('chainMsg.error.nothingEquipped'))
   return sendCall('unequip', { token_id: u64(tokenId), slot })
 }
 
@@ -412,7 +413,7 @@ export async function setPersonaOnChain(
 ): Promise<string> {
   requireNearAccount(owner)
   const json = decodePersonaJson(uri)
-  if (keccak256(toBytes(json)) !== contentHash.toLowerCase()) throw new Error('人格配置哈希校验失败')
+  if (keccak256(toBytes(json)) !== contentHash.toLowerCase()) throw new Error(t('chainMsg.persona.hashMismatch'))
   await putPersonaMirror(contentHash, json)
   return sendCall('update_persona', { token_id: u64(tokenId), persona_hash: contentHash, arweave_id: '' })
 }
@@ -450,17 +451,17 @@ export async function registerPartsBatch(
 /** 批量铸造:合约是单笔 mint_part(to, part_id, amount),这里按 id 循环发多笔,返回最后一笔 tx hash */
 export async function mintPartsBatch(owner: string, to: string, ids: bigint[], amounts: bigint[]): Promise<string> {
   if (ids.length === 0 || amounts.length === 0 || ids.length !== amounts.length) {
-    throw new Error('铸造参数不能为空且 ids 与 amounts 长度必须一致')
+    throw new Error(t('chainMsg.mint.paramsMismatch'))
   }
   requireNearAccount(owner)
-  if (!isValidNearAddress(to)) throw new Error('接收地址不是有效的 NEAR 账户 id')
+  if (!isValidNearAddress(to)) throw new Error(t('chainMsg.near.invalidReceiver'))
   // 先批量校验注册状态,避免铸到一半才报错
   const views = await callViewBatch<PartView>(
     'get_part',
     ids.map((id) => ({ part_id: u64(id) })),
   )
   views.forEach((view, i) => {
-    if (!view || !view.registered) throw new Error(`配件 #${Number(ids[i])} 尚未注册`)
+    if (!view || !view.registered) throw new Error(t('chainMsg.part.notRegistered', { id: Number(ids[i]) }))
   })
   let lastHash = ''
   for (let i = 0; i < ids.length; i++) {
@@ -471,39 +472,39 @@ export async function mintPartsBatch(owner: string, to: string, ids: bigint[], a
 
 // ---------------- 错误解释 ----------------
 
-/** 把 NEAR 合约 panic / 钱包错误翻译成中文提示 */
+/** 把 NEAR 合约 panic / 钱包错误翻译成本地化提示 */
 export function explainNearChainError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   // 合约 require!/panic_str 的消息原样在 Failure 里
   const table: Record<string, string> = {
-    AlreadyHasDID: '该地址已铸造过 Agent(每地址限 1 枚)',
-    InvalidName: '名称不符合要求(1-64 字符)',
-    NameTaken: '该名称已被占用,请换一个',
-    InsufficientFee: '铸造费不足:attached deposit 低于当前费率,请刷新页面后重试',
-    InvalidPersonaHash: '人格哈希不合法(需 64 位 hex)',
-    InvalidArweaveId: 'arweave id 不合法(空串或 43 位 base64url)',
-    IdentityNotFound: '该 Agent 身份不存在',
-    'not token owner': '只有 Agent 持有者本人可以操作',
-    PartNotRegistered: '该配件尚未注册,请先注册',
-    PartAlreadyRegistered: '该配件已注册,不能重复注册',
-    InvalidMaxSupply: '最大供应量必须大于 0',
-    PartNotMintable: '该配件已关闭铸造(mintable=false)',
-    MaxSupplyExceeded: '铸造数量超过该配件最大供应量',
-    'not minter': '当前地址没有铸造权限(需合约 owner 或授权 minter)',
-    'not owner': '当前地址不是合约 owner',
-    WrongSlot: '配件插槽与目标插槽不匹配',
-    InvalidSlot: '插槽无效(0-3)',
-    SlotEmpty: '该插槽没有装备中的配件',
-    SlotsNotEmpty: '关闭身份前必须先卸下全部装备',
-    NoIdentity: '尚未铸造 Agent 身份',
-    TokenLocked: '身份处于 Soulbound 锁定状态,需先解锁',
-    'exceeds allowance': '功能调用密钥额度不足,请在钱包中批准全额访问后重试',
+    AlreadyHasDID: 'chainMsg.error.alreadyHasDID',
+    InvalidName: 'chainMsg.error.invalidName',
+    NameTaken: 'chainMsg.error.nameTaken',
+    InsufficientFee: 'chainMsg.error.insufficientFee',
+    InvalidPersonaHash: 'chainMsg.error.invalidPersonaHash',
+    InvalidArweaveId: 'chainMsg.error.invalidArweaveId',
+    IdentityNotFound: 'chainMsg.error.identityNotFound',
+    'not token owner': 'chainMsg.error.notTokenOwner',
+    PartNotRegistered: 'chainMsg.error.partNotRegistered',
+    PartAlreadyRegistered: 'chainMsg.error.partAlreadyRegistered',
+    InvalidMaxSupply: 'chainMsg.error.invalidMaxSupply',
+    PartNotMintable: 'chainMsg.error.mintableClosed',
+    MaxSupplyExceeded: 'chainMsg.error.maxSupplyExceeded',
+    'not minter': 'chainMsg.error.notMinterNear',
+    'not owner': 'chainMsg.error.notOwnerNear',
+    WrongSlot: 'chainMsg.error.slotMismatch',
+    InvalidSlot: 'chainMsg.error.invalidSlot',
+    SlotEmpty: 'chainMsg.error.nothingEquipped',
+    SlotsNotEmpty: 'chainMsg.error.slotsNotEmpty',
+    NoIdentity: 'chainMsg.identity.notMinted',
+    TokenLocked: 'chainMsg.error.tokenLocked',
+    'exceeds allowance': 'chainMsg.error.exceedsAllowance',
   }
-  for (const [key, text] of Object.entries(table)) {
-    if (msg.includes(key)) return text
+  for (const [key, i18nKey] of Object.entries(table)) {
+    if (msg.includes(key)) return t(i18nKey)
   }
-  if (/reject|denied|declined|cancel|closed|dismiss/i.test(msg)) return '你取消了钱包操作'
-  if (/NotEnoughBalance|insufficient/i.test(msg)) return '钱包 NEAR 余额不足(交易还需少量 gas),请先领取测试币'
-  if (/timeout|timed out/i.test(msg)) return '交易确认超时,请重试(测试网拥堵时可能发生)'
-  return `链上操作失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`
+  if (/reject|denied|declined|cancel|closed|dismiss/i.test(msg)) return t('chainMsg.error.userRejected')
+  if (/NotEnoughBalance|insufficient/i.test(msg)) return t('chainMsg.near.insufficientFunds')
+  if (/timeout|timed out/i.test(msg)) return t('chainMsg.tx.timeout')
+  return t('chainMsg.error.failed', { msg: msg.length > 120 ? msg.slice(0, 120) + '…' : msg })
 }

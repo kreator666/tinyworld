@@ -7,9 +7,11 @@ import PixelRoom from '../components/PixelRoom'
 import { chatWithAgent, getInbox } from '../lib/agentApi'
 import { fetchAgentPublic, fetchMintedAgents, isWalletOnActiveChain, type MintedAgent } from '../lib/chainDispatch'
 import { useChainConfig } from '../store/chainConfigStore'
+import { useI18n } from '../i18n'
 
 // 页面 5:消息聊天界面 —— 纯社交,只列别人的链上 Agent;自己的 Agent 在 /assistant 助手页
 export default function ChatPage() {
+  const { t } = useI18n()
   const activeChain = useChainConfig((s) => s.active)
   const { connected, login, chats, activeChatId, setActiveChat, switchChatMode, sendMessage, appendPeerMessage, upsertChainSession, inventory, aiProfile, showToast } = useAppStore()
   const myTokenId = useChainStore((s) => s.tokenId)
@@ -130,8 +132,8 @@ export default function ChatPage() {
       .catch((err) => {
         // 网络层失败(服务没起)与业务错误(未铸造/LLM 异常)分开提示
         const msg = err instanceof TypeError
-          ? 'Agent 服务未启动,请先运行 agent/ 服务(npm run dev,端口 4111)'
-          : `Agent 回复失败:${err instanceof Error ? err.message : String(err)}`
+          ? t('chat.serviceDown')
+          : t('chat.replyFail', { message: err instanceof Error ? err.message : String(err) })
         appendPeerMessage(sessionId, msg)
       })
       .finally(() => setTypingChatId((id) => (id === sessionId ? null : id)))
@@ -141,15 +143,15 @@ export default function ChatPage() {
   const exportChat = () => {
     if (!active) return
     const lines = active.messages.map(
-      (m) => `[${m.time}] ${m.from === 'me' ? '我' : active.peerName + (m.ai ? '(Agent)' : '')}: ${m.kind === 'nft' ? '[NFT分享]' : m.text}`,
+      (m) => `[${m.time}] ${m.from === 'me' ? t('chat.exportMe') : active.peerName + (m.ai ? t('chat.exportAgentSuffix') : '')}: ${m.kind === 'nft' ? t('chat.exportNft') : m.text}`,
     )
-    const blob = new Blob([`AgentVerse 对话记录 - ${active.peerName}\n\n` + lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const blob = new Blob([`${t('chat.exportTitle', { name: active.peerName })}\n\n` + lines.join('\n')], { type: 'text/plain;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `chat-${active.peerName}.txt`
     a.click()
     URL.revokeObjectURL(a.href)
-    showToast('对话记录已导出')
+    showToast(t('chat.exportToast'))
   }
 
   return (
@@ -157,15 +159,15 @@ export default function ChatPage() {
       <div className="grid lg:grid-cols-[300px_1fr] gap-4 h-[calc(100vh-8.5rem)]">
         {/* 左:会话列表 */}
         <div className="glass p-3 overflow-y-auto">
-          <h3 className="text-sm font-semibold text-slate-300 px-2 py-2">会话列表</h3>
+          <h3 className="text-sm font-semibold text-slate-300 px-2 py-2">{t('chat.listTitle')}</h3>
           {!connected || !onTargetChain ? (
             <p className="text-xs text-slate-500 px-2 py-6 text-center">
-              连接钱包并切换到 {activeChain.name} 后,会话列表将从链上读取
+              {t('chat.needConnect', { name: activeChain.name })}
             </p>
           ) : loadingAgents && chats.length === 0 ? (
-            <p className="text-xs text-slate-500 px-2 py-6 text-center animate-pulse">正在从链上读取 Agent…</p>
+            <p className="text-xs text-slate-500 px-2 py-6 text-center animate-pulse">{t('chat.loading')}</p>
           ) : chats.length === 0 ? (
-            <p className="text-xs text-slate-500 px-2 py-6 text-center">链上还没有铸造的 Agent</p>
+            <p className="text-xs text-slate-500 px-2 py-6 text-center">{t('chat.empty')}</p>
           ) : null}
           <div className="space-y-1.5">
             {chats.map((c) => {
@@ -184,16 +186,16 @@ export default function ChatPage() {
                       <span className="text-sm font-medium truncate">{c.peerName}</span>
                       {/* 会话类型标识 */}
                       {c.mode === 'ai' ? (
-                        <span className="tag !text-[9px] !px-1.5 border-neon-cyan/40 text-neon-cyan">🤖 AI</span>
+                        <span className="tag !text-[9px] !px-1.5 border-neon-cyan/40 text-neon-cyan">{t('chat.modeAI')}</span>
                       ) : (
-                        <span className="tag !text-[9px] !px-1.5 border-emerald-400/40 text-emerald-300">真人</span>
+                        <span className="tag !text-[9px] !px-1.5 border-emerald-400/40 text-emerald-300">{t('chat.modeHuman')}</span>
                       )}
                     </div>
                     <div className="text-xs text-slate-500 truncate mt-0.5">
-                      {last?.kind === 'nft' ? '[NFT 分享]' : last?.text}
+                      {last?.kind === 'nft' ? t('chat.lastNft') : last?.text}
                     </div>
                   </div>
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${c.online ? 'bg-emerald-400' : 'bg-slate-600'}`} title={c.online ? '真人在线' : '真人离线,AI 代管'} />
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${c.online ? 'bg-emerald-400' : 'bg-slate-600'}`} title={c.online ? t('chat.online') : t('chat.offline')} />
                 </button>
               )
             })}
@@ -216,7 +218,7 @@ export default function ChatPage() {
                     id: `peer-${active.id}`,
                     equipped: active.peerEquipped,
                     label: active.peerName,
-                    lines: [`你好呀,我是 ${active.peerName} 的 Agent~`, '有什么可以帮你的吗?', '随便聊聊也可以哦'],
+                    lines: [t('chat.roomHello', { name: active.peerName }), t('chat.roomHelp'), t('chat.roomCasual')],
                   },
                 ]}
               />
@@ -235,20 +237,20 @@ export default function ChatPage() {
                     onClick={() => switchChatMode(active.id, 'human')}
                     className={`px-3 py-1 rounded-full transition ${active.mode === 'human' ? 'bg-neon-grad text-white' : 'text-slate-400'}`}
                   >
-                    真人
+                    {t('chat.modeHuman')}
                   </button>
                   <button
                     onClick={() => switchChatMode(active.id, 'ai')}
                     className={`px-3 py-1 rounded-full transition ${active.mode === 'ai' ? 'bg-neon-grad text-white' : 'text-slate-400'}`}
                   >
-                    🤖 Agent
+                    {t('chat.tabAI')}
                   </button>
                 </div>
                 {active.agentTokenId != null && (
-                  <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => nav(`/profile/${active.agentTokenId}`)}>主页</button>
+                  <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => nav(`/profile/${active.agentTokenId}`)}>{t('chat.profileBtn')}</button>
                 )}
-                <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => setShowAIInfo(true)}>AI 设定</button>
-                <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={exportChat}>导出</button>
+                <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={() => setShowAIInfo(true)}>{t('chat.aiInfoBtn')}</button>
+                <button className="btn-ghost !px-3 !py-1.5 !text-xs" onClick={exportChat}>{t('chat.exportBtn')}</button>
               </div>
 
               {/* 消息流 */}
@@ -256,13 +258,13 @@ export default function ChatPage() {
                 {active.mode === 'ai' && (
                   <div className="text-center">
                     <span className="tag !text-[10px] border-neon-cyan/40 text-neon-cyan">
-                      🤖 当前由对方的 Agent({active.aiTag})代为交流
+                      {t('chat.aiSpeaking', { tag: active.aiTag })}
                     </span>
                   </div>
                 )}
                 {active.messages.map((m) => <ChatBubble key={m.id} msg={m} />)}
                 {typingChatId === active.id && (
-                  <div className="text-xs text-slate-500 animate-pulse">🤖 对方正在输入…</div>
+                  <div className="text-xs text-slate-500 animate-pulse">{t('chat.typing')}</div>
                 )}
               </div>
 
@@ -275,33 +277,33 @@ export default function ChatPage() {
                         key={i.id}
                         className="glass p-2 text-center hover:border-neon-purple/60 transition"
                         onClick={() => { sendMessage(active.id, '', 'nft', i.id); setShowNFT(false) }}
-                        title={`发送 ${i.name}`}
+                        title={t('chat.sendNftTitle', { name: i.name })}
                       >
                         <div className="text-xl">{i.emoji}</div>
                         <div className="text-[9px] text-slate-400 truncate">{i.name}</div>
                       </button>
                     ))}
-                    {inventory.length === 0 && <div className="col-span-4 text-xs text-slate-500 text-center py-2">背包为空</div>}
+                    {inventory.length === 0 && <div className="col-span-4 text-xs text-slate-500 text-center py-2">{t('chat.backpackEmpty')}</div>}
                   </div>
                 )}
                 <div className="flex items-center gap-2">
-                  <button className="btn-ghost !px-3 !py-2 text-sm" onClick={() => setShowNFT((v) => !v)} title="发送我的装备 NFT">
+                  <button className="btn-ghost !px-3 !py-2 text-sm" onClick={() => setShowNFT((v) => !v)} title={t('chat.nftBtnTitle')}>
                     🎒 NFT
                   </button>
                   <input
                     className="input flex-1"
-                    placeholder="发送消息…"
+                    placeholder={t('chat.inputPlaceholder')}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && send()}
                   />
-                  <button className="btn-primary !py-2" onClick={send}>发送</button>
+                  <button className="btn-primary !py-2" onClick={send}>{t('chat.send')}</button>
                 </div>
               </div>
             </div>
           </div>
         ) : (
-          <div className="glass grid place-items-center text-slate-500">选择左侧会话开始聊天</div>
+          <div className="glass grid place-items-center text-slate-500">{t('chat.noActive')}</div>
         )}
       </div>
 
@@ -310,19 +312,19 @@ export default function ChatPage() {
         <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm grid place-items-center p-4" onClick={() => setShowAIInfo(false)}>
           <div className="glass neon-border max-w-sm w-full p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-3">
-              <h3 className="font-semibold">🤖 本次对话 AI 性格设定</h3>
+              <h3 className="font-semibold">{t('chat.aiInfoTitle')}</h3>
               <button onClick={() => setShowAIInfo(false)} className="text-slate-400 hover:text-white">✕</button>
             </div>
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-slate-400">Agent 标签</span><span>{active.aiTag}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">人设模板</span><span>{aiProfile.template}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">语气风格</span><span>{aiProfile.tone}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">回复速度</span><span>{aiProfile.replySpeed === 'instant' ? '秒级快速回复' : '模拟人类延迟'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">{t('chat.aiTagLabel')}</span><span>{active.aiTag}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">{t('chat.templateLabel')}</span><span>{aiProfile.template}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">{t('chat.toneLabel')}</span><span>{aiProfile.tone}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">{t('chat.speedLabel')}</span><span>{aiProfile.replySpeed === 'instant' ? t('chat.speedInstant') : t('chat.speedHuman')}</span></div>
               <div className="pt-2 border-t border-white/10">
-                <span className="text-slate-400 text-xs">性格描述</span>
-                <p className="text-xs mt-1 text-slate-300">{aiProfile.personality || '未设置'}</p>
+                <span className="text-slate-400 text-xs">{t('chat.personalityLabel')}</span>
+                <p className="text-xs mt-1 text-slate-300">{aiProfile.personality || t('chat.personalityUnset')}</p>
               </div>
-              <p className="text-[10px] text-slate-500 pt-1">* 演示版:对方 Agent 设定以你的 AI 配置近似展示</p>
+              <p className="text-[10px] text-slate-500 pt-1">{t('chat.aiInfoNote')}</p>
             </div>
           </div>
         </div>

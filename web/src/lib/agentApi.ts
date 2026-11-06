@@ -3,6 +3,7 @@
 
 import { useAppStore } from '../store/appStore'
 import { getActiveChain } from '../store/chainConfigStore'
+import { t } from '../i18n'
 
 const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? ''
 
@@ -28,14 +29,14 @@ export async function putPersonaMirror(contentHash: string, json: string): Promi
     headers: { 'Content-Type': 'application/json', ...chainHeaders() },
     body: json,
   })
-  if (!res.ok) throw new Error(`人格镜像保存失败(${res.status})`)
+  if (!res.ok) throw new Error(t('agentApi.personaSaveFail', { status: res.status }))
 }
 
 /** 读取人格镜像 JSON 原文;404 返回 null(按"未设置人格"处理) */
 export async function getPersonaMirror(contentHash: string): Promise<string | null> {
   const res = await fetch(`${AGENT_API}/personas/${contentHash}`, { headers: chainHeaders() })
   if (res.status === 404) return null
-  if (!res.ok) throw new Error(`人格镜像读取失败(${res.status})`)
+  if (!res.ok) throw new Error(t('agentApi.personaReadFail', { status: res.status }))
   return res.text()
 }
 
@@ -60,8 +61,8 @@ export async function requestNonce(address: string): Promise<NonceResponse> {
     body: JSON.stringify({ address }),
   })
   const data = (await res.json().catch(() => null)) as (NonceResponse & { error?: string }) | null
-  if (!res.ok) throw new Error(data?.error ?? `获取 nonce 失败(${res.status})`)
-  if (!data?.nonce || !data?.issuedAt) throw new Error('nonce 返回格式异常')
+  if (!res.ok) throw new Error(data?.error ?? t('agentApi.nonceFail', { status: res.status }))
+  if (!data?.nonce || !data?.issuedAt) throw new Error(t('agentApi.nonceMalformed'))
   return data
 }
 
@@ -73,8 +74,8 @@ export async function verifyAgentLogin(message: string, signature: string): Prom
     body: JSON.stringify({ message, signature }),
   })
   const data = (await res.json().catch(() => null)) as (VerifyResponse & { error?: string }) | null
-  if (!res.ok) throw new Error(data?.error ?? `登录验证失败(${res.status})`)
-  if (!data?.token) throw new Error('verify 返回格式异常')
+  if (!res.ok) throw new Error(data?.error ?? t('agentApi.verifyFail', { status: res.status }))
+  if (!data?.token) throw new Error(t('agentApi.verifyMalformed'))
   return data
 }
 
@@ -144,8 +145,8 @@ export async function chatWithMyAgent(address: string, message: string): Promise
     body: JSON.stringify({ message }),
   })
   const data = (await res.json().catch(() => null)) as (Partial<AgentChatResult> & { error?: string }) | null
-  if (!res.ok) throw new Error(data?.error ?? `Agent 服务错误(${res.status})`)
-  if (!data?.reply) throw new Error('Agent 服务返回格式异常')
+  if (!res.ok) throw new Error(data?.error ?? t('agentApi.serviceError', { status: res.status }))
+  if (!data?.reply) throw new Error(t('agentApi.replyMalformed'))
   return data as AgentChatResult
 }
 
@@ -158,8 +159,8 @@ export async function chatWithAgent(tokenId: number, message: string, fromTokenI
     body: JSON.stringify(fromTokenId ? { message, fromTokenId } : { message }),
   })
   const data = (await res.json().catch(() => null)) as (Partial<AgentChatResult> & { error?: string }) | null
-  if (!res.ok) throw new Error(data?.error ?? `Agent 服务错误(${res.status})`)
-  if (!data?.reply) throw new Error('Agent 服务返回格式异常')
+  if (!res.ok) throw new Error(data?.error ?? t('agentApi.serviceError', { status: res.status }))
+  if (!data?.reply) throw new Error(t('agentApi.replyMalformed'))
   return data as AgentChatResult
 }
 
@@ -202,7 +203,7 @@ export interface SkillInfo {
 export async function apiCall<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${AGENT_API}${path}`, { ...init, headers: authHeaders(init?.headers) })
   const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null
-  if (!res.ok) throw new Error(data?.error ?? `Agent 服务错误(${res.status})`)
+  if (!res.ok) throw new Error(data?.error ?? t('agentApi.serviceError', { status: res.status }))
   return data as T
 }
 

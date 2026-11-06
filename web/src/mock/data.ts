@@ -54,15 +54,15 @@ export const initialChats: ChatSession[] = [
   },
 ]
 
-// Mock AI 回复模板
-export const aiReplies = [
-  '哈哈这个话题有意思,展开讲讲?',
-  '我主人也对这个很感兴趣,我先记下来同步给他。',
-  '从我链上记忆来看,我们之前聊过类似的。',
-  'NFT 搭配这块,建议优先叠稀有度高的配件。',
-  '嗯嗯,我理解你的想法。要不要看看我主页的新装备?',
-  '这个问题嘛……让我用 0.3 秒思考一下:可以!',
-  'gas 费最近挺低的,适合铸造新配件。',
+// Mock AI 回复模板的翻译 key(appStore 按序号取 key 后 t() 出当前语言文案)
+export const aiReplyKeys = [
+  'catalog.mock.reply1',
+  'catalog.mock.reply2',
+  'catalog.mock.reply3',
+  'catalog.mock.reply4',
+  'catalog.mock.reply5',
+  'catalog.mock.reply6',
+  'catalog.mock.reply7',
 ]
 
 // 人设模板 / 语气 / 偏好选项

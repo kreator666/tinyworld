@@ -30,6 +30,7 @@ import { getAddress } from 'viem'
 import { ensureTargetChain } from '../lib/chainDispatch'
 import { useChainConfig } from '../store/chainConfigStore'
 import { useChainStore } from '../store/chainStore'
+import { useI18n } from '../i18n'
 
 // 钱包选择弹窗: 通过 EIP-6963 发现钱包并走 SIWE 签名登录换取 JWT
 // Solana 激活链时改为 Phantom 连接 + signMessage 登录(消息格式见 buildSolanaLoginMessage)
@@ -41,6 +42,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
   const updateLoginChainId = useAppStore((s) => s.updateLoginChainId)
   const refresh = useChainStore((s) => s.refresh)
   const nav = useNavigate()
+  const { t } = useI18n()
   const family = active.family ?? 'evm'
   const isSolana = family === 'solana'
   const isNear = family === 'near'
@@ -81,7 +83,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
   // Solana(Phantom)登录:connect → /auth/nonce → signMessage → /auth/verify
   const handlePickSolana = async () => {
     if (!getSolanaProvider()) {
-      showToast('Phantom 未安装,请先安装钱包扩展')
+      showToast(t('wallet.noPhantom'))
       window.open('https://phantom.com', '_blank')
       return
     }
@@ -101,15 +103,15 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
         'solana',
       )
       onClose()
-      showToast(`Phantom 已连接(${active.name}),正在读取链上资产…`)
+      showToast(t('wallet.phantomConnected', { name: active.name }))
       try {
         await refresh(address)
       } catch {
-        showToast('已连接钱包,但读取链上资产失败,请稍后重试')
+        showToast(t('wallet.readFail'))
       }
       nav('/profile')
     } catch (err) {
-      let message = '登录失败,请重试'
+      let message = t('wallet.loginFail')
       if (err instanceof SolanaWalletError || err instanceof WalletError) {
         message = err.message
       } else if (err instanceof Error) {
@@ -141,15 +143,15 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
         'near',
       )
       onClose()
-      showToast(`NEAR 钱包已连接(${walletName}),正在读取链上资产…`)
+      showToast(t('wallet.nearConnected', { name: walletName }))
       try {
         await refresh(address)
       } catch {
-        showToast('已连接钱包,但读取链上资产失败,请稍后重试')
+        showToast(t('wallet.readFail'))
       }
       nav('/profile')
     } catch (err) {
-      let message = '登录失败,请重试'
+      let message = t('wallet.loginFail')
       if (err instanceof NearWalletError || err instanceof SolanaWalletError || err instanceof WalletError) {
         message = err.message
       } else if (err instanceof Error) {
@@ -165,7 +167,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
   const handlePick = async (wallet: DiscoveredWallet) => {
     console.log('[WalletModal] handlePick', wallet.name, wallet.installed, wallet.detail)
     if (!wallet.installed || !wallet.detail) {
-      showToast(`${wallet.name} 未安装，请先安装钱包扩展`)
+      showToast(t('wallet.walletNotInstalled', { name: wallet.name }))
       return
     }
 
@@ -199,20 +201,20 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
       try {
         await ensureTargetChain()
         updateLoginChainId(active.chainId)
-        showToast(`${wallet.name} 已连接并切换到 ${active.name},正在读取链上资产…`)
+        showToast(t('wallet.connectedSwitched', { name: wallet.name, chain: active.name }))
         await refresh(address)
       } catch (err) {
-        showToast(`已连接钱包,但未能切换到 ${active.name} 或读取链上资产,请手动切网络后再试`)
+        showToast(t('wallet.switchOrReadFail', { name: active.name }))
       }
       nav('/profile')
     } catch (err) {
       // 切链失败不算致命:已登录,但链上功能不可用
       if (err instanceof Error && err.message.includes('wallet_switch')) {
-        showToast(`请手动切换到 ${active.name} 网络以使用链上资产功能`)
+        showToast(t('wallet.switchManual', { name: active.name }))
         onClose()
         return
       }
-      let message = '登录失败，请重试'
+      let message = t('wallet.loginFail')
       if (err instanceof WalletError) {
         message = err.message
       } else if (err instanceof Error) {
@@ -227,8 +229,8 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
 
   const phaseText = (walletName: string) => {
     if (actingWallet !== walletName) return null
-    if (phase === 'connecting') return '连接钱包中…'
-    if (phase === 'signing') return '等待签名授权…'
+    if (phase === 'connecting') return t('wallet.phaseConnecting')
+    if (phase === 'signing') return t('wallet.phaseSigning')
     return null
   }
 
@@ -239,8 +241,8 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
           <span className="w-9 h-9 rounded-xl bg-neon-grad grid place-items-center text-xl">⬡</span>
           <button onClick={onClose} className="text-slate-400 hover:text-white">✕</button>
         </div>
-        <h3 className="text-lg font-semibold mt-2">连接钱包，唤醒你的 Agent</h3>
-        <p className="text-xs text-slate-400 mb-4">签名即登录，Agent 身份与资产全部归属你的钱包地址 · 当前网络:{active.name}</p>
+        <h3 className="text-lg font-semibold mt-2">{t('wallet.title')}</h3>
+        <p className="text-xs text-slate-400 mb-4">{t('wallet.subtitle', { name: active.name })}</p>
 
         <div className="space-y-2">
           {isSolana ? (
@@ -251,7 +253,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
             >
               <span className="text-xl">👻</span>
               <span className="font-medium">Phantom</span>
-              {!getSolanaProvider() && <span className="ml-auto text-xs text-slate-500">未安装</span>}
+              {!getSolanaProvider() && <span className="ml-auto text-xs text-slate-500">{t('wallet.notInstalled')}</span>}
               {phaseText('Phantom') && (
                 <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('Phantom')}</span>
               )}
@@ -268,7 +270,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
                     className="w-full flex items-center gap-3 glass px-4 py-3 transition disabled:opacity-60 hover:border-neon-purple/60"
                   >
                     <span className="text-xl">{NEAR_WALLET_ICONS[w.id] ?? 'Ⓝ'}</span>
-                    <span className="font-medium">{w.name} 插件钱包</span>
+                    <span className="font-medium">{t('wallet.extension', { name: w.name })}</span>
                     {phaseText(w.name) && (
                       <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText(w.name)}</span>
                     )}
@@ -276,25 +278,25 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
                 ))}
               {/* Meteor 网页通道:扩展未装/扩展故障时兜底,免安装 */}
               <button
-                onClick={() => handlePickNear('meteor-wallet', 'Meteor 网页', true)}
+                onClick={() => handlePickNear('meteor-wallet', t('wallet.meteorWebShort'), true)}
                 disabled={scanning || !!actingWallet}
                 className="w-full flex items-center gap-3 glass px-4 py-3 transition disabled:opacity-60 hover:border-neon-purple/60"
               >
                 <span className="text-xl">🌐</span>
-                <span className="font-medium">Meteor 网页钱包</span>
-                <span className="ml-auto text-xs text-slate-500">免安装</span>
-                {phaseText('Meteor 网页') && (
-                  <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText('Meteor 网页')}</span>
+                <span className="font-medium">{t('wallet.meteorWeb')}</span>
+                <span className="ml-auto text-xs text-slate-500">{t('wallet.noInstall')}</span>
+                {phaseText(t('wallet.meteorWebShort')) && (
+                  <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText(t('wallet.meteorWebShort'))}</span>
                 )}
               </button>
               {nearWalletOptions.filter((w) => !w.installed && w.id !== 'meteor-wallet').length > 0 && (
                 <p className="text-[10px] text-slate-500 pt-1">
-                  未安装:
-                  {nearWalletOptions
-                    .filter((w) => !w.installed && w.id !== 'meteor-wallet')
-                    .map((w) => w.name)
-                    .join(' / ')}
-                  (安装后刷新页面即可使用)
+                  {t('wallet.notInstalledList', {
+                    names: nearWalletOptions
+                      .filter((w) => !w.installed && w.id !== 'meteor-wallet')
+                      .map((w) => w.name)
+                      .join(' / '),
+                  })}
                 </p>
               )}
             </div>
@@ -310,7 +312,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
               >
                 <span className="text-xl">{w.icon}</span>
                 <span className="font-medium">{w.name}</span>
-                {!w.installed && <span className="ml-auto text-xs text-slate-500">未安装</span>}
+                {!w.installed && <span className="ml-auto text-xs text-slate-500">{t('wallet.notInstalled')}</span>}
                 {phaseText(w.name) && (
                   <span className="ml-auto text-xs text-neon-cyan animate-pulse">{phaseText(w.name)}</span>
                 )}
@@ -320,7 +322,7 @@ export default function WalletModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {scanning && (
-          <p className="mt-4 text-center text-xs text-slate-400 animate-pulse">正在扫描已安装钱包…</p>
+          <p className="mt-4 text-center text-xs text-slate-400 animate-pulse">{t('wallet.scanning')}</p>
         )}
       </div>
     </div>

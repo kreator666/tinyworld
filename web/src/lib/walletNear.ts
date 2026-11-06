@@ -11,6 +11,7 @@ import { setupModal, type WalletSelectorModal } from '@near-wallet-selector/moda
 import '@near-wallet-selector/modal-ui/styles.css'
 import { getActiveChain } from '../store/chainConfigStore'
 import { agentApiBase } from './agentApi'
+import { t } from '../i18n'
 
 // ============================================================
 // NEAR 钱包封装(wallet-selector:Meteor / Sender / Nightly / HERE)
@@ -252,7 +253,7 @@ export async function connectNearWalletById(walletId: string, forceWeb = false):
     const signIn = wallet.signIn as unknown as (params: { contractId?: string; methodNames?: string[] }) => Promise<unknown[]>
     await signIn({ contractId: getActiveChain().identity, methodNames: [] })
     const accountId = selector.store.getState().accounts[0]?.accountId
-    if (!accountId) throw new NearWalletError('SIGN_IN_FAILED', '钱包未返回账户,请重试')
+    if (!accountId) throw new NearWalletError('SIGN_IN_FAILED', t('chainMsg.wallet.noAccountReturned'))
     activeNearAccount = accountId
     return { address: accountId, providerName: walletId }
   } finally {
@@ -280,7 +281,7 @@ export async function connectNearWallet(): Promise<NearConnection> {
     }
     // 2 分钟未签入视为放弃(用户在钱包侧关闭窗口不会触发事件)
     const timer = setTimeout(() => {
-      finish(() => reject(new NearWalletError('CONNECT_TIMEOUT', '连接 NEAR 钱包超时,请重试')))
+      finish(() => reject(new NearWalletError('CONNECT_TIMEOUT', t('chainMsg.near.connectTimeout'))))
     }, 120_000)
     const sub = selector.store.observable.subscribe((state) => {
       const accountId = state.accounts[0]?.accountId
@@ -385,12 +386,12 @@ export function takeNearLoginReturn():
   clearStash()
   cleanWalletCallbackParams()
 
-  if (errorCode) return { kind: 'error', error: `钱包拒绝了签名(${errorCode})` }
+  if (errorCode) return { kind: 'error', error: t('chainMsg.wallet.signRejectedCode', { code: errorCode }) }
   const txHash = txHashes!.split(',')[0].trim()
-  if (!txHash) return { kind: 'error', error: '钱包回调缺少交易哈希' }
-  if (!pending) return { kind: 'error', error: '登录会话已过期,请重试(重定向前未暂存上下文或会话已失效)' }
+  if (!txHash) return { kind: 'error', error: t('chainMsg.near.callbackNoHash') }
+  if (!pending) return { kind: 'error', error: t('chainMsg.near.sessionExpiredNoStash') }
   // 会话有效期 10 分钟
-  if (Date.now() - pending.timestamp > 10 * 60 * 1000) return { kind: 'error', error: '登录会话已过期,请重试' }
+  if (Date.now() - pending.timestamp > 10 * 60 * 1000) return { kind: 'error', error: t('chainMsg.near.sessionExpired') }
   return { kind: 'success', txHash, pending }
 }
 
@@ -410,7 +411,7 @@ export async function nearSignAndSend(actions: InternalAction[], receiverId?: st
     })) as Array<{ transaction_outcome?: { id?: string }; transaction?: { hash?: string } }> | void
     const outcome = Array.isArray(outcomes) ? outcomes[0] : undefined
     const hash = outcome?.transaction_outcome?.id ?? outcome?.transaction?.hash ?? ''
-    if (!hash) throw new Error('NEAR 交易未返回哈希')
+    if (!hash) throw new Error(t('chainMsg.near.noTxHash'))
     return hash
   } catch (err) {
     throw normalizeNearError(err)
@@ -428,7 +429,7 @@ export function nearFunctionCall(methodName: string, args: Record<string, unknow
 function normalizeNearError(err: unknown): Error {
   const msg = err instanceof Error ? err.message : String(err)
   if (/reject|denied|declined|cancel|closed|dismiss/i.test(msg)) {
-    return new NearWalletError('SIGN_REJECTED', '你取消了钱包操作')
+    return new NearWalletError('SIGN_REJECTED', t('chainMsg.error.userRejected'))
   }
   return err instanceof Error ? err : new Error(msg)
 }

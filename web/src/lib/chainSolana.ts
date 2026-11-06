@@ -26,6 +26,7 @@ import {
 } from './walletSolana'
 import type { ChainIdentityState, ChainPartState, MintedAgent } from './chain'
 import type { Equipped } from '../types'
+import { t } from '../i18n'
 
 // ============================================================
 // Solana 链交互层(tinyworld 程序,Token-2022)
@@ -46,33 +47,38 @@ interface IdlIx {
 const IDL = tinyworldIdl as unknown as { instructions: IdlIx[] }
 const IX = new Map(IDL.instructions.map((i) => [i.name, i]))
 
-// Anchor 错误码 → IDL errors 表(6000 起连续)
-const ANCHOR_ERRORS: Record<number, string> = {
-  6000: '该名称已被占用,请换一个',
-  6001: '该地址已铸造过 Agent(每地址限 1 枚)',
-  6002: '名称不符合要求(1-64 字符)',
-  6003: '插槽无效(0-3)',
-  6004: '旧装备账户与链上已装备配件不匹配',
-  6005: '配件插槽与目标插槽不匹配',
-  6006: '该插槽没有装备中的配件',
-  6007: '关闭身份前必须先卸下全部装备',
-  6008: '只有 Agent 持有者本人可以操作',
-  6009: '该配件尚未注册,请先注册',
-  6010: '该配件已注册,不能重复注册',
-  6011: '该配件已关闭铸造(mintable=false)',
-  6012: '铸造数量超过该配件最大供应量',
-  6013: '最大供应量必须大于 0',
-  6014: '当前地址没有铸造权限(需程序 authority 或授权 minter)',
-  6015: '无效的 agent(零地址或零权限)',
-  6016: 'agent 权限位非法(仅允许 bit 0/1)',
-  6017: '没有权限修改该 Agent 的人格配置',
-  6018: '当前地址不是程序 authority',
-  6019: 'arweave id 不合法(空串或 43 位 base64url)',
-  6020: '装备 ATA 地址推导不匹配',
-  6021: '账户序列化失败',
-  6022: '当前铸造需支付费用,但交易缺少费率接收账户(请刷新页面后重试)',
-  6023: '费率接收账户必须是程序 authority',
-  6024: '阶梯费率配置非法(需满足 tier2_start < tier3_start)',
+// Anchor 错误码 → i18n key 表(6000 起连续);文案在调用处经 t() 取当前语言
+const ANCHOR_ERROR_KEYS: Record<number, string> = {
+  6000: 'chainMsg.error.nameTaken',
+  6001: 'chainMsg.error.alreadyHasDID',
+  6002: 'chainMsg.error.invalidName',
+  6003: 'chainMsg.error.invalidSlot',
+  6004: 'chainMsg.error.slotOccupied',
+  6005: 'chainMsg.error.slotMismatch',
+  6006: 'chainMsg.error.nothingEquipped',
+  6007: 'chainMsg.error.slotsNotEmpty',
+  6008: 'chainMsg.error.notTokenOwner',
+  6009: 'chainMsg.error.partNotRegistered',
+  6010: 'chainMsg.error.partAlreadyRegistered',
+  6011: 'chainMsg.error.mintableClosed',
+  6012: 'chainMsg.error.maxSupplyExceeded',
+  6013: 'chainMsg.error.invalidMaxSupply',
+  6014: 'chainMsg.error.notMinterSol',
+  6015: 'chainMsg.error.invalidAgent',
+  6016: 'chainMsg.error.invalidAgentPermission',
+  6017: 'chainMsg.error.notAuthorized',
+  6018: 'chainMsg.error.notOwnerSol',
+  6019: 'chainMsg.error.invalidArweaveId',
+  6020: 'chainMsg.error.invalidAta',
+  6021: 'chainMsg.error.accountSerialize',
+  6022: 'chainMsg.error.feeReceiverRequired',
+  6023: 'chainMsg.error.invalidFeeReceiver',
+  6024: 'chainMsg.error.invalidTier',
+}
+
+function anchorErrorText(code: number): string | undefined {
+  const key = ANCHOR_ERROR_KEYS[code]
+  return key ? t(key) : undefined
 }
 
 const DISC = {
@@ -93,11 +99,11 @@ function programId(): PublicKey {
 
 /** 把字符串地址转成 PublicKey;遇到 EVM 地址/空串时给明确中文提示 */
 function parseSolanaAddress(input: string | null | undefined): PublicKey {
-  if (!input) throw new Error('Solana 钱包未连接,请先连接 Phantom 钱包')
+  if (!input) throw new Error(t('chainMsg.solana.notConnected'))
   try {
     return new PublicKey(input)
   } catch {
-    throw new Error('钱包地址无效,当前可能是 EVM 钱包状态,请断开并重新连接 Phantom 钱包')
+    throw new Error(t('chainMsg.solana.invalidAddress'))
   }
 }
 
@@ -184,7 +190,7 @@ function enrichSendError(err: unknown): unknown {
   const anchorLine = logs.find((l) => l.includes('Error Code:') || l.includes('AnchorError'))
   const ixLine = logs.find((l) => l.includes('Instruction:'))
   const detail = [ixLine, anchorLine].filter(Boolean).join(' | ')
-  const base = anyErr.transactionMessage ?? anyErr.message ?? '交易失败'
+  const base = anyErr.transactionMessage ?? anyErr.message ?? t('chainMsg.tx.failed')
   if (detail) return new Error(`${base} ⟦${detail}⟧`)
   return new Error(`${base} ⟦logs: ${logs.slice(-5).join(' | ')}⟧`)
 }
@@ -564,7 +570,7 @@ export async function fetchAgentPublic(tokenId: number): Promise<{
   equipped: Equipped
 }> {
   const identity = await findIdentityByTokenId(tokenId)
-  if (!identity) throw new Error(`Agent #${tokenId} 不存在`)
+  if (!identity) throw new Error(t('chainMsg.agent.notFound', { id: tokenId }))
   const configs = await fetchAllPartConfigs()
   const mintToPartId = new Map<string, number>()
   configs.forEach((cfg, partId) => mintToPartId.set(cfg.mint.toBase58(), partId))
@@ -598,7 +604,7 @@ export async function fetchAgentsPublic(tokenIds: number[]): Promise<{
 const PERSONA_DATA_PREFIX = 'data:application/json;base64,'
 
 const decodePersonaJson = (uri: string): string => {
-  if (!uri.startsWith(PERSONA_DATA_PREFIX)) throw new Error('人格配置 URI 格式异常')
+  if (!uri.startsWith(PERSONA_DATA_PREFIX)) throw new Error(t('chainMsg.persona.uriInvalid'))
   return decodeURIComponent(escape(atob(uri.slice(PERSONA_DATA_PREFIX.length))))
 }
 
@@ -667,10 +673,10 @@ export async function isPartsMinter(account: string): Promise<boolean> {
 export async function mintIdentity(owner: string, name: string, _profileURI: string): Promise<string> {
   const ownerPk = parseSolanaAddress(owner)
   const trimmed = name.trim()
-  if (trimmed.length < 1 || trimmed.length > 64) throw new Error('名称不符合要求(1-64 字符)')
+  if (trimmed.length < 1 || trimmed.length > 64) throw new Error(t('chainMsg.error.invalidName'))
   // 读链上 config:决定铸造费档位(fee>0 时必须把 authority 作为可写 fee_receiver 传入)
   const cfgInfo = await conn().getAccountInfo(configPda())
-  if (!cfgInfo || !discEquals(cfgInfo.data, DISC.config)) throw new Error('链上配置未初始化,请联系管理员')
+  if (!cfgInfo || !discEquals(cfgInfo.data, DISC.config)) throw new Error(t('chainMsg.config.notInitialized'))
   const cfg = decodeConfig(cfgInfo.data)
   const fee = tierFee(cfg, cfg.mintCount)
   const feeReceiverKey = fee > 0n
@@ -703,12 +709,12 @@ export async function mintIdentity(owner: string, name: string, _profileURI: str
 export async function equipPart(owner: string, _tokenId: number, slot: number, partChainId: number): Promise<string> {
   const ownerPk = parseSolanaAddress(owner)
   const cfgInfo = await conn().getAccountInfo(partConfigPda(partChainId))
-  if (!cfgInfo || !discEquals(cfgInfo.data, DISC.partConfig)) throw new Error('该配件尚未注册,请先注册')
+  if (!cfgInfo || !discEquals(cfgInfo.data, DISC.partConfig)) throw new Error(t('chainMsg.error.partNotRegistered'))
   const cfg = decodePartConfig(cfgInfo.data)
-  if (cfg.slot !== slot) throw new Error('配件插槽与目标插槽不匹配')
+  if (cfg.slot !== slot) throw new Error(t('chainMsg.error.slotMismatch'))
   const idPda = identityPda(ownerPk)
   const identityInfo = await conn().getAccountInfo(idPda)
-  if (!identityInfo) throw new Error('尚未铸造 Agent 身份')
+  if (!identityInfo) throw new Error(t('chainMsg.identity.notMinted'))
   const identity = decodeIdentity(identityInfo.data)
   const ownerAta = ata(cfg.mint, ownerPk)
   const escrowAta = ata(cfg.mint, idPda, true)
@@ -745,10 +751,10 @@ export async function unequipPart(owner: string, _tokenId: number, slot: number)
   const ownerPk = parseSolanaAddress(owner)
   const idPda = identityPda(ownerPk)
   const identityInfo = await conn().getAccountInfo(idPda)
-  if (!identityInfo) throw new Error('尚未铸造 Agent 身份')
+  if (!identityInfo) throw new Error(t('chainMsg.identity.notMinted'))
   const identity = decodeIdentity(identityInfo.data)
   const mint = identity.equipped[slot]
-  if (!mint) throw new Error('该插槽没有装备中的配件')
+  if (!mint) throw new Error(t('chainMsg.error.nothingEquipped'))
   const tx = new Transaction().add(
     ix(
       'unequip',
@@ -778,7 +784,7 @@ export async function setPersonaOnChain(
   contentHash: `0x${string}`,
 ): Promise<string> {
   const json = decodePersonaJson(uri)
-  if (keccak256(toBytes(json)) !== contentHash.toLowerCase()) throw new Error('人格配置哈希校验失败')
+  if (keccak256(toBytes(json)) !== contentHash.toLowerCase()) throw new Error(t('chainMsg.persona.hashMismatch'))
   await putPersonaMirror(contentHash, json)
   const ownerPk = parseSolanaAddress(owner)
   const idPda = identityPda(ownerPk)
@@ -852,7 +858,7 @@ export async function registerPartsBatch(
 /** 批量铸造:程序是单笔 mint_part(part_id,to,amount),这里按 id 循环发多笔,返回最后一笔 signature */
 export async function mintPartsBatch(owner: string, to: string, ids: bigint[], amounts: bigint[]): Promise<string> {
   if (ids.length === 0 || amounts.length === 0 || ids.length !== amounts.length) {
-    throw new Error('铸造参数不能为空且 ids 与 amounts 长度必须一致')
+    throw new Error(t('chainMsg.mint.paramsMismatch'))
   }
   const ownerPk = parseSolanaAddress(owner)
   const toPk = parseSolanaAddress(to)
@@ -860,7 +866,7 @@ export async function mintPartsBatch(owner: string, to: string, ids: bigint[], a
   for (let i = 0; i < ids.length; i++) {
     const partId = Number(ids[i])
     const cfgInfo = await conn().getAccountInfo(partConfigPda(partId))
-    if (!cfgInfo || !discEquals(cfgInfo.data, DISC.partConfig)) throw new Error(`配件 #${partId} 尚未注册`)
+    if (!cfgInfo || !discEquals(cfgInfo.data, DISC.partConfig)) throw new Error(t('chainMsg.part.notRegistered', { id: partId }))
     const cfg = decodePartConfig(cfgInfo.data)
     const tx = new Transaction().add(
       ix(
@@ -890,47 +896,47 @@ export async function mintPartsBatch(owner: string, to: string, ids: bigint[], a
 
 // ---------------- 错误解释 ----------------
 
-/** 把 Solana/Anchor 错误翻译成中文提示 */
+/** 把 Solana/Anchor 错误翻译成本地化提示 */
 export function explainSolanaChainError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   // Anchor 程序化错误:"Error Code: Xxx. Error Number: 6000." 或 logs 里的 "custom program error: 0x1770"
   const codeMatch = /Error Code: (\w+)/.exec(msg)
   if (codeMatch) {
     const table: Record<string, string> = {
-      NameTaken: '该名称已被占用,请换一个',
-      AlreadyHasDID: '该地址已铸造过 Agent(每地址限 1 枚)',
-      InvalidName: '名称不符合要求(1-64 字符)',
-      NotTokenOwner: '只有 Agent 持有者本人可以操作',
-      NotAuthorized: '没有权限修改该 Agent 的人格配置',
-      NothingEquipped: '该插槽没有装备中的配件',
-      SlotsNotEmpty: '关闭身份前必须先卸下全部装备',
-      PartNotRegistered: '该配件尚未注册,请先注册',
-      PartAlreadyRegistered: '该配件已注册,不能重复注册',
-      NotMintable: '该配件已关闭铸造(mintable=false)',
-      ExceedsMaxSupply: '铸造数量超过该配件最大供应量',
-      InvalidMaxSupply: '最大供应量必须大于 0',
-      UnauthorizedMinter: '当前地址没有铸造权限(需程序 authority 或授权 minter)',
-      Unauthorized: '当前地址不是程序 authority',
-      InvalidSlot: '插槽无效(0-3)',
-      SlotMismatch: '配件插槽与目标插槽不匹配',
-      SlotOccupied: '旧装备账户与链上已装备配件不匹配',
-      InvalidArweaveId: 'arweave id 不合法(空串或 43 位 base64url)',
-      InvalidAta: '装备 ATA 地址推导不匹配',
-      MintFeeReceiverRequired: '当前铸造需支付费用,但交易缺少费率接收账户(请刷新页面后重试)',
-      InvalidFeeReceiver: '费率接收账户必须是程序 authority',
-      InvalidTier: '阶梯费率配置非法(需满足 tier2_start < tier3_start)',
+      NameTaken: 'chainMsg.error.nameTaken',
+      AlreadyHasDID: 'chainMsg.error.alreadyHasDID',
+      InvalidName: 'chainMsg.error.invalidName',
+      NotTokenOwner: 'chainMsg.error.notTokenOwner',
+      NotAuthorized: 'chainMsg.error.notAuthorized',
+      NothingEquipped: 'chainMsg.error.nothingEquipped',
+      SlotsNotEmpty: 'chainMsg.error.slotsNotEmpty',
+      PartNotRegistered: 'chainMsg.error.partNotRegistered',
+      PartAlreadyRegistered: 'chainMsg.error.partAlreadyRegistered',
+      NotMintable: 'chainMsg.error.mintableClosed',
+      ExceedsMaxSupply: 'chainMsg.error.maxSupplyExceeded',
+      InvalidMaxSupply: 'chainMsg.error.invalidMaxSupply',
+      UnauthorizedMinter: 'chainMsg.error.notMinterSol',
+      Unauthorized: 'chainMsg.error.notOwnerSol',
+      InvalidSlot: 'chainMsg.error.invalidSlot',
+      SlotMismatch: 'chainMsg.error.slotMismatch',
+      SlotOccupied: 'chainMsg.error.slotOccupied',
+      InvalidArweaveId: 'chainMsg.error.invalidArweaveId',
+      InvalidAta: 'chainMsg.error.invalidAta',
+      MintFeeReceiverRequired: 'chainMsg.error.feeReceiverRequired',
+      InvalidFeeReceiver: 'chainMsg.error.invalidFeeReceiver',
+      InvalidTier: 'chainMsg.error.invalidTier',
     }
     const mapped = table[codeMatch[1]]
-    if (mapped) return mapped
+    if (mapped) return t(mapped)
   }
   const numMatch = /custom program error: 0x([0-9a-fA-F]+)/.exec(msg)
   if (numMatch) {
-    const mapped = ANCHOR_ERRORS[parseInt(numMatch[1], 16)]
+    const mapped = anchorErrorText(parseInt(numMatch[1], 16))
     if (mapped) return mapped
   }
-  if (/User rejected|rejected|denied|declined|cancel/i.test(msg)) return '你取消了钱包操作'
-  if (/Blockhash not found|expired|timeout/i.test(msg)) return '交易确认超时,请重试(测试网拥堵时可能发生)'
-  if (/InsufficientFunds|insufficient/i.test(msg)) return '钱包 SOL 余额不足,请先领取测试币'
+  if (/User rejected|rejected|denied|declined|cancel/i.test(msg)) return t('chainMsg.error.userRejected')
+  if (/Blockhash not found|expired|timeout/i.test(msg)) return t('chainMsg.tx.timeout')
+  if (/InsufficientFunds|insufficient/i.test(msg)) return t('chainMsg.solana.insufficientFunds')
   // sendTx 注入的模拟日志详情:⟦Instruction: X | Program log: AnchorError caused by account: Y. Error Code: Z. ...⟧
   const detailMatch = /⟦(.+)⟧/.exec(msg)
   if (detailMatch) {
@@ -938,22 +944,22 @@ export function explainSolanaChainError(err: unknown): string {
     const acctMatch = /caused by account: (\w+)/.exec(detail)
     const builtinCode = /Error Code: (\w+)/.exec(detail)?.[1]
     const BUILTIN: Record<string, string> = {
-      ConstraintMut: '链上账户写权限校验失败(mut 约束)',
-      ConstraintHasOne: '账户关联校验失败(has_one)',
-      ConstraintSigner: '账户签名校验失败(signer 约束)',
-      ConstraintSeeds: 'PDA 地址推导不匹配(seeds 约束)',
-      ConstraintAddress: '账户地址与预期不匹配(address 约束)',
-      ConstraintOwner: '账户归属程序不匹配(owner 约束)',
-      AccountNotInitialized: '链上账户尚未初始化',
-      AccountDiscriminatorMismatch: '账户数据类型不匹配',
-      AccountOwnedByWrongProgram: '账户归属程序错误',
-      NotAuthorized: '没有权限执行此操作',
+      ConstraintMut: 'chainMsg.error.constraintMut',
+      ConstraintHasOne: 'chainMsg.error.constraintHasOne',
+      ConstraintSigner: 'chainMsg.error.constraintSigner',
+      ConstraintSeeds: 'chainMsg.error.constraintSeeds',
+      ConstraintAddress: 'chainMsg.error.constraintAddress',
+      ConstraintOwner: 'chainMsg.error.constraintOwner',
+      AccountNotInitialized: 'chainMsg.error.accountNotInitialized',
+      AccountDiscriminatorMismatch: 'chainMsg.error.accountDiscriminatorMismatch',
+      AccountOwnedByWrongProgram: 'chainMsg.error.accountOwnedByWrongProgram',
+      NotAuthorized: 'chainMsg.error.notAuthorizedGeneric',
     }
-    const acctSuffix = acctMatch ? `(账户: ${acctMatch[1]})` : ''
+    const acctSuffix = acctMatch ? t('chainMsg.error.accountSuffix', { account: acctMatch[1] }) : ''
     const mapped = builtinCode ? BUILTIN[builtinCode] : undefined
-    if (mapped) return `${mapped}${acctSuffix}`
-    if (builtinCode) return `链上校验失败: ${builtinCode}${acctSuffix}`
-    return `链上操作失败: ${detail.slice(0, 150)}`
+    if (mapped) return `${t(mapped)}${acctSuffix}`
+    if (builtinCode) return t('chainMsg.error.checkFailed', { code: builtinCode, account: acctSuffix })
+    return t('chainMsg.error.failed', { msg: detail.slice(0, 150) })
   }
-  return `链上操作失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`
+  return t('chainMsg.error.failed', { msg: msg.length > 120 ? msg.slice(0, 120) + '…' : msg })
 }

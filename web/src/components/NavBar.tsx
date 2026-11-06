@@ -8,17 +8,12 @@ import { ensureTargetChain, isWalletOnActiveChain } from '../lib/chainDispatch'
 import { setActiveProvider } from '../lib/wallet'
 import { clearActiveSolana, getSolanaProvider } from '../lib/walletSolana'
 import { clearActiveNear } from '../lib/walletNear'
+import { useI18n } from '../i18n'
+import LanguageSwitcher from '../i18n/LanguageSwitcher'
 import WalletModal from './WalletModal'
 
-const navItems = [
-  { to: '/profile', label: '个人主页' },
-  { to: '/backpack', label: '资产背包' },
-  { to: '/plaza', label: '社交广场' },
-  { to: '/arena', label: '竞技场' },
-  { to: '/chat', label: '消息' },
-]
-
 export default function NavBar() {
+  const { t } = useI18n()
   const { connected, address, did, disconnect, login, showToast, walletKind, updateLoginChainId } = useAppStore()
   const chainStore = useChainStore()
   const { active, chains, setActive, hydrateFromApi, showTestnets, setShowTestnets } = useChainConfig()
@@ -39,13 +34,21 @@ export default function NavBar() {
   const nav = useNavigate()
   const { isAdmin } = chainStore
 
+  const navItems = [
+    { to: '/profile', label: t('nav.profile') },
+    { to: '/backpack', label: t('nav.backpack') },
+    { to: '/plaza', label: t('nav.plaza') },
+    { to: '/arena', label: t('nav.arena') },
+    { to: '/chat', label: t('nav.chat') },
+  ]
+
   const onTargetChain = isWalletOnActiveChain(login, active)
 
   // 未连接钱包时点击导航:拦截跳转,提示连接钱包并弹出钱包选择
   const guardNav = (e: MouseEvent) => {
     if (connected) return
     e.preventDefault()
-    showToast('请先连接钱包')
+    showToast(t('navToast.connectFirst'))
     setShowWallet(true)
   }
 
@@ -71,13 +74,13 @@ export default function NavBar() {
     setActive(key as typeof active.key)
     chainStore.clear()
     // 多链提示:各链的 Agent/聊天记录互相独立,本期不支持跨链互动
-    showToast(`已切换到 ${target.name}:该链的 Agent 与聊天记录独立,暂不支持跨链互动`)
+    showToast(t('navToast.switched', { name: target.name }))
     try {
       const targetFamily = target.family ?? 'evm'
       if (targetFamily === 'solana') {
         // Solana 链:走 Phantom 连接流程(EVM/NEAR 会话与 Solana 不通用,需重新连接)
         if (!getSolanaProvider()) {
-          showToast('未检测到 Phantom 钱包,请先安装')
+          showToast(t('navToast.noPhantom'))
           window.open('https://phantom.com', '_blank')
           setSwitching(false)
           return
@@ -88,7 +91,7 @@ export default function NavBar() {
           clearActiveSolana()
           clearActiveNear()
           setShowWallet(true)
-          showToast('Solana 链需使用 Phantom 钱包连接')
+          showToast(t('navToast.needPhantom'))
           setSwitching(false)
           return
         }
@@ -101,7 +104,7 @@ export default function NavBar() {
           clearActiveSolana()
           clearActiveNear()
           setShowWallet(true)
-          showToast('NEAR 链需使用 NEAR 钱包连接')
+          showToast(t('navToast.needNear'))
           setSwitching(false)
           return
         }
@@ -113,7 +116,7 @@ export default function NavBar() {
           clearActiveSolana()
           clearActiveNear()
           setShowWallet(true)
-          showToast('EVM 链需使用浏览器钱包重新连接')
+          showToast(t('navToast.needEvm'))
           setSwitching(false)
           return
         }
@@ -123,9 +126,9 @@ export default function NavBar() {
           if (address) await chainStore.refresh(address)
         }
       }
-      showToast(`已切换到 ${useChainConfig.getState().active.name}`)
+      showToast(t('navToast.switchedTo', { name: useChainConfig.getState().active.name }))
     } catch {
-      showToast('已切换目标链,但钱包切链失败,请手动切换')
+      showToast(t('navToast.switchFail'))
     }
     setSwitching(false)
   }
@@ -172,7 +175,7 @@ export default function NavBar() {
                   isActive ? 'text-white border-b-2 border-neon-purple pb-0.5' : 'hover:text-white transition'
                 }
               >
-                铸造工坊
+                {t('nav.mint')}
               </NavLink>
             )}
             {isAdmin && (
@@ -182,7 +185,7 @@ export default function NavBar() {
                   isActive ? 'text-white border-b-2 border-neon-purple pb-0.5' : 'hover:text-white transition'
                 }
               >
-                管理员
+                {t('nav.admin')}
               </NavLink>
             )}
           </nav>
@@ -194,9 +197,9 @@ export default function NavBar() {
               className={`tag !text-[10px] transition ${
                 wizardOpen ? 'border-neon-purple/60 text-neon-purple' : 'border-white/15 text-slate-400 hover:text-slate-200'
               }`}
-              title="打开/关闭新手引导"
+              title={t('nav.wizardOn')}
             >
-              🎓 新手引导
+              🎓 {t('nav.wizard')}
             </button>
             {/* 切链按钮:合约地址以后端 chains 表为准,前端本地数据兜底;测试网开关关闭时只列主网 */}
             <select
@@ -204,7 +207,7 @@ export default function NavBar() {
               value={active.key}
               disabled={switching}
               onChange={(e) => switchTo(e.target.value)}
-              title="切换目标链(素材全链一致,仅切换合约)"
+              title={t('nav.switchChain')}
             >
               {visibleChains.map((c) => (
                 <option key={c.key} value={c.key} className="bg-ink">
@@ -218,16 +221,17 @@ export default function NavBar() {
               className={`tag !text-[10px] transition ${
                 showTestnets ? 'border-neon-purple/60 text-neon-purple' : 'border-white/15 text-slate-400 hover:text-slate-200'
               }`}
-              title={showTestnets ? '测试网已显示:点击隐藏测试网络' : '测试网已隐藏:点击显示全部网络(含测试网)'}
+              title={showTestnets ? t('nav.testnetShown') : t('nav.testnetHidden')}
             >
-              🧪 测试网 {showTestnets ? '开' : '关'}
+              🧪 {t('nav.testnet')} {showTestnets ? t('nav.on') : t('nav.off')}
             </button>
+            <LanguageSwitcher />
             {connected ? (
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => nav(did || chainStore.tokenId > 0 ? '/profile' : '/mint')}
                   className="tag border-neon-purple/40 text-neon-cyan font-mono"
-                  title="我的钱包地址"
+                  title={t('nav.myAddress')}
                 >
                   🟢 {address?.slice(0, 6)}...{address?.slice(-4)}
                 </button>
@@ -236,15 +240,15 @@ export default function NavBar() {
                     onClick={switchChain}
                     disabled={switching}
                     className="tag border-amber-400/50 text-amber-300 text-[10px] hover:border-amber-300"
-                    title={`钱包切换到 ${active.name} 以使用链上功能`}
+                    title={t('nav.switchTo', { name: active.name })}
                   >
-                    ⚠ {switching ? '切链中' : `钱包切到 ${active.name}`}
+                    ⚠ {switching ? t('nav.switching') : t('nav.switchWalletTo', { name: active.name })}
                   </button>
                 )}
-                <button onClick={handleDisconnect} className="btn-ghost !px-3 !py-1.5 text-xs">断开</button>
+                <button onClick={handleDisconnect} className="btn-ghost !px-3 !py-1.5 text-xs">{t('nav.disconnect')}</button>
               </div>
             ) : (
-              <button onClick={() => setShowWallet(true)} className="btn-primary">连接钱包</button>
+              <button onClick={() => setShowWallet(true)} className="btn-primary">{t('nav.connect')}</button>
             )}
           </div>
         </div>

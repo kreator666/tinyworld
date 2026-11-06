@@ -1,4 +1,5 @@
 import { createWalletClient, custom, getAddress, type WalletClient, type Address, type Hex } from 'viem'
+import { t } from '../i18n'
 
 // 目标钱包列表
 export interface TargetWallet {
@@ -189,7 +190,7 @@ function generateNonce(): string {
 /** 连接钱包并创建 viem WalletClient;不签名,把签名时机交给调用方(用于 SIWE 登录) */
 export async function connectProvider(detail: EIP6963ProviderDetail, providerName: string): Promise<WalletConnection> {
   if (!detail?.provider?.request) {
-    throw new WalletError('PROVIDER_NOT_FOUND', '未检测到该钱包扩展')
+    throw new WalletError('PROVIDER_NOT_FOUND', t('chainMsg.wallet.noExtension'))
   }
 
   const provider = detail.provider
@@ -204,7 +205,7 @@ export async function connectProvider(detail: EIP6963ProviderDetail, providerNam
     console.error('[connectProvider] eth_requestAccounts failed', err)
     const msg = err instanceof Error ? err.message : String(err)
     if (msg.includes('User rejected') || msg.includes('rejected') || msg.includes('denied')) {
-      throw new WalletError('USER_REJECTED', '用户拒绝了钱包连接')
+      throw new WalletError('USER_REJECTED', t('chainMsg.wallet.connectRejected'))
     }
     // 兼容 EIP-6963 provider 不响应时,回退到 window.ethereum
     const winEth = typeof window !== 'undefined' ? (window as unknown as { ethereum?: EIP1193Provider }).ethereum : undefined
@@ -215,10 +216,10 @@ export async function connectProvider(detail: EIP6963ProviderDetail, providerNam
         console.log('[connectProvider] fallback accounts', accounts)
       } catch (fallbackErr) {
         const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
-        throw new WalletError('CONNECT_FAILED', `连接钱包失败: ${fbMsg}`)
+        throw new WalletError('CONNECT_FAILED', t('chainMsg.wallet.connectFailed', { msg: fbMsg }))
       }
     } else {
-      throw new WalletError('CONNECT_FAILED', `连接钱包失败: ${msg}`)
+      throw new WalletError('CONNECT_FAILED', t('chainMsg.wallet.connectFailed', { msg }))
     }
   }
 
@@ -227,7 +228,7 @@ export async function connectProvider(detail: EIP6963ProviderDetail, providerNam
 
   const addressList = Array.isArray(accounts) ? (accounts as string[]) : []
   if (!addressList.length) {
-    throw new WalletError('NO_ACCOUNTS', '钱包未返回地址,请确认已在 MetaMask 中解锁并授权本站点')
+    throw new WalletError('NO_ACCOUNTS', t('chainMsg.wallet.noAccounts'))
   }
   const address = addressList[0].toLowerCase() as Address
 
@@ -276,9 +277,9 @@ export async function connectAndSign(detail: EIP6963ProviderDetail, providerName
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[connectAndSign] signTypedData failed', err)
     if (msg.includes('User rejected') || msg.includes('rejected') || msg.includes('denied')) {
-      throw new WalletError('SIGN_REJECTED', '用户拒绝了签名')
+      throw new WalletError('SIGN_REJECTED', t('chainMsg.wallet.signRejected'))
     }
-    throw new WalletError('SIGN_FAILED', `签名失败: ${msg}`)
+    throw new WalletError('SIGN_FAILED', t('chainMsg.wallet.signFailed', { msg }))
   }
 
   return {

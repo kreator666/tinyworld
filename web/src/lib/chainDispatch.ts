@@ -10,6 +10,7 @@ import { broadcastSignedTxs, fetchSolanaBlockhash } from './agentApi'
 import { useAppStore } from '../store/appStore'
 import type { WalletLogin } from '../types'
 import type { ChainContracts } from './contracts'
+import { t } from '../i18n'
 import type { ChainIdentityState, ChainPartAsset, ChainPartState, MintedAgent } from './chain'
 import { isValidSolanaAddress } from './chainSolana'
 import { isValidNearAddress, getActiveNearAccount, nearFunctionCall, nearSignAndSend } from './walletNear'
@@ -123,7 +124,7 @@ export async function fetchStarterClaimState(address: string): Promise<boolean |
 
 /** 领取新手大礼包:随机 4 件套 + 自动穿戴(Solana 不支持,抛错;NEAR 为合约内置一次领取) */
 export async function claimStarterPack(owner: string, tokenId: number): Promise<string> {
-  if (isSolana()) throw new Error('Solana 链不支持新手大礼包')
+  if (isSolana()) throw new Error(t('chainMsg.starter.unsupportedSolana'))
   if (isNear()) return near.claimStarterPack(owner, tokenId)
   return evm.claimStarterPack(owner as Address, tokenId)
 }
@@ -136,8 +137,8 @@ export async function fetchMarketPrice(partId: number): Promise<bigint | null> {
 
 /** 市场直售购买(Solana/NEAR 不支持,抛错) */
 export async function buyPartFromMarket(owner: string, partId: number, quantity: number, value: bigint): Promise<string> {
-  if (isSolana()) throw new Error('Solana 链不支持装备市场')
-  if (isNear()) throw new Error('NEAR 链不支持装备市场')
+  if (isSolana()) throw new Error(t('chainMsg.market.unsupportedSolana'))
+  if (isNear()) throw new Error(t('chainMsg.market.unsupportedNear'))
   return evm.buyPartFromMarket(owner as Address, partId, quantity, value)
 }
 
@@ -194,8 +195,8 @@ export async function mintPartsBatch(owner: string, to: string, ids: bigint[], a
 }
 
 export async function approveErc20(owner: string, token: string, spender: string, amount: bigint): Promise<string> {
-  if (isSolana()) throw new Error('Solana 链不支持 ERC20 授权')
-  if (isNear()) throw new Error('NEAR 链不支持 ERC20 授权')
+  if (isSolana()) throw new Error(t('chainMsg.erc20.unsupportedSolana'))
+  if (isNear()) throw new Error(t('chainMsg.erc20.unsupportedNear'))
   return evm.approveErc20(owner as Address, token as Address, spender as Address, amount)
 }
 
@@ -233,22 +234,20 @@ function feePayerOf(tx: Transaction | VersionedTransaction): PublicKey | null {
  */
 async function sendSolanaTransactions(unsignedTxs: UnsignedTx[], tokenId: number, protocol?: string): Promise<string[]> {
   const walletAddr = getActiveSolanaAddress()
-  if (!walletAddr) throw new Error('请先连接 Phantom 钱包')
+  if (!walletAddr) throw new Error(t('chainMsg.solana.requireConnected'))
   // 本地缓存的地址可能已滞后:Phantom 里切换账户不会自动同步,以钱包当前账户为准拦截
   const liveAddr = getActiveSolanaProvider()?.publicKey?.toBase58()
   if (liveAddr && liveAddr !== walletAddr) {
-    throw new Error('Phantom 当前账户已切换,与登录身份不一致,请重新连接钱包后再试')
+    throw new Error(t('chainMsg.solana.accountSwitched'))
   }
   const signedTxs: string[] = []
   for (const item of unsignedTxs) {
-    if (!isSolanaUnsignedTx(item)) throw new Error('待签名交易不是 Solana 格式')
+    if (!isSolanaUnsignedTx(item)) throw new Error(t('chainMsg.tx.notSolanaFormat'))
     const tx = deserializeSolanaTx(item.tx)
     // 交易由 Agent 按链上人格 owner 组装;签名账户必须与当前连接钱包一致,否则 Phantom 会拒签(报"Unexpected error")
     const payer = feePayerOf(tx)
     if (payer && payer.toBase58() !== walletAddr) {
-      throw new Error(
-        `这笔交易属于账户 ${payer.toBase58().slice(0, 8)}…,与当前连接的钱包不一致,请在 Phantom 切回该账户,或用该账户登录后再兑换`,
-      )
+      throw new Error(t('chainMsg.solana.txPayerMismatch', { account: payer.toBase58().slice(0, 8) }))
     }
     if (tx instanceof Transaction) {
       const latest = await fetchSolanaBlockhash(tokenId, protocol)
@@ -279,13 +278,13 @@ async function sendSolanaTransactions(unsignedTxs: UnsignedTx[], tokenId: number
  */
 async function sendNearTransactions(unsignedTxs: UnsignedTx[], owner: string): Promise<string[]> {
   const walletAddr = getActiveNearAccount()
-  if (!walletAddr) throw new Error('请先连接 NEAR 钱包')
+  if (!walletAddr) throw new Error(t('chainMsg.near.connectFirst'))
   if (walletAddr !== owner) {
-    throw new Error(`这笔交易属于账户 ${owner},与当前连接的钱包 ${walletAddr} 不一致,请在钱包里切回该账户后再试`)
+    throw new Error(t('chainMsg.near.txOwnerMismatch', { owner, wallet: walletAddr }))
   }
   const hashes: string[] = []
   for (const item of unsignedTxs) {
-    if (!isNearUnsignedTx(item)) throw new Error('待签名交易不是 NEAR 格式')
+    if (!isNearUnsignedTx(item)) throw new Error(t('chainMsg.tx.notNearFormat'))
     try {
       const hash = await nearSignAndSend(
         item.actions.map((a) => nearFunctionCall(a.methodName, a.args, a.gas ?? '100000000000000', a.deposit ?? '0')),
@@ -294,8 +293,8 @@ async function sendNearTransactions(unsignedTxs: UnsignedTx[], owner: string): P
       hashes.push(hash)
     } catch (err) {
       // 网页版重定向钱包(如 Meteor Web)返回 void,表现为"未返回哈希",引导改用扩展钱包
-      if (err instanceof Error && err.message === 'NEAR 交易未返回哈希') {
-        throw new Error('网页版钱包暂不支持签名交易,请使用扩展钱包')
+      if (err instanceof Error && err.message === t('chainMsg.near.noTxHash')) {
+        throw new Error(t('chainMsg.near.webWalletUnsupported'))
       }
       throw err
     }
@@ -310,7 +309,7 @@ export async function sendTransactions(
 ): Promise<string[]> {
   if (isNear()) return sendNearTransactions(unsignedTxs, owner)
   if (isSolana()) {
-    if (!opts?.tokenId) throw new Error('Solana 交易发送缺少 tokenId')
+    if (!opts?.tokenId) throw new Error(t('chainMsg.tx.missingTokenId'))
     return sendSolanaTransactions(unsignedTxs, opts.tokenId, opts.protocol)
   }
   return evm.sendTransactions(owner as Address, unsignedTxs as EvmUnsignedTx[])

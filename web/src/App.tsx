@@ -8,6 +8,7 @@ import { clearActiveSolana, getSolanaProvider } from './lib/walletSolana'
 import { clearActiveNear, initNearSession, onNearAccountsChanged, takeNearLoginReturn } from './lib/walletNear'
 import { verifyAgentLogin } from './lib/agentApi'
 import { useChainConfig } from './store/chainConfigStore'
+import { useI18n } from './i18n'
 import NavBar from './components/NavBar'
 import OnboardingWizard from './components/OnboardingWizard'
 import LandingPage from './pages/LandingPage'
@@ -49,6 +50,7 @@ function Toast() {
 }
 
 function WalletEvents() {
+  const { t } = useI18n()
   const { connected, address, disconnect, walletKind, updateLoginChainId, connect, showToast } = useAppStore()
   const clear = useChainStore((s) => s.clear)
   const refresh = useChainStore((s) => s.refresh)
@@ -81,15 +83,15 @@ function WalletEvents() {
           token,
           'near',
         )
-        showToast('NEAR 钱包已连接(网页钱包),正在读取链上资产…')
+        showToast(t('wallet.nearWebConnected'))
         try {
           await refresh(pending.address)
         } catch {
-          showToast('已连接钱包,但读取链上资产失败,请稍后重试')
+          showToast(t('wallet.readFail'))
         }
         nav('/profile')
       } catch (e) {
-        showToast(`登录验证失败:${e instanceof Error ? e.message : e}`)
+        showToast(t('app.loginVerifyFail', { msg: e instanceof Error ? e.message : String(e) }))
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps

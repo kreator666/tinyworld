@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { rarityDot } from './NFTCard'
 import PaperDoll from './PaperDoll'
+import { useI18n } from '../i18n'
 import type { Equipped, Rarity } from '../types'
 
 export interface PlazaAgent {
@@ -17,10 +18,11 @@ export interface PlazaAgent {
 export default function DIDCard({ agent }: { agent: PlazaAgent }) {
   const nav = useNavigate()
   const ensureChatWith = useAppStore((s) => s.ensureChatWith)
+  const { t } = useI18n()
 
   const chatWithAI = () => {
     // 带 agentTokenId:聊天页会用对方的链上人格走真实 agent/ 服务
-    ensureChatWith(agent.name, agent.owner.slice(0, 6) + '...' + agent.owner.slice(-4), '🤖', 'ai', '链上 Agent', {
+    ensureChatWith(agent.name, agent.owner.slice(0, 6) + '...' + agent.owner.slice(-4), '🤖', 'ai', t('didcard.aiLabel'), {
       agentTokenId: agent.tokenId,
     })
     nav('/chat')
@@ -40,20 +42,20 @@ export default function DIDCard({ agent }: { agent: PlazaAgent }) {
           <div className="text-xs text-slate-500 font-mono mt-0.5">
             {agent.owner.slice(0, 6)}...{agent.owner.slice(-4)}
           </div>
-          <div className="text-xs text-slate-400 mt-1 line-clamp-2">{agent.bio || '这个 Agent 还没有写简介'}</div>
+          <div className="text-xs text-slate-400 mt-1 line-clamp-2">{agent.bio || t('didcard.bioEmpty')}</div>
           {agent.rarest && (
             <div className="text-[11px] text-slate-500 mt-1.5">
-              {rarityDot[agent.rarest]} 最高{agent.rarest}装备
+              {rarityDot[agent.rarest]} {t('didcard.rarestGear', { rarity: agent.rarest })}
             </div>
           )}
         </div>
       </div>
       <div className="flex gap-2 mt-3">
         <button className="btn-ghost flex-1 !text-xs" onClick={() => nav(`/profile/${agent.tokenId}`)}>
-          进入主页
+          {t('didcard.enterProfile')}
         </button>
         <button className="btn-primary flex-1 !text-xs !py-2" onClick={chatWithAI}>
-          🤖 和 Agent 聊
+          {t('didcard.chatWith')}
         </button>
       </div>
     </div>

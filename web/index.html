@@ -4,6 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgentVerse · 有灵魂的链上 AI Agent</title>
+    <script>
+      // 首屏前按本地记录/浏览器语言设置 html lang,避免闪烁
+      try {
+        var l = localStorage.getItem('agentverse-lang') || (navigator.language.toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en')
+        document.documentElement.lang = l === 'zh' ? 'zh-CN' : 'en'
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

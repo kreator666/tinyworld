@@ -5,22 +5,24 @@ import { Game, type GameStatus, type HudState } from '../game/engine'
 import { buildDollSprites, type DollSprites } from '../game/sprite'
 import PaperDoll from '../components/PaperDoll'
 import type { Equipped } from '../types'
+import { useI18n } from '../i18n'
 
 // 未铸造 DID 时的演示形象(与首页装饰纸娃娃一致)
 const demoEquipped: Equipped = { head: 'head-3', body: 'body-1', accessory: 'acc-1', pet: 'pet-1' }
 const MAX_HP = 5
 
 const controls = [
-  { keys: 'A / D 或 ← →', action: '移动' },
-  { keys: 'Space / W / ↑', action: '跳跃(长按跳更高)' },
-  { keys: 'J / X', action: '挥剑攻击' },
-  { keys: 'P / Esc', action: '暂停' },
+  { keysKey: 'gamepage.controls.moveKeys', actionKey: 'gamepage.controls.move' },
+  { keysKey: 'gamepage.controls.jumpKeys', actionKey: 'gamepage.controls.jump' },
+  { keysKey: 'gamepage.controls.attackKeys', actionKey: 'gamepage.controls.attack' },
+  { keysKey: 'gamepage.controls.pauseKeys', actionKey: 'gamepage.controls.pause' },
 ]
 
 const initHud: HudState = { hp: MAX_HP, score: 0, gems: 0, kills: 0, time: 0 }
 
 // 游戏页:Canvas 引擎 + React 覆盖层(HUD / 开始 / 暂停 / 结算)
 export default function GamePage() {
+  const { t } = useI18n()
   const did = useAppStore((s) => s.did)
   const equipped = did?.equipped ?? demoEquipped
 
@@ -73,9 +75,9 @@ export default function GamePage() {
     <div className="mx-auto max-w-[1000px] px-4 py-6">
       {/* 顶部栏 */}
       <div className="mb-4 flex items-center justify-between">
-        <Link to="/" className="btn-ghost !px-3 !py-1.5 text-xs">← 返回首页</Link>
+        <Link to="/" className="btn-ghost !px-3 !py-1.5 text-xs">{t('gamepage.backHome')}</Link>
         <span className="text-sm text-slate-400">
-          出战形象:<span className="text-neon-cyan font-medium">{did ? did.name : '演示形象(未铸造 Agent)'}</span>
+          {t('gamepage.fighter')}<span className="text-neon-cyan font-medium">{did ? did.name : t('gamepage.demoDoll')}</span>
         </span>
       </div>
 
@@ -95,7 +97,7 @@ export default function GamePage() {
               <span className="text-neon-cyan">💎 {hud.gems}</span>
               <span className="text-neon-purple">⚔ {hud.kills}</span>
               <span>⏱ {hud.time}s</span>
-              <span className="text-amber-300">分数 {hud.score}</span>
+              <span className="text-amber-300">{t('gamepage.hud.score', { score: hud.score })}</span>
             </div>
           </div>
         )}
@@ -108,15 +110,15 @@ export default function GamePage() {
                 <PaperDoll equipped={equipped} size="md" />
               </div>
               <div className="max-w-sm">
-                <h2 className="text-3xl font-bold bg-neon-grad bg-clip-text text-transparent">Agent 大冒险</h2>
+                <h2 className="text-3xl font-bold bg-neon-grad bg-clip-text text-transparent">{t('gamepage.title')}</h2>
                 <p className="mt-2 text-sm text-slate-400">
-                  操控你的纸娃娃穿越霓虹荒原,击败敌人、收集宝石,抵达终点传送门!
+                  {t('gamepage.intro')}
                 </p>
                 <div className="mt-4 space-y-1.5 text-sm">
                   {controls.map((c) => (
-                    <div key={c.keys} className="flex items-center gap-3">
-                      <kbd className="tag border-neon-purple/40 text-neon-cyan font-mono">{c.keys}</kbd>
-                      <span className="text-slate-300">{c.action}</span>
+                    <div key={c.keysKey} className="flex items-center gap-3">
+                      <kbd className="tag border-neon-purple/40 text-neon-cyan font-mono">{t(c.keysKey)}</kbd>
+                      <span className="text-slate-300">{t(c.actionKey)}</span>
                     </div>
                   ))}
                 </div>
@@ -125,9 +127,9 @@ export default function GamePage() {
                   disabled={!loaded}
                   className="btn-primary mt-6 text-lg !px-8 !py-3 animate-pulse-ring"
                 >
-                  {loaded ? '🎮 开始游戏' : '形象加载中…'}
+                  {loaded ? t('gamepage.start') : t('gamepage.loadingDoll')}
                 </button>
-                <p className="mt-3 text-xs text-slate-500">也可以按 Enter 开始</p>
+                <p className="mt-3 text-xs text-slate-500">{t('gamepage.enterHint')}</p>
               </div>
             </div>
           </div>
@@ -137,11 +139,11 @@ export default function GamePage() {
         {status === 'paused' && (
           <div className="absolute inset-0 bg-ink/80 backdrop-blur-sm grid place-items-center">
             <div className="text-center">
-              <h2 className="text-2xl font-bold">⏸ 已暂停</h2>
+              <h2 className="text-2xl font-bold">⏸ {t('gamepage.paused')}</h2>
               <div className="mt-6 flex gap-3 justify-center">
-                <button onClick={() => gameRef.current?.togglePause()} className="btn-primary">继续(P)</button>
-                <button onClick={restart} className="btn-ghost">重新开始</button>
-                <Link to="/" className="btn-ghost">返回首页</Link>
+                <button onClick={() => gameRef.current?.togglePause()} className="btn-primary">{t('gamepage.resume')}</button>
+                <button onClick={restart} className="btn-ghost">{t('gamepage.restart')}</button>
+                <Link to="/" className="btn-ghost">{t('gamepage.home')}</Link>
               </div>
             </div>
           </div>
@@ -151,16 +153,16 @@ export default function GamePage() {
         {status === 'win' && (
           <div className="absolute inset-0 bg-ink/80 backdrop-blur-sm grid place-items-center">
             <div className="text-center glass neon-border px-10 py-8">
-              <h2 className="text-3xl font-bold bg-neon-grad bg-clip-text text-transparent">🎉 通关!</h2>
+              <h2 className="text-3xl font-bold bg-neon-grad bg-clip-text text-transparent">🎉 {t('gamepage.win')}</h2>
               <div className="mt-5 space-y-1.5 text-sm font-mono text-slate-300">
-                <p>💎 宝石 × {hud.gems}</p>
-                <p>⚔ 击杀 × {hud.kills}</p>
-                <p>⏱ 用时 {hud.time}s(含速通奖励)</p>
-                <p className="text-lg text-amber-300 pt-2">总分 {hud.score}</p>
+                <p>{t('gamepage.result.gems', { n: hud.gems })}</p>
+                <p>{t('gamepage.result.kills', { n: hud.kills })}</p>
+                <p>{t('gamepage.result.time', { n: hud.time })}</p>
+                <p className="text-lg text-amber-300 pt-2">{t('gamepage.result.total', { score: hud.score })}</p>
               </div>
               <div className="mt-6 flex gap-3 justify-center">
-                <button onClick={restart} className="btn-primary">再来一局</button>
-                <Link to="/" className="btn-ghost">返回首页</Link>
+                <button onClick={restart} className="btn-primary">{t('gamepage.again')}</button>
+                <Link to="/" className="btn-ghost">{t('gamepage.home')}</Link>
               </div>
             </div>
           </div>
@@ -170,13 +172,13 @@ export default function GamePage() {
         {status === 'dead' && (
           <div className="absolute inset-0 bg-ink/80 backdrop-blur-sm grid place-items-center">
             <div className="text-center glass px-10 py-8 border border-red-500/30">
-              <h2 className="text-3xl font-bold text-red-400">💀 游戏结束</h2>
+              <h2 className="text-3xl font-bold text-red-400">💀 {t('gamepage.gameOver')}</h2>
               <p className="mt-4 text-sm font-mono text-slate-300">
-                💎 {hud.gems} · ⚔ {hud.kills} · 分数 {hud.score}
+                {t('gamepage.result.gemsShort', { n: hud.gems })} · {t('gamepage.result.killsShort', { n: hud.kills })} · {t('gamepage.hud.score', { score: hud.score })}
               </p>
               <div className="mt-6 flex gap-3 justify-center">
-                <button onClick={restart} className="btn-primary">重新开始</button>
-                <Link to="/" className="btn-ghost">返回首页</Link>
+                <button onClick={restart} className="btn-primary">{t('gamepage.restart')}</button>
+                <Link to="/" className="btn-ghost">{t('gamepage.home')}</Link>
               </div>
             </div>
           </div>
@@ -184,7 +186,7 @@ export default function GamePage() {
       </div>
 
       <p className="mt-3 text-xs text-slate-500 text-center">
-        键盘操作 · 在铸造工坊铸造你的 Agent 后,将使用你的专属形象出战
+        {t('gamepage.footer')}
       </p>
     </div>
   )

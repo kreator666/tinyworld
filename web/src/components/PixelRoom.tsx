@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { AgentStatus, Equipped } from '../types'
+import { t } from '../i18n'
 import { getPixelDoll, drawPixelDoll, PIXEL_SIZE } from '../game/pixelate'
 
 // 像素小屋:电子宠物式的像素小人随机走动,点击弹跳 + 冒人设气泡
@@ -32,13 +33,13 @@ const HOP_TIME = 0.5 // 点击弹跳时长
 const BUBBLE_TIME = 3.6 // 人设气泡存活时长
 const HAPPY_TIME = 3 // happy 状态持续时长(之后回落 idle)
 
-const DEFAULT_LINES = [
-  '你好呀,这是我的小屋~',
-  '随便逛逛,别客气!',
-  '今天也是元气满满的一天',
-  '要不要和我聊聊?',
-  '这里是我的秘密基地 ✨',
-  '咕噜咕噜……随便走走真开心',
+const DEFAULT_LINE_KEYS = [
+  'pixelRoom.lines.l1',
+  'pixelRoom.lines.l2',
+  'pixelRoom.lines.l3',
+  'pixelRoom.lines.l4',
+  'pixelRoom.lines.l5',
+  'pixelRoom.lines.l6',
 ]
 
 // 撒花粒子的配色(霓虹糖果色)
@@ -253,7 +254,7 @@ export default function PixelRoom({
       const feet = wk.y * h
       if (mx >= px - D / 2 && mx <= px + D / 2 && my >= feet - D && my <= feet + 4) {
         wk.hop = HOP_TIME
-        const pool = wk.lines.length > 0 ? wk.lines : DEFAULT_LINES
+        const pool = wk.lines.length > 0 ? wk.lines : DEFAULT_LINE_KEYS.map((key) => t(key))
         wk.bubble = { text: pool[Math.floor(Math.random() * pool.length)], born: clockRef.current, ttl: BUBBLE_TIME }
         onClickRef.current?.(wk.id) // 默认弹跳+气泡之后,交给调用方(如跳转主页)
         break // 只响应最上层一个

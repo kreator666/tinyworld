@@ -5,6 +5,7 @@ import { getActiveProvider } from './wallet'
 import { SLOT_TO_CATEGORY, chainParts, identityAbi, partByChainId, partsAbi, partsMarketAbi, starterClaimAbi } from './contracts'
 import { getActiveChain } from '../store/chainConfigStore'
 import { avalanche, avalancheFuji, sepolia } from 'viem/chains'
+import { t } from '../i18n'
 
 // 最小 ERC20 ABI:审批中心对用户资金路径(USDC→AVAX)需要先 approve 热钱包
 const erc20Abi = [
@@ -138,19 +139,19 @@ async function fallbackReadClient() {
       console.warn(`[fallback rpc] ${url} unavailable, trying next`, err)
     }
   }
-  throw new Error(`所有公共 RPC 均不可用: ${urls.join(', ')}`)
+  throw new Error(t('chainMsg.rpc.allUnavailable', { urls: urls.join(', ') }))
 }
 
 function walletClient(account: Address) {
   const provider = getActiveProvider()
-  if (!provider) throw new Error('未检测到已连接的钱包,请先连接')
+  if (!provider) throw new Error(t('chainMsg.wallet.notConnected'))
   return createWalletClient({ account: getAddress(account), chain: A().chain, transport: custom(provider) })
 }
 
 /** 确保钱包当前链与目标链一致;多笔签名流程中用户可能手动切链,每笔写前校验 */
 async function ensureWalletChain(): Promise<void> {
   const provider = getActiveProvider()
-  if (!provider) throw new Error('未检测到已连接的钱包,请先连接')
+  if (!provider) throw new Error(t('chainMsg.wallet.notConnected'))
   const targetChainId = A().chainId
   const chainIdHex = (await provider.request({ method: 'eth_chainId' })) as string
   const currentChainId = Number.parseInt(chainIdHex, 16)
@@ -169,13 +170,13 @@ function chainById(chainId: number) {
   if (chainId === avalanche.id) return { chain: avalanche, name: 'Avalanche', rpc: 'https://avalanche-c-chain-rpc.publicnode.com', explorer: 'https://subnets.avax.network/c-chain' }
   if (chainId === avalancheFuji.id) return { chain: avalancheFuji, name: 'Fuji', rpc: 'https://avalanche-fuji-c-chain-rpc.publicnode.com', explorer: 'https://testnet.snowtrace.io' }
   if (chainId === sepolia.id) return { chain: sepolia, name: 'Sepolia', rpc: 'https://ethereum-sepolia-rpc.publicnode.com', explorer: 'https://sepolia.etherscan.io' }
-  throw new Error(`不支持的链 ID: ${chainId}`)
+  throw new Error(t('chainMsg.chain.unsupported', { id: chainId }))
 }
 
 /** 确保钱包切到指定链(未添加过则先添加网络) */
 export async function ensureChain(chainId: number): Promise<void> {
   const provider = getActiveProvider()
-  if (!provider) throw new Error('未检测到钱包扩展')
+  if (!provider) throw new Error(t('chainMsg.wallet.noExtension'))
   const chainIdHex = (await provider.request({ method: 'eth_chainId' })) as string
   if (Number.parseInt(chainIdHex, 16) === chainId) return
   const target = chainById(chainId)
@@ -312,7 +313,7 @@ export async function fetchStarterClaimState(address: Address): Promise<boolean 
  *  ② identity 授权领取合约代为换装(approve,单 token)。返回 claimPack 的 tx hash */
 export async function claimStarterPack(owner: Address, tokenId: number): Promise<Hash> {
   const claimAddr = A().partsClaim
-  if (!claimAddr) throw new Error('当前链未部署新手装备领养合约')
+  if (!claimAddr) throw new Error(t('chainMsg.starter.notDeployed'))
   const client = readClient()
   const wallet = walletClient(owner)
   console.log('[claimStarterPack] chainId=', A().chainId, 'parts=', A().parts, 'identity=', A().identity, 'claim=', claimAddr)
@@ -397,14 +398,11 @@ export async function claimStarterPack(owner: Address, tokenId: number): Promise
       () => client.waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT }),
       'wait claimPack',
     )
-    if (receipt.status !== 'success') throw new Error('大礼包领取交易已回滚(链上执行失败),装备未发放,可稍后重试')
+    if (receipt.status !== 'success') throw new Error(t('chainMsg.starter.reverted'))
     return hash
   } catch (err) {
     if (isRateLimitError(err)) {
-      throw new Error(
-        '当前 RPC 节点请求过于频繁被限流,请切换到更稳定的节点后再试。' +
-        'Fuji 建议: https://avalanche-fuji-c-chain-rpc.publicnode.com 或 https://rpc.ankr.com/avalanche_fuji',
-      )
+      throw new Error(t('chainMsg.rpc.rateLimited'))
     }
     throw err
   }
@@ -427,7 +425,7 @@ export async function fetchMarketPrice(partId: number): Promise<bigint | null> {
  *  value 由调用方按链原生币精度计算(parseUnits(price, chain.nativeCurrency.decimals)) */
 export async function buyPartFromMarket(owner: Address, partId: number, quantity: number, value: bigint): Promise<Hash> {
   const marketAddr = A().market
-  if (!marketAddr) throw new Error('当前链未部署装备市场合约')
+  if (!marketAddr) throw new Error(t('chainMsg.market.notDeployed'))
   const wallet = walletClient(owner)
   const hash = await wallet.writeContract({
     address: marketAddr,
@@ -438,7 +436,7 @@ export async function buyPartFromMarket(owner: Address, partId: number, quantity
     gas: 300000n,
   })
   const receipt = await readClient().waitForTransactionReceipt({ hash, timeout: TX_RECEIPT_TIMEOUT })
-  if (receipt.status !== 'success') throw new Error('市场购买交易已回滚(可能超发/已下架/金额不符),未扣款或已退款')
+  if (receipt.status !== 'success') throw new Error(t('chainMsg.market.buyReverted'))
   return hash
 }
 
@@ -721,7 +719,7 @@ export async function registerPartsBatch(
 /** 批量铸造配件(需 minter 权限) */
 export async function mintPartsBatch(owner: Address, to: Address, ids: bigint[], amounts: bigint[]): Promise<Hash> {
   if (ids.length === 0 || amounts.length === 0 || ids.length !== amounts.length) {
-    throw new Error('铸造参数不能为空且 ids 与 amounts 长度必须一致')
+    throw new Error(t('chainMsg.mint.paramsMismatch'))
   }
   const wallet = walletClient(owner)
   const hash = await wallet.writeContract({
@@ -756,7 +754,7 @@ function requestWithTimeout<T>(
 ): Promise<T> {
   return Promise.race([
     provider.request(args) as Promise<T>,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('钱包请求超时,未收到响应')), ms)),
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(t('chainMsg.wallet.requestTimeout'))), ms)),
   ])
 }
 
@@ -784,7 +782,7 @@ async function getUsableProvider(): Promise<NonNullable<ReturnType<typeof getWin
       console.warn('[sendTransactions] window.ethereum 也不可用', err)
     }
   }
-  throw new Error('未检测到已连接的钱包,请先连接')
+  throw new Error(t('chainMsg.wallet.notConnected'))
 }
 
 /** 确保钱包已连接到当前站点(刷新后 activeProvider 可能丢失,但 window.ethereum 仍在) */
@@ -797,15 +795,15 @@ async function ensureAccounts(provider: NonNullable<ReturnType<typeof getWindowE
 
 /** 用户钱包对 unsigned tx 逐笔签名并发送(兼容不支持 eth_signTransaction 的钱包如 MetaMask) */
 export async function sendTransactions(owner: Address, unsignedTxs: EvmUnsignedTx[]): Promise<string[]> {
-  if (unsignedTxs.length === 0) throw new Error('没有待发送交易')
+  if (unsignedTxs.length === 0) throw new Error(t('chainMsg.tx.none'))
   // Solana 登录态(base58 地址)切到 EVM 链时,MetaMask 只会报笼统的 "must provide an Ethereum address";
   // 这里前置拦截,给出可操作的提示
   if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) {
-    throw new Error(`当前登录身份(${String(owner).slice(0, 10)}…)不是 EVM 地址,无法发送 Fuji 交易;请用 EVM 钱包(MetaMask 等)重新登录后再兑换`)
+    throw new Error(t('chainMsg.tx.notEvmAddress', { address: String(owner).slice(0, 10) }))
   }
   const targetChainId = unsignedTxs[0].chainId
   if (unsignedTxs.some((tx) => tx.chainId !== targetChainId)) {
-    throw new Error('待发送交易必须属于同一条链')
+    throw new Error(t('chainMsg.tx.differentChains'))
   }
 
   const provider = await getUsableProvider()
@@ -839,7 +837,7 @@ export async function sendTransactions(owner: Address, unsignedTxs: EvmUnsignedT
           ],
         })
       } else {
-        throw new Error(`请先将钱包切换到 ${target.name} 网络(当前链 ID ${currentChainId},需要 ${targetChainId})`)
+        throw new Error(t('chainMsg.tx.switchNetwork', { name: target.name, current: currentChainId, target: targetChainId }))
       }
     }
   }
@@ -873,31 +871,31 @@ export async function sendTransactions(owner: Address, unsignedTxs: EvmUnsignedT
   return txHashes
 }
 
-/** 把链上错误翻译成中文提示 */
+/** 把链上错误翻译成本地化提示 */
 export function explainChainError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
-  if (/AlreadyHasDID/.test(msg)) return '该地址已铸造过 Agent(每地址限 1 枚)'
-  if (/NameTaken/.test(msg)) return '该名称已被占用,请换一个'
-  if (/InvalidName/.test(msg)) return '名称不符合要求(1-64 字符)'
-  if (/NotMinter/.test(msg)) return '当前地址没有 DIDParts 铸造权限(需 owner 或授权 minter)'
-  if (/OwnableUnauthorizedAccount/.test(msg)) return '当前地址不是 DIDParts 合约 owner'
-  if (/PartAlreadyRegistered/.test(msg)) return '该配件已注册,不能重复注册'
-  if (/PartNotRegistered/.test(msg)) return '该配件尚未注册,请先注册'
-  if (/PartNotMintable/.test(msg)) return '该配件已关闭铸造(mintable=false)'
-  if (/MaxSupplyExceeded/.test(msg)) return '铸造数量超过该配件最大供应量'
-  if (/InvalidMaxSupply/.test(msg)) return '最大供应量必须大于 0'
-  if (/User rejected|rejected|denied|Denied/i.test(msg)) return '你取消了钱包操作'
-  if (/NotTokenOwner/.test(msg)) return '只有 Agent 持有者本人可以操作'
-  if (/NotAuthorized/.test(msg)) return '没有权限修改该 Agent 的人格配置'
-  if (/NothingEquipped/.test(msg)) return '该插槽没有装备中的配件'
-  if (/insufficient funds/i.test(msg)) return '钱包测试币余额不足,请先领取测试币'
+  if (/AlreadyHasDID/.test(msg)) return t('chainMsg.error.alreadyHasDID')
+  if (/NameTaken/.test(msg)) return t('chainMsg.error.nameTaken')
+  if (/InvalidName/.test(msg)) return t('chainMsg.error.invalidName')
+  if (/NotMinter/.test(msg)) return t('chainMsg.error.notMinterEvm')
+  if (/OwnableUnauthorizedAccount/.test(msg)) return t('chainMsg.error.notOwnerEvm')
+  if (/PartAlreadyRegistered/.test(msg)) return t('chainMsg.error.partAlreadyRegistered')
+  if (/PartNotRegistered/.test(msg)) return t('chainMsg.error.partNotRegistered')
+  if (/PartNotMintable/.test(msg)) return t('chainMsg.error.mintableClosed')
+  if (/MaxSupplyExceeded/.test(msg)) return t('chainMsg.error.maxSupplyExceeded')
+  if (/InvalidMaxSupply/.test(msg)) return t('chainMsg.error.invalidMaxSupply')
+  if (/User rejected|rejected|denied|Denied/i.test(msg)) return t('chainMsg.error.userRejected')
+  if (/NotTokenOwner/.test(msg)) return t('chainMsg.error.notTokenOwner')
+  if (/NotAuthorized/.test(msg)) return t('chainMsg.error.notAuthorized')
+  if (/NothingEquipped/.test(msg)) return t('chainMsg.error.nothingEquipped')
+  if (/insufficient funds/i.test(msg)) return t('chainMsg.error.insufficientFunds')
   if (/rate limit|rate-limit|too many requests|请求过于频繁/i.test(msg)) {
-    return '当前 RPC 节点被限流,请切换钱包网络节点后再试。Fuji 建议: https://avalanche-fuji-c-chain-rpc.publicnode.com 或 https://rpc.ankr.com/avalanche_fuji'
+    return t('chainMsg.rpc.rateLimitedShort')
   }
   if (/0xa86a|0xa869|chain id|chainId|mismatch/i.test(msg)) {
-    return '钱包当前网络与页面所选链不一致,请先在 MetaMask 切换到页面显示的链,或刷新页面后重试'
+    return t('chainMsg.error.chainMismatch')
   }
-  return `链上操作失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`
+  return t('chainMsg.error.failed', { msg: msg.length > 120 ? msg.slice(0, 120) + '…' : msg })
 }
 
 
