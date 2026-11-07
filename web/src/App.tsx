@@ -21,6 +21,7 @@ import ChatPage from './pages/ChatPage'
 import BackpackPage from './pages/BackpackPage'
 import AdminPage from './pages/AdminPage'
 import MyAgentPage from './pages/MyAgentPage'
+import SurvivalPage from './pages/SurvivalPage'
 
 // 未连接钱包守卫:其余页面一律跳回首页
 function Guard({ children }: { children: ReactNode }) {
@@ -254,6 +255,7 @@ export default function App() {
             <Route path="/plaza" element={<Guard><PlazaPage /></Guard>} />
             <Route path="/chat" element={<Guard><ChatPage /></Guard>} />
             <Route path="/arena" element={<Guard><ArenaPage /></Guard>} />
+            <Route path="/survival" element={<Guard><SurvivalPage /></Guard>} />
             <Route path="/backpack" element={<Guard><BackpackPage /></Guard>} />
             <Route path="/admin" element={<Guard><AdminPage /></Guard>} />
             <Route path="/admin/arena" element={<Guard><AdminArenaPage /></Guard>} />

@@ -478,6 +478,68 @@ export async function initSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS arena_fuel_ledger_idx ON arena_fuel_ledger (season_id, token_id, created_at);
+
+    -- ============================================================
+    -- 生存模式(Survival):电子宠物;平台垫资 NEAR 流动质押,收益换算力
+    -- token_id 沿用全库 NUMERIC(20,0) 约定;yocto 金额 NUMERIC(39,0) 以字符串往返
+    -- ============================================================
+    CREATE TABLE IF NOT EXISTS survival_pets (
+      chain_key TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      owner TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'alive' CHECK (status IN ('alive', 'weak', 'dormant', 'dead')),
+      satiety INT NOT NULL DEFAULT 80,      -- 饱食 0-100(48h 不归零衰减到 0)
+      cleanliness INT NOT NULL DEFAULT 80,  -- 清洁 0-100(72h 衰减到 0)
+      mood INT NOT NULL DEFAULT 80,         -- 心情 0-100(= f(饱食,清洁),弱/死状态封顶 50)
+      vitality INT NOT NULL DEFAULT 100,    -- 精力 0-100(0 不致死,只加速虚弱)
+      weak_since BIGINT,                    -- 进入 weak 的 epoch 秒(weak 持续 24h → dead)
+      principal_yocto NUMERIC(39,0) NOT NULL DEFAULT 0,   -- 平台垫资本金
+      earnings_yocto NUMERIC(39,0) NOT NULL DEFAULT 0,    -- DeFi 动作已实现盈亏(可负)
+      yield_yocto NUMERIC(39,0) NOT NULL DEFAULT 0,       -- 质押收益累计(可按 NEAR 价折算 credits 治疗)
+      credits_usd NUMERIC(20,6) NOT NULL DEFAULT 0,       -- 算力余额(账本制,人工/ heal 充值)
+      credits_burned_usd NUMERIC(20,6) NOT NULL DEFAULT 0,
+      death_count INT NOT NULL DEFAULT 0,
+      revive_count INT NOT NULL DEFAULT 0,
+      revive_fee_yocto NUMERIC(39,0) NOT NULL DEFAULT 0,  -- 历史复活费累计
+      born_at BIGINT NOT NULL,
+      last_action_at BIGINT,                -- 任意动作时间(最近活跃度展示)
+      last_decay_at BIGINT NOT NULL,        -- 上次衰减结算(读时 + tick 时惰性物化)
+      stake_tx TEXT NOT NULL DEFAULT '',
+      settings JSONB NOT NULL DEFAULT '{}'::jsonb,        -- riskProfile / maxSinglePct / lastActionAt(分动作)/ lastYieldAt
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (chain_key, token_id)
+    );
+
+    -- 动作记录:每次点动作(喂食/打扫/打工/治疗)一行,plan=LLM 决策,result=逐步执行结果
+    CREATE TABLE IF NOT EXISTS survival_actions (
+      id TEXT PRIMARY KEY,
+      chain_key TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('feed', 'clean', 'work', 'heal')),
+      status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'executed', 'partial', 'rejected', 'failed')),
+      plan JSONB NOT NULL DEFAULT '{}'::jsonb,
+      result JSONB NOT NULL DEFAULT '{}'::jsonb,
+      tx_hash TEXT,
+      credit_cost_usd NUMERIC(20,6) NOT NULL DEFAULT 0,
+      pnl_yocto NUMERIC(39,0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS survival_actions_idx ON survival_actions (chain_key, token_id, created_at);
+
+    -- 账本:stake(垫资)|yield(收益分摊)|topup(heal 折算/人工充值)|credit_burn|revive_fee|defi(其他留痕)
+    CREATE TABLE IF NOT EXISTS survival_ledger (
+      id TEXT PRIMARY KEY,
+      chain_key TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('stake', 'yield', 'topup', 'credit_burn', 'revive_fee', 'defi')),
+      amount_yocto NUMERIC(39,0) NOT NULL DEFAULT 0,
+      credits_delta NUMERIC(20,6) NOT NULL DEFAULT 0,
+      tx_hash TEXT NOT NULL DEFAULT '',
+      note TEXT NOT NULL DEFAULT '',
+      ts BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS survival_ledger_idx ON survival_ledger (chain_key, token_id, ts);
   `)
 }
 

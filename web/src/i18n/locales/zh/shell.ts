@@ -9,6 +9,7 @@ const shell: Record<string, unknown> = {
     plaza: '社交广场',
     arena: '竞技场',
     chat: '消息',
+    survival: '生存模式',
     mint: '铸造工坊',
     admin: '管理员',
     wizardOn: '打开/关闭新手引导',

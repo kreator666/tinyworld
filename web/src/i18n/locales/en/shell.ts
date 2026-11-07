@@ -9,6 +9,7 @@ const shell: Record<string, unknown> = {
     plaza: 'Plaza',
     arena: 'Arena',
     chat: 'Messages',
+    survival: 'Survival',
     mint: 'Mint Workshop',
     admin: 'Admin',
     wizardOn: 'Toggle onboarding guide',

@@ -40,6 +40,8 @@ export default function NavBar() {
     { to: '/plaza', label: t('nav.plaza') },
     { to: '/arena', label: t('nav.arena') },
     { to: '/chat', label: t('nav.chat') },
+    // 生存模式仅 NEAR 链开放(后端按链实现,其他链隐藏入口)
+    ...(active.family === 'near' ? [{ to: '/survival', label: t('nav.survival') }] : []),
   ]
 
   const onTargetChain = isWalletOnActiveChain(login, active)

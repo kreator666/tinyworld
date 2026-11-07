@@ -24,6 +24,7 @@ import { SkillError, getInstalledSkills, getInstalledUserSkills, installSkill, l
 import { seedChainProtocols } from './skills/protocolSeeding'
 import { startScheduler, stopScheduler } from './core/scheduler'
 import { startArenaScheduler, stopArenaScheduler } from './core/arenaScheduler'
+import { startSurvivalScheduler, stopSurvivalScheduler } from './core/survivalScheduler'
 import { getInbox, recordSocialMessage } from './core/social'
 import { getApproval, listApprovals, resolveApproval } from './core/approvals'
 import { createNonce, verifyLogin, signJwt, AuthError, isValidAddress } from './core/auth'
@@ -50,6 +51,17 @@ import {
 import { getArenaAccount, insertArenaSeason, listArenaAccounts, listArenaSeasons, updateArenaSeason, getArenaFuel } from './db/arena'
 import { decisionGate, fuelConfigOf } from './core/arenaFuel'
 import { settleAccount } from './core/arenaSettlement'
+import {
+  SurvivalError,
+  adoptPet,
+  doAction,
+  getState,
+  leaderboard,
+  revivePet,
+  actionToDto,
+} from './core/survival'
+import { topupCredits } from './core/survivalCredits'
+import { listRecentActions, getPet, updatePet } from './db/survival'
 import { buildDeployTxs, buildWhitelistTx, resolveDeployReceipts, whitelistTemplate } from './core/arenaDeploy'
 import { buildSettleTxs, confirmSettleTxs } from './core/arenaSettlement'
 import { getPublicClient, getWalletClient } from './chain/clients'
@@ -1872,12 +1884,152 @@ app.post('/arena/seasons/:id/agents/:tokenId/freeze-confirm', authRequired, asyn
 })
 
 
+// ============================================================
+// 生存模式(Survival Mode):电子宠物;平台垫资 NEAR 流动质押,收益换算力
+// 全部 JSON;时间戳一律 ms epoch(cooldowns/nextAt),金额 yocto 一律字符串
+// ============================================================
+
+// 排行榜(公开):按 earnings+yield 降序;name 从链上身份镜像取,取不到给 #tokenId
+app.get('/survival/leaderboard', async (c) => {
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const limit = Math.min(Number(c.req.query('limit')) || 50, 200)
+    return c.json(await leaderboard(chainKey, limit))
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 宠物状态(公开;读时惰性结算衰减)
+app.get('/survival/pet/:tokenId', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    return c.json({ pet: await getState(chainKey, tokenId) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 领养(authRequired + owner 校验):平台热钱包垫资质押,本金档位 1/2/5 NEAR
+app.post('/survival/pet/:tokenId/adopt', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ principal?: number }>().catch(() => null)
+    if (!body) return c.json({ error: '请求体必须是 JSON' }, 400)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const pet = await adoptPet(chainKey, tokenId, c.get('address'), body.principal ?? NaN)
+    return c.json({ pet })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 点动作(authRequired + owner):同步执行(LLM 决策 + 链上执行),前端转 loading
+app.post('/survival/pet/:tokenId/action', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ kind?: string }>().catch(() => null)
+    if (!body?.kind) return c.json({ error: 'kind 必填(feed/clean/work/heal)' }, 400)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const action = await doAction(chainKey, tokenId, body.kind)
+    return c.json({ action })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 复活(authRequired + owner):dead 才可,0.5 NEAR 从收益扣(不足 demo 豁免)
+app.post('/survival/pet/:tokenId/revive', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const pet = await revivePet(chainKey, tokenId)
+    return c.json({ pet })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 动作记录(公开)
+app.get('/survival/pet/:tokenId/actions', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const limit = Math.min(Number(c.req.query('limit')) || 50, 200)
+    const actions = await listRecentActions(chainKey, tokenId, limit)
+    return c.json({ actions: actions.map(actionToDto) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 宠物设置(authRequired + owner):riskProfile / maxSinglePct
+app.put('/survival/pet/:tokenId/settings', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ riskProfile?: string; maxSinglePct?: number }>().catch(() => null)
+    if (!body) return c.json({ error: '请求体必须是 JSON' }, 400)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const pet = await getPet(chainKey, tokenId)
+    if (!pet) return c.json({ error: '宠物不存在,请先领养' }, 404)
+    if (pet.status === 'dead') return c.json({ error: '宠物已死亡,不可修改设置' }, 409)
+    const settings = { ...(pet.settings ?? {}) } as Record<string, unknown>
+    if (body.riskProfile !== undefined) {
+      if (!['conservative', 'balanced', 'aggressive'].includes(body.riskProfile)) {
+        return c.json({ error: 'riskProfile 必须是 conservative/balanced/aggressive' }, 400)
+      }
+      settings.riskProfile = body.riskProfile
+    }
+    if (body.maxSinglePct !== undefined) {
+      if (!Number.isFinite(body.maxSinglePct) || body.maxSinglePct <= 0 || body.maxSinglePct > 100) {
+        return c.json({ error: 'maxSinglePct 必须在 (0, 100] 区间' }, 400)
+      }
+      settings.maxSinglePct = body.maxSinglePct
+    }
+    await updatePet(chainKey, tokenId, { settings })
+    return c.json({ settings })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 人工充值 credits(chainAdminRequired):真实 NEAR AI 充值由人操作,这里只记账
+app.post('/admin/survival/credits', chainAdminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{ chain_key?: string; tokenId?: number; usd?: number; note?: string }>().catch(() => null)
+    if (!body) return c.json({ error: '请求体必须是 JSON' }, 400)
+    const chainKey = body.chain_key ?? resolveChainKey(c.req.header('X-Chain-Key'))
+    const tokenId = typeof body.tokenId === 'number' && Number.isInteger(body.tokenId) && body.tokenId > 0 ? body.tokenId : null
+    if (tokenId === null) return c.json({ error: 'tokenId 不合法' }, 400)
+    if (!(body.usd! > 0)) return c.json({ error: 'usd 必须为正数' }, 400)
+    const creditsUsd = await topupCredits(chainKey, tokenId, body.usd!, body.note ?? `admin topup by ${c.get('address')}`)
+    await insertAudit({ adminAddress: c.get('address'), action: 'survival_credits_topup', target: `${chainKey}/${tokenId}`, payload: body })
+    return c.json({ creditsUsd })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
 /** 统一错误出口:人格完整性问题 422,技能问题按其 status,竞技场按其 status,LLM 网关异常 502,其余 500 */
 function handleErr(c: Context, err: unknown) {
   if (err instanceof AuthError) {
     return c.json({ error: err.message }, err.status)
   }
   if (err instanceof ArenaError) {
+    return c.json({ error: err.message }, err.status)
+  }
+  if (err instanceof SurvivalError) {
     return c.json({ error: err.message }, err.status)
   }
   if (err instanceof PersonaError) {
@@ -1949,6 +2101,7 @@ async function main() {
   await syncSkillsToDb()
   startScheduler() // M3:心跳驱动自主社交
   startArenaScheduler() // P4:竞技场统一调度(两层 tick + 燃料闸门)
+  startSurvivalScheduler() // Survival:衰减物化 + 收益快照 + dormant 判定(纯代码,不烧 credits)
   serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`Agent 服务已启动: http://localhost:${info.port} (模型: ${config.llmModel}, 链: ${config.chain.name})`)
   })
@@ -1957,6 +2110,7 @@ async function main() {
     process.on(sig, () => {
       stopScheduler()
       stopArenaScheduler()
+      stopSurvivalScheduler()
       closeDb().finally(() => process.exit(0))
     })
   }

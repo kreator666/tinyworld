@@ -271,4 +271,28 @@ export const config = {
   // 引导管理员地址(公钥地址,非秘密):admin_whitelist 为空时启动自动写入白名单;
   // 之后增删管理员走 /admin/admins 接口(需签名登录 JWT)
   adminAddress: env('ADMIN_ADDRESS'),
+  // ============================================================
+  // 生存模式(Survival Mode):电子宠物式玩法,平台垫资 NEAR 流动质押,
+  // 质押收益换算力(credits 账本),玩家点动作触发 agent LLM 决策 + NEAR DeFi 真实执行
+  // ============================================================
+  survivalEnabled: env('SURVIVAL_ENABLED', 'true') === 'true',
+  survivalTickSeconds: Number(env('SURVIVAL_TICK_SECONDS', '60')),
+  survivalPrincipalChoices: [1, 2, 5] as const, // 可选本金档位(NEAR)
+  // survival 专用 LLM 源(缺省回落全局 LLM 配置)
+  survivalLlmBaseUrl: env('SURVIVAL_LLM_BASE_URL') || env('LLM_BASE_URL', 'https://aiping.cn/api/v1'),
+  survivalLlmApiKey: env('SURVIVAL_LLM_API_KEY') || env('LLM_API_KEY'),
+  survivalLlmModel: env('SURVIVAL_LLM_MODEL', 'z-ai/glm-5.3-flash'),
+  // NEAR AI 云(查模型定价/credits 计价用)
+  survivalNearaiBaseUrl: env('SURVIVAL_NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1'),
+  // Meta Pool 流动质押合约(仅 near-mainnet;near-testnet 用 Burrow supply wNEAR 替身)
+  survivalMetaPoolContract: env('SURVIVAL_METAPOOL_CONTRACT', 'meta-pool.near'),
+  // 衰减参数(秒):饱食 48h 归零、清洁 72h 归零、weak(饿虚)持续 24h 死亡
+  survivalSatietyDecayHours: Number(env('SURVIVAL_SATIETY_DECAY_HOURS', '48')),
+  survivalCleanDecayHours: Number(env('SURVIVAL_CLEAN_DECAY_HOURS', '72')),
+  survivalWeakDeathHours: Number(env('SURVIVAL_WEAK_DEATH_HOURS', '24')),
+  // 动作冷却(秒):喂食/打扫 5min,打工 15min
+  survivalCooldownFeedSec: Number(env('SURVIVAL_COOLDOWN_FEED_SEC', '300')),
+  survivalCooldownCleanSec: Number(env('SURVIVAL_COOLDOWN_CLEAN_SEC', '300')),
+  survivalCooldownWorkSec: Number(env('SURVIVAL_COOLDOWN_WORK_SEC', '900')),
+  survivalReviveFeeNear: env('SURVIVAL_REVIVE_FEE_NEAR', '0.5'), // 复活费(NEAR,从收益扣,不足则 demo 豁免)
 } as const

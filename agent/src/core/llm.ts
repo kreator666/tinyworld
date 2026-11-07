@@ -8,8 +8,12 @@ export interface LlmUsage {
 }
 
 export interface CompleteOptions {
-  model?: string // 覆盖默认模型(竞技场赛季固定模型用)
+  model?: string // 覆盖默认模型(竞技场赛季固定模型 / 生存模式专用模型用)
   temperature?: number
+  /** 覆盖默认网关地址(生存模式走独立 LLM 源);缺省回落 config.llmBaseUrl */
+  baseUrl?: string
+  /** 覆盖默认 API Key;缺省回落 config.llmApiKey */
+  apiKey?: string
   /** 调用成功后回传实际 token 用量(竞技场燃料计费消费);抛错则向上传播,不允许静默跳过计费 */
   onUsage?: (usage: LlmUsage) => void | Promise<void>
 }
@@ -25,11 +29,13 @@ export async function complete(
   temperatureOrOptions: number | CompleteOptions = 0.7,
 ): Promise<string> {
   const opts: CompleteOptions = typeof temperatureOrOptions === 'number' ? { temperature: temperatureOrOptions } : temperatureOrOptions
-  const res = await fetch(`${config.llmBaseUrl}/chat/completions`, {
+  const baseUrl = opts.baseUrl ?? config.llmBaseUrl
+  const apiKey = opts.apiKey ?? config.llmApiKey
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.llmApiKey}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: opts.model ?? config.llmModel,

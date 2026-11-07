@@ -4,6 +4,7 @@ import arena from './arena'
 import chat from './chat'
 import chain from './chain'
 import game from './game'
+import survival from './survival'
 
 const zh: Record<string, unknown> = {
   ...shell,
@@ -12,6 +13,7 @@ const zh: Record<string, unknown> = {
   ...chat,
   ...chain,
   ...game,
+  ...survival,
 }
 
 export default zh
