@@ -10,7 +10,7 @@ Agent DID 身份 NFT + 装备部件的 NEAR 实现（Rust / near-sdk，语义对
 | 网络 | 合约账户 | 日期 | 说明 |
 |---|---|---|---|
 | **Mainnet** | **`agentverse-did.near`** | 2026-11 | wasm-opt 压缩版（282KB）；定价前 100 免费/0.05 NEAR；创世身份 #1；32 件新手装备已注册；Ref v2 主网兑换已接入（`v2.ref-finance.near`） |
-| Testnet | `tinyworld.testnet` | 2026-10 | 测试网全功能验证（Burrow 借贷仅测试网） |
+| Testnet | `tinyworld.testnet` | 2026-10 / 2026-11 换码 | 测试网全功能验证（Burrow 借贷仅测试网）。**2026-11 code-only 换码为与主网同一份 wasm-opt 产物**（旧构建 panic 消息被剥离,所有报错都是裸 `unreachable`,无法排查;换码后状态无损,DID/装备保留） |
 
 > ⚠️ **near-sdk 版本与主网协议绑定**：主网协议 87 / 测试网 88（2026-11 实测）。
 > near-sdk 5.30 会链接仅协议 88 可用的 host 函数（universal_state_init / global contracts 等），
