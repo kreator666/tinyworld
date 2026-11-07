@@ -247,12 +247,27 @@ export async function adoptPet(chainKey: string, tokenId: number, owner: string,
   if (await getPet(chainKey, tokenId)) throw new SurvivalError('该 Agent 已领养,不可重复领养', 409)
   const yocto = (YOCTO_PER_NEAR * BigInt(principalNear)).toString()
   // 热钱包余额预检:本金 + ~0.05N gas/storage 余量,不足给明确报错(不等到链上才失败)
-  const native = BigInt(await nearNativeBalance(chainKey))
+  let native: bigint
+  try {
+    native = BigInt(await nearNativeBalance(chainKey))
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new SurvivalError(
+      `平台热钱包余额查询失败(${chainKey}): ${msg.slice(0, 120)} — 请检查服务器 AGENT_NEAR_ACCOUNT_ID / AGENT_NEAR_PRIVATE_KEY 是否为该网络的账户`,
+      502,
+    )
+  }
   const buffer = YOCTO_PER_NEAR / 20n
   if (native < BigInt(yocto) + buffer) {
     throw new SurvivalError(`平台热钱包 NEAR 不足(需 ${principalNear}N + gas),请联系管理员充值`, 502)
   }
-  const { txHash } = await stakeNear(chainKey, yocto)
+  let txHash: string
+  try {
+    ;({ txHash } = await stakeNear(chainKey, yocto))
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new SurvivalError(`质押交易执行失败(${chainKey}): ${msg.slice(0, 200)}`, 502)
+  }
   const nowSec = Math.floor(Date.now() / 1000)
   await insertPet({
     chain_key: chainKey, token_id: String(tokenId), owner, status: 'alive',
