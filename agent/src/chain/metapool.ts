@@ -1,7 +1,8 @@
 import { config } from '../config'
 import { getChainContext } from './registry'
-import { nearAgentAccountId, nearCall, nearView } from './nearWrite'
+import { nearAgentAccountId, nearCall, nearView, nearStorageBalance } from './nearWrite'
 import { burrowGetAccount, burrowSupply } from './burrow'
+import { refToken } from './ref'
 
 // ============================================================
 // Meta Pool 流动质押(生存模式垫资用,仅 near-mainnet):
@@ -29,7 +30,15 @@ function metaPoolContract(chainKey: string): string {
 export async function stakeNear(chainKey: string, yoctoAmount: string): Promise<{ txHash: string }> {
   if (BigInt(yoctoAmount) <= 0n) throw new Error('质押金额必须大于 0')
   if (isTestnet(chainKey)) {
-    // 测试网替身:Burrow supply wNEAR(wrap.testnet);native NEAR 需先包裹,由 ref 侧逻辑保证余额
+    // 测试网替身:Burrow supply wNEAR。wNEAR 是 FT,得先把 native NEAR 包裹进来
+    // (wrap.testnet near_deposit,payable),否则 ft_transfer_call 报 "account doesn't have enough balance"
+    const wrap = refToken(chainKey, 'WNEAR').contractId
+    const me = nearAgentAccountId()
+    const storage = await nearStorageBalance(chainKey, wrap, me)
+    if (!storage || BigInt(storage.total) === 0n) {
+      await nearCall(chainKey, wrap, 'storage_deposit', {}, 1250000000000000000000n) // wNEAR 注册费 0.00125N
+    }
+    await nearCall(chainKey, wrap, 'near_deposit', {}, BigInt(yoctoAmount))
     const txHash = await burrowSupply(chainKey, 'WNEAR', yoctoAmount)
     return { txHash }
   }
