@@ -64,13 +64,12 @@ export async function burrowRepay(chainKey: string, tokenSymbol: string, amountH
   return nearCall(chainKey, burrow, 'execute', { actions: [{ Repay: { token_id: token.contractId, amount: amountHuman } }] }, 1n)
 }
 
-/** 取回存款;amountHuman 传 null 表示全部取出 */
+/** 取回存款;amountHuman 传 null 表示全部取出(burrow 约定:不带 amount/max_amount 即全取) */
 export async function burrowWithdraw(chainKey: string, tokenSymbol: string, amountHuman: string | null): Promise<string> {
   const burrow = burrowContract(chainKey)
   const token = refToken(chainKey, tokenSymbol)
   const action: Record<string, unknown> = { Withdraw: { token_id: token.contractId } }
   if (amountHuman !== null) (action.Withdraw as Record<string, unknown>).amount = amountHuman
-  else (action.Withdraw as Record<string, unknown>).max_amount = '0' // 0 = 全部(burrow 约定)
   return nearCall(chainKey, burrow, 'execute', { actions: [action] }, 1n)
 }
 
@@ -153,13 +152,12 @@ export async function buildBurrowRepayTxs(chainKey: string, userAccountId: strin
   ]
 }
 
-/** 取回存款;amountHuman 传 null 表示全部取出 */
+/** 取回存款;amountHuman 传 null 表示全部取出(burrow 约定:不带 amount/max_amount 即全取) */
 export async function buildBurrowWithdrawTxs(chainKey: string, userAccountId: string, tokenSymbol: string, amountHuman: string | null): Promise<NearUnsignedTx[]> {
   const burrow = burrowContract(chainKey)
   const token = refToken(chainKey, tokenSymbol)
   const action: Record<string, unknown> = { Withdraw: { token_id: token.contractId } }
   if (amountHuman !== null) (action.Withdraw as Record<string, unknown>).amount = amountHuman
-  else (action.Withdraw as Record<string, unknown>).max_amount = '0' // 0 = 全部(burrow 约定)
   const desc = amountHuman !== null ? `从 Burrow 取回 ${amountHuman} ${token.symbol} 存款` : `从 Burrow 取回全部 ${token.symbol} 存款`
   return [
     {
