@@ -41,13 +41,26 @@ async function main() {
   const allowance = new BN(utils.format.parseNearAmount(ALLOWANCE_NEO)!)
 
   const map: Record<string, string> = {}
+  // 清理旧子密钥(同 receiver+methods 的 FunctionCall 钥匙,防止轮换堆积)
+  const existing = await account.getAccessKeys()
+  for (const k of existing) {
+    const perm = k.access_key.permission
+    if (typeof perm !== 'string' && perm?.FunctionCall) {
+      const fc = perm.FunctionCall
+      const spec = SPECS.find((s) => s.receiver === fc.receiver_id)
+      if (spec && fc.method_names.every((m) => spec.methods.includes(m))) {
+        await account.deleteKey(k.public_key)
+        console.log(`cleanup old key for ${fc.receiver_id}`)
+      }
+    }
+  }
   for (const spec of SPECS) {
     const kp = randomKeyPair()
     const pub = kp.getPublicKey().toString()
     // near-api-js 5.x: addKey(publicKey, contractId, methodNames, amount) = FunctionCall 受限钥匙;contractId 缺省才是 FullAccess
     const outcome = await account.addKey(pub, spec.receiver, spec.methods, allowance)
-    const secret = (kp as unknown as { secretKey: string }).secretKey
-    if (!secret) throw new Error('无法导出新子密钥 secretKey')
+    const secret = kp.toString() // KeyPair.toString() = "ed25519:<base58>" 编码私钥
+    if (!secret.startsWith('ed25519:')) throw new Error(`子密钥导出格式异常: ${secret.slice(0, 12)}…`)
     map[spec.receiver] = secret
     const status = (outcome as { status?: unknown }).status
     console.log(`add-key ${spec.receiver.padEnd(20)} ${pub.slice(0, 16)}… status=${JSON.stringify(status).slice(0, 60)}`)
