@@ -64,6 +64,35 @@ const survival: Record<string, unknown> = {
     heal: 'Heal',
     bed: 'Pet Bed',
   },
+  modal: {
+    cancel: 'Cancel',
+  },
+  feed: {
+    amountTitle: 'Choose feed amount',
+    desc: 'Feeding = depositing fresh principal into the lending protocol from your wallet. More principal earns more yield, so your pet grows earnings faster as it matures. The amount is transferred from your wallet and requires a wallet signature.',
+    confirm: 'Confirm Feed',
+    success: 'Fed! New principal added: {x} NEAR',
+  },
+  clean: {
+    title: 'Clean',
+    desc: 'Cleaning = withdrawing lending yield (including interest) into your pet vault. Note: the initial principal cannot be withdrawn — only the earnings portion is claimed.',
+    confirm: 'Confirm Clean',
+    success: 'Cleaned! {x} NEAR of yield claimed to your pet vault',
+  },
+  work: {
+    title: 'Work',
+    desc: 'Working = high-risk directional trading (long/short NEAR) decided by NEAR AI. It can lose money, and losses count against your pet earnings. Continue?',
+    confirm: 'Confirm Work',
+  },
+  heal: {
+    success: 'Healed: earnings converted to compute at NEAR AI real-time rates',
+  },
+  revive: {
+    title: 'Revive Pet',
+    desc: 'Reviving = paying 0.5 NEAR from your wallet to top up NEAR AI compute and bring your pet back; principal and earnings are kept. The amount is transferred from your wallet and requires a wallet signature.',
+    confirm: 'Confirm Revive',
+    success: 'Revived! Your pet is alive again',
+  },
   log: {
     title: 'Action Log',
     empty: 'No actions yet — click an item in the room to start',
@@ -95,7 +124,6 @@ const survival: Record<string, unknown> = {
     adoptOk: 'Adopted! Your pet has moved into the room',
     adoptFail: 'Adoption failed, please try again later',
     allocPartial: 'Some fund allocations failed and were logged; an admin can retry them',
-    reviveOk: 'Revived! Your pet is alive again',
     reviveFail: 'Revival failed, please try again later',
   },
 }

@@ -6,17 +6,22 @@ import { useChainStore } from '../store/chainStore'
 import { useChainConfig, explorerTx } from '../store/chainConfigStore'
 import {
   adoptSurvivalTxs,
+  cleanSurvivalPet,
   confirmSurvivalAdopt,
+  confirmSurvivalFeed,
+  feedSurvivalTxs,
   formatNear,
   getSurvivalActions,
   getSurvivalLeaderboard,
   getSurvivalPet,
   getSurvivalPositions,
-  reviveSurvivalPet,
+  reviveSurvivalConfirm,
+  reviveSurvivalTxs,
   survivalAction,
   SurvivalApiError,
   type SurvivalActionDto,
   type SurvivalActionKind,
+  type SurvivalFeedAmount,
   type SurvivalLeaderboardEntry,
   type SurvivalPetDto,
   type SurvivalPetStatus,
@@ -34,6 +39,10 @@ import SurvivalRoom, { type HotspotKind, type SurvivalOutcome } from '../compone
 
 const POLL_MS = 15_000
 const PRINCIPAL_OPTIONS = [1, 2, 5] as const
+const FEED_OPTIONS: SurvivalFeedAmount[] = [0.1, 0.2, 0.5]
+
+/** 画布动作弹窗的待确认动作(heal 直走不弹窗;revive 走面板按钮的独立弹窗) */
+type PendingAction = { kind: 'feed' } | { kind: 'clean' } | { kind: 'work' } | { kind: 'revive' }
 
 const KIND_ICON: Record<SurvivalActionKind, string> = { feed: '🍖', clean: '🧹', work: '💻', heal: '💊' }
 /** 资金分配仓位 kind → 图标(默认 💰) */
@@ -95,6 +104,8 @@ export default function SurvivalPage() {
   const [busy, setBusy] = useState(false)
   const [adoptStage, setAdoptStage] = useState<'build' | 'sign' | 'confirm' | 'allocate' | null>(null)
   const [reviving, setReviving] = useState(false)
+  const [pending, setPending] = useState<PendingAction | null>(null)
+  const [feedAmount, setFeedAmount] = useState<SurvivalFeedAmount>(0.1)
   const [principal, setPrincipal] = useState<1 | 2 | 5>(1)
   const [outcome, setOutcome] = useState<SurvivalOutcome | null>(null)
   const seqRef = useRef(0)
@@ -166,35 +177,113 @@ export default function SurvivalPage() {
     return () => clearInterval(timer)
   }, [isNear, tokenId, refreshPet, refreshActions, refreshBoard])
 
-  // 点击画布热点:动作期间锁交互;冷却/沉睡/死亡在画布层已拦截,这里兜底
-  const onAction = useCallback(
-    async (kind: SurvivalActionKind) => {
-      if (busy || tokenId <= 0) return
-      setBusy(true)
-      const seq = ++seqRef.current
-      setOutcome(null)
-      try {
-        const r = await survivalAction(tokenId, kind)
-        const ok = r.action.status === 'executed'
-        setOutcome({ kind, ok, seq })
-        if (!ok) showToast(t('survival.toast.rejected'))
-      } catch (err) {
-        setOutcome({ kind, ok: false, seq })
-        if (err instanceof SurvivalApiError && err.status === 401) {
-          showToast(t('survival.toast.needLogin'))
-        } else if (err instanceof SurvivalApiError && (err.status >= 502 || err.status === 408)) {
-          showToast(t('survival.toast.noResponse'))
-        } else {
-          showToast(err instanceof Error ? err.message : t('survival.toast.actionFail'))
-        }
-      } finally {
-        setBusy(false)
-        refreshPet()
-        refreshActions()
+  // 统一动作报错提示:401 弹登录、网关错误降级,其余透传后端 message(如 clean 409 暂无收益)
+  const toastActionError = useCallback(
+    (err: unknown) => {
+      if (err instanceof SurvivalApiError && err.status === 401) {
+        showToast(t('survival.toast.needLogin'))
+      } else if (err instanceof SurvivalApiError && (err.status >= 502 || err.status === 408)) {
+        showToast(t('survival.toast.noResponse'))
+      } else {
+        showToast(err instanceof Error ? err.message : t('survival.toast.actionFail'))
       }
     },
-    [busy, tokenId, showToast, refreshPet, refreshActions, t],
+    [showToast, t],
   )
+
+  // 点击画布热点:这里只接收「动作意图」——feed/clean/work 先弹确认窗,heal 直走;冷却/沉睡/死亡在画布层已拦截
+  const onAction = useCallback(
+    (kind: SurvivalActionKind) => {
+      if (busy || tokenId <= 0 || pending) return
+      if (kind === 'heal') {
+        void executeAction('heal')
+        return
+      }
+      setPending({ kind })
+    },
+    [busy, tokenId, pending],
+  )
+
+  // 关闭弹窗:宠物已经走向物品,给一个失败态 outcome 让画布快速收尾(避免空等到 60s 看门狗)
+  const cancelPending = useCallback(() => {
+    if (pending && pending.kind !== 'revive') {
+      setOutcome({ kind: pending.kind, ok: false, seq: ++seqRef.current })
+    }
+    setPending(null)
+  }, [pending])
+
+  // work/heal:保留原同步 action 流程(接口 10-30s,期间画布锁交互)
+  async function executeAction(kind: 'work' | 'heal') {
+    if (busy || tokenId <= 0) return
+    setPending(null)
+    setBusy(true)
+    const seq = ++seqRef.current
+    setOutcome(null)
+    try {
+      const r = await survivalAction(tokenId, kind)
+      const ok = r.action.status === 'executed'
+      setOutcome({ kind, ok, seq })
+      if (!ok) showToast(t('survival.toast.rejected'))
+      else if (kind === 'heal') showToast(t('survival.heal.success'))
+    } catch (err) {
+      setOutcome({ kind, ok: false, seq })
+      toastActionError(err)
+    } finally {
+      setBusy(false)
+      refreshPet()
+      refreshActions()
+    }
+  }
+
+  // 喂食:feedTxs → 钱包签名自广播 → feedConfirm;新本金来自用户钱包,需钱包签名
+  async function executeFeed() {
+    if (busy || tokenId <= 0 || !address) return
+    setPending(null)
+    setBusy(true)
+    const seq = ++seqRef.current
+    const amount = feedAmount
+    setOutcome(null)
+    try {
+      const r = await feedSurvivalTxs(tokenId, amount)
+      if (!r.txs.length) throw new Error(t('survival.toast.actionFail'))
+      const hashes = await sendTransactions(address, r.txs)
+      if (!hashes.length) throw new Error(t('chainMsg.near.noTxHash'))
+      const c = await confirmSurvivalFeed(tokenId, hashes[0])
+      if (c.pet) setPet(c.pet)
+      refreshPositions()
+      setOutcome({ kind: 'feed', ok: true, seq })
+      showToast(t('survival.feed.success', { x: amount }))
+      if (c.failures.length > 0) showToast(t('survival.toast.allocPartial'))
+    } catch (err) {
+      setOutcome({ kind: 'feed', ok: false, seq })
+      toastActionError(err)
+    } finally {
+      setBusy(false)
+      refreshPet()
+      refreshActions()
+    }
+  }
+
+  // 打扫:提取借贷收益到宠物金库(仅收益部分);同步执行 10-30s,409 = 无可提取收益
+  async function executeClean() {
+    if (busy || tokenId <= 0) return
+    setPending(null)
+    setBusy(true)
+    const seq = ++seqRef.current
+    setOutcome(null)
+    try {
+      const r = await cleanSurvivalPet(tokenId)
+      setOutcome({ kind: 'clean', ok: true, seq })
+      showToast(t('survival.clean.success', { x: formatNear(r.claimedYocto) }))
+    } catch (err) {
+      setOutcome({ kind: 'clean', ok: false, seq })
+      toastActionError(err)
+    } finally {
+      setBusy(false)
+      refreshPet()
+      refreshActions()
+    }
+  }
 
   const onDormantClick = useCallback(() => showToast(t('survival.toast.dormant')), [showToast, t])
   const onBusyClick = useCallback(() => showToast(t('survival.toast.busy')), [showToast, t])
@@ -228,18 +317,26 @@ export default function SurvivalPage() {
     }
   }
 
+  // 复活:reviveTxs → 钱包签名自广播 → reviveConfirm;0.5 NEAR 从用户钱包转出充值算力,本金与收益保留
   const onRevive = async () => {
-    if (reviving || tokenId <= 0) return
+    if (reviving || tokenId <= 0 || !address) return
+    setPending(null)
     setReviving(true)
     try {
-      const r = await reviveSurvivalPet(tokenId)
-      setPet(r.pet)
-      showToast(t('survival.toast.reviveOk'))
+      const r = await reviveSurvivalTxs(tokenId)
+      if (!r.txs.length) throw new Error(t('survival.toast.reviveFail'))
+      const hashes = await sendTransactions(address, r.txs)
+      if (!hashes.length) throw new Error(t('chainMsg.near.noTxHash'))
+      const c = await reviveSurvivalConfirm(tokenId, hashes[0])
+      setPet(c.pet)
+      showToast(t('survival.revive.success'))
+      refreshActions()
     } catch (err) {
       if (err instanceof SurvivalApiError && err.status === 401) showToast(t('survival.toast.needLogin'))
       else showToast(err instanceof Error ? err.message : t('survival.toast.reviveFail'))
     } finally {
       setReviving(false)
+      refreshPet()
     }
   }
 
@@ -302,6 +399,57 @@ export default function SurvivalPage() {
           {busy && (
             <div className="absolute top-3 left-3 tag border-neon-purple/60 text-neon-purple bg-ink/70 animate-pulse">
               ⏳ {t('survival.action.acting')}
+            </div>
+          )}
+
+          {/* 动作确认弹窗:画布上方居中,取消可返回 */}
+          {pending && pending.kind !== 'revive' && (
+            <div className="absolute inset-0 z-20 grid place-items-center bg-black/55 backdrop-blur-[2px] p-4">
+              <div className="glass neon-border w-full max-w-xs p-5">
+                {pending.kind === 'feed' ? (
+                  <>
+                    <h3 className="font-bold mb-2">🍖 {t('survival.feed.amountTitle')}</h3>
+                    <p className="text-xs text-slate-400 leading-relaxed mb-3">{t('survival.feed.desc')}</p>
+                    <div className="grid grid-cols-3 gap-2 mb-4">
+                      {FEED_OPTIONS.map((a) => (
+                        <button
+                          key={a}
+                          onClick={() => setFeedAmount(a)}
+                          className={`rounded-xl border px-2 py-2 text-sm font-mono transition ${
+                            feedAmount === a
+                              ? 'border-neon-purple text-white bg-neon-purple/20 shadow-neon-purple'
+                              : 'border-white/15 text-slate-300 hover:border-neon-purple/60'
+                          }`}
+                        >
+                          {a} NEAR
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={cancelPending} className="btn-ghost flex-1">{t('survival.modal.cancel')}</button>
+                      <button onClick={() => void executeFeed()} className="btn-primary flex-1">
+                        {t('survival.feed.confirm')}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="font-bold mb-2">
+                      {pending.kind === 'clean' ? '🧹' : '💻'} {t(`survival.${pending.kind}.title`)}
+                    </h3>
+                    <p className="text-xs text-slate-400 leading-relaxed mb-4">{t(`survival.${pending.kind}.desc`)}</p>
+                    <div className="flex gap-2">
+                      <button onClick={cancelPending} className="btn-ghost flex-1">{t('survival.modal.cancel')}</button>
+                      <button
+                        onClick={() => void (pending.kind === 'clean' ? executeClean() : executeAction(pending.kind))}
+                        className="btn-primary flex-1"
+                      >
+                        {t(`survival.${pending.kind}.confirm`)}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -427,7 +575,7 @@ export default function SurvivalPage() {
                     </a>
                   )}
                   {pet.status === 'dead' && (
-                    <button onClick={onRevive} disabled={reviving} className="btn-primary w-full !py-2">
+                    <button onClick={() => setPending({ kind: 'revive' })} disabled={reviving} className="btn-primary w-full !py-2">
                       {reviving ? t('survival.panel.reviving') : `💫 ${t('survival.panel.revive')}`}
                     </button>
                   )}
@@ -522,6 +670,24 @@ export default function SurvivalPage() {
           </div>
         )}
       </div>
+
+      {/* 复活确认弹窗 */}
+      {pending?.kind === 'revive' && (
+        <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm grid place-items-center p-4">
+          <div className="glass neon-border w-full max-w-xs p-5">
+            <h3 className="font-bold mb-2">💫 {t('survival.revive.title')}</h3>
+            <p className="text-xs text-slate-400 leading-relaxed mb-4">{t('survival.revive.desc')}</p>
+            <div className="flex gap-2">
+              <button onClick={() => setPending(null)} disabled={reviving} className="btn-ghost flex-1">
+                {t('survival.modal.cancel')}
+              </button>
+              <button onClick={() => void onRevive()} disabled={reviving} className="btn-primary flex-1">
+                {reviving ? t('survival.panel.reviving') : t('survival.revive.confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

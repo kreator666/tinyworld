@@ -64,6 +64,35 @@ const survival: Record<string, unknown> = {
     heal: '治疗',
     bed: '宠物窝',
   },
+  modal: {
+    cancel: '取消',
+  },
+  feed: {
+    amountTitle: '选择喂食金额',
+    desc: '喂食 = 从你的钱包新存入借贷协议,生息本金变多,宠物长大后收益更快。金额从你的钱包转出,需钱包签名。',
+    confirm: '确认喂食',
+    success: '喂食成功!新增本金 {x} NEAR',
+  },
+  clean: {
+    title: '打扫',
+    desc: '打扫 = 把借贷收益(含利息)提取到宠物金库。注意:初始本金不可提取,只会提取收益部分。',
+    confirm: '确认打扫',
+    success: '打扫完成!已提取 {x} NEAR 收益到宠物金库',
+  },
+  work: {
+    title: '打工',
+    desc: '打工 = 高风险方向性交易(做多/做空 NEAR),由 NEAR AI 决策,可能亏损,亏损会计入宠物收益。确认继续?',
+    confirm: '确认打工',
+  },
+  heal: {
+    success: '治疗成功:收益已按 NEAR AI 实时报价折算为算力',
+  },
+  revive: {
+    title: '复活宠物',
+    desc: '复活 = 从钱包支付 0.5 NEAR,为宠物充值 NEAR AI 算力并复活;本金与收益保留。金额从你的钱包转出,需钱包签名。',
+    confirm: '确认复活',
+    success: '复活成功,宠物重新活过来了',
+  },
   log: {
     title: '动作日志',
     empty: '还没有动作记录,点击房间里的物品开始互动吧',
@@ -95,7 +124,6 @@ const survival: Record<string, unknown> = {
     adoptOk: '领养成功!你的宠物已经住进房间了',
     adoptFail: '领养失败,请稍后再试',
     allocPartial: '部分资金分配失败,已记录,管理员可重试',
-    reviveOk: '复活成功,宠物重新活过来了',
     reviveFail: '复活失败,请稍后再试',
   },
 }

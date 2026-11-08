@@ -129,13 +129,35 @@ export const confirmSurvivalAdopt = (
 export const getSurvivalPositions = (tokenId: number) =>
   survivalCall<{ positions: SurvivalPositionDto[] }>(`/survival/pet/${tokenId}/positions`)
 
-/** 执行动作:同步执行可能 10-30s,调用方需挂 loading;需登录 + owner */
-export const survivalAction = (tokenId: number, kind: SurvivalActionKind) =>
+/** 执行动作:同步执行可能 10-30s,调用方需挂 loading;需登录 + owner。后端仅保留 work/heal,feed/clean 走独立端点 */
+export const survivalAction = (tokenId: number, kind: Extract<SurvivalActionKind, 'work' | 'heal'>) =>
   post<{ action: SurvivalActionDto }>(`/survival/pet/${tokenId}/action`, { kind })
 
-/** 复活:需登录 + owner */
-export const reviveSurvivalPet = (tokenId: number) =>
-  post<{ pet: SurvivalPetDto }>(`/survival/pet/${tokenId}/revive`)
+/** 喂食金额档位(NEAR) */
+export type SurvivalFeedAmount = 0.1 | 0.2 | 0.5
+
+/** 喂食:组装存款交易(用户自费,从钱包新存入借贷协议,生息本金变多);需登录 + owner */
+export const feedSurvivalTxs = (tokenId: number, amount: SurvivalFeedAmount) =>
+  post<{ txs: NearUnsignedTx[] }>(`/survival/pet/${tokenId}/feed-txs`, { amount })
+
+/** 喂食确认:txHash 为用户已广播的存款交易哈希;返回最新宠物与新仓位,failures 为分配失败项 */
+export const confirmSurvivalFeed = (tokenId: number, txHash: string) =>
+  post<{ pet: SurvivalPetDto; position: SurvivalPositionDto | null; failures: SurvivalPositionFailure[] }>(
+    `/survival/pet/${tokenId}/feed-confirm`,
+    { txHash },
+  )
+
+/** 打扫:把借贷收益(含利息)提取到宠物金库,本金不可提取;同步执行可能 10-30s;409 = 无可提取收益 */
+export const cleanSurvivalPet = (tokenId: number) =>
+  post<{ action: SurvivalActionDto; claimedYocto: string }>(`/survival/pet/${tokenId}/clean`)
+
+/** 复活:组装复活交易(用户自费 0.5 NEAR 充值 NEAR AI 算力);仅 dead 状态可用;需登录 + owner */
+export const reviveSurvivalTxs = (tokenId: number) =>
+  post<{ txs: NearUnsignedTx[] }>(`/survival/pet/${tokenId}/revive-txs`)
+
+/** 复活确认:txHash 为用户已广播的复活交易哈希 */
+export const reviveSurvivalConfirm = (tokenId: number, txHash: string) =>
+  post<{ pet: SurvivalPetDto }>(`/survival/pet/${tokenId}/revive-confirm`, { txHash })
 
 export const getSurvivalActions = (tokenId: number, limit = 20) =>
   survivalCall<{ actions: SurvivalActionDto[] }>(`/survival/pet/${tokenId}/actions?limit=${limit}`)
