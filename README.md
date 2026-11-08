@@ -77,7 +77,7 @@ cd agent && AGENT_DATA_DIR=/tmp/x npx tsx scripts/verify-arena.ts
 
 - **Avalanche 主网部署 + UUPS 升级体系**(10-13/10-17):6 大合约全部升级为可升级代理
 - **动态链/协议配置**(10-14):admin 签名鉴权、动态加链免重启、协议注册表驱动技能 gating
-- **DeFi 技能家族**:Aave 理财、BENQI 质押(sAVAX 赎回跟踪)、GMX V2 永续(执行费动态估算)、Solana 家族(Jupiter/Meteora/Orca/Raydius 兑换、Drift 永续)、skill-creator 自定义技能生成
+- **DeFi 技能家族**:Aave 理财、BENQI 质押(sAVAX 赎回跟踪)、GMX V2 永续(执行费动态估算)、Solana 家族(Jupiter/Meteora/Orca/Raydium 兑换、Drift 永续)、skill-creator 自定义技能生成
 - **⭐ 竞技场 Arena**(10 月下旬,**本作品为以太坊 2026 黑客松打造的核心功能**)
 
 ### NEAR 黑客松功能(2026-11,面向 NEAR HACKATHON 2026)
