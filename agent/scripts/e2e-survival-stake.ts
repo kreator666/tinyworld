@@ -14,7 +14,7 @@ console.log('=== 生存模式主网质押 E2E(1 NEAR) ===')
 console.log(`链: ${CHAIN},Meta Pool 合约: ${config.survivalMetaPoolContract}`)
 
 // 0) 前置:热钱包就绪 + 余额充足(本金 + ~0.05N gas 余量)
-const accountId = nearAgentAccountId()
+const accountId = nearAgentAccountId(CHAIN)
 const nativeBefore = BigInt(await nearNativeBalance(CHAIN))
 console.log(`热钱包: ${accountId}`)
 console.log(`原生 NEAR 余额: ${(Number(nativeBefore) / 1e24).toFixed(4)} N`)
