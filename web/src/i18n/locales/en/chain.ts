@@ -85,6 +85,7 @@ const chain: Record<string, unknown> = {
       notConnected: 'NEAR wallet not connected. Please connect your NEAR wallet first',
       connectFirst: 'Please connect your NEAR wallet first',
       accountSwitched: 'The active NEAR account has changed and no longer matches the login identity. Please reconnect your wallet and try again',
+      networkMismatch: 'Wallet returned account {account}, which does not match the selected chain ({network}): the wallet itself is set to a different network. Switch the network in Meteor and reconnect',
       connectTimeout: 'Connecting to NEAR wallet timed out. Please try again',
       invalidReceiver: 'The recipient address is not a valid NEAR account ID',
       rpcFailed: 'NEAR RPC request failed ({status})',

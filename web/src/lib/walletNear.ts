@@ -235,7 +235,7 @@ export async function connectNearWalletById(walletId: string, forceWeb = false):
   const restored = state.accounts[0]?.accountId
   // 复用会话的前提是钱包也匹配;否则(残留的其他钱包会话,如早前 Meteor 测试网登录)先签出再连,
   // 否则后续 signAndSendTransactions 会走到旧钱包的签名路径报 "Failed to find matching key"
-  if (restored && state.selectedWalletId === walletId) {
+  if (restored && state.selectedWalletId === walletId && nearAccountMatchesChain(restored)) {
     activeNearAccount = restored
     return { address: restored, providerName: walletId }
   }
@@ -255,6 +255,11 @@ export async function connectNearWalletById(walletId: string, forceWeb = false):
     await signIn({ contractId: getActiveChain().identity, methodNames: [] })
     const accountId = selector.store.getState().accounts[0]?.accountId
     if (!accountId) throw new NearWalletError('SIGN_IN_FAILED', t('chainMsg.wallet.noAccountReturned'))
+    // 网络错配守卫:Meteor 自身网络设置与所选链不一致时会返回另一网络的账户(如链选主网却返回 .testnet)
+    if (!nearAccountMatchesChain(accountId)) {
+      try { await wallet.signOut() } catch { /* 签出失败不掩盖主错误 */ }
+      throw networkMismatchError(accountId)
+    }
     activeNearAccount = accountId
     return { address: accountId, providerName: walletId }
   } finally {
@@ -265,11 +270,15 @@ export async function connectNearWalletById(walletId: string, forceWeb = false):
 /** 弹 wallet-selector 连接窗口;已签入则直接复用。不签名,签名时机交给调用方(SIWE 登录) */
 export async function connectNearWallet(): Promise<NearConnection> {
   const selector = await ensureSelector()
-  // 刷新后已恢复会话(钱包 selector 自身持久化):直接复用,不重复弹窗
+  // 刷新后已恢复会话(钱包 selector 自身持久化):网络一致才复用,不重复弹窗
   const restored = selector.store.getState().accounts[0]?.accountId
-  if (restored) {
+  if (restored && nearAccountMatchesChain(restored)) {
     activeNearAccount = restored
     return { address: restored, providerName: selector.store.getState().selectedWalletId ?? 'NEAR' }
+  }
+  if (restored) {
+    // 残留会话网络与当前链不一致:签出后走重新连接
+    try { await (await selector.wallet()).signOut() } catch { /* 忽略 */ }
   }
   return new Promise<NearConnection>((resolve, reject) => {
     let settled = false
@@ -287,6 +296,13 @@ export async function connectNearWallet(): Promise<NearConnection> {
     const sub = selector.store.observable.subscribe((state) => {
       const accountId = state.accounts[0]?.accountId
       if (!accountId) return
+      if (!nearAccountMatchesChain(accountId)) {
+        finish(() => {
+          selector.wallet().then((w) => w.signOut()).catch(() => {})
+          reject(networkMismatchError(accountId))
+        })
+        return
+      }
       finish(() => {
         activeNearAccount = accountId
         resolve({ address: accountId, providerName: state.selectedWalletId ?? 'NEAR' })
@@ -294,6 +310,18 @@ export async function connectNearWallet(): Promise<NearConnection> {
     })
     modal?.show()
   })
+}
+
+/** 账户网络与激活链是否一致(.testnet/.near 为保留后缀;隐式账户无法判断,放行) */
+export function nearAccountMatchesChain(accountId: string): boolean {
+  if (!accountId.endsWith('.testnet') && !accountId.endsWith('.near')) return true
+  const onTestnetChain = getActiveChain().chainId === 398
+  return accountId.endsWith('.testnet') === onTestnetChain
+}
+
+function networkMismatchError(accountId: string): NearWalletError {
+  const network = getActiveChain().chainId === 398 ? 'Testnet' : 'Mainnet'
+  return new NearWalletError('NETWORK_MISMATCH', t('chainMsg.near.networkMismatch', { account: accountId, network }))
 }
 
 /** 登出并清空本地会话 */

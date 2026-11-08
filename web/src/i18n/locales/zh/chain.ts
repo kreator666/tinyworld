@@ -85,6 +85,7 @@ const chain: Record<string, unknown> = {
       notConnected: 'NEAR 钱包未连接,请先连接 NEAR 钱包',
       connectFirst: '请先连接 NEAR 钱包',
       accountSwitched: '当前 NEAR 账户已切换,与登录身份不一致,请重新连接钱包后再试',
+      networkMismatch: '钱包返回的账户 {account} 与当前链({network})不匹配:Meteor 钱包自身网络设置与所选链不一致,请在 Meteor 里切换网络后重新连接',
       connectTimeout: '连接 NEAR 钱包超时,请重试',
       invalidReceiver: '接收地址不是有效的 NEAR 账户 id',
       rpcFailed: 'NEAR RPC 请求失败({status})',
