@@ -197,6 +197,7 @@ export default function SurvivalPage() {
   )
 
   const onDormantClick = useCallback(() => showToast(t('survival.toast.dormant')), [showToast, t])
+  const onBusyClick = useCallback(() => showToast(t('survival.toast.busy')), [showToast, t])
 
   const onAdopt = async () => {
     if (adoptStage || tokenId <= 0 || !address) return
@@ -296,6 +297,7 @@ export default function SurvivalPage() {
             labels={roomLabels}
             onAction={onAction}
             onDormantClick={onDormantClick}
+            onBusyClick={onBusyClick}
           />
           {busy && (
             <div className="absolute top-3 left-3 tag border-neon-purple/60 text-neon-purple bg-ink/70 animate-pulse">

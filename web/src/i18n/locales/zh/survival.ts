@@ -91,6 +91,7 @@ const survival: Record<string, unknown> = {
     rejected: '这次行动被拒绝了',
     actionFail: '行动失败,请稍后再试',
     dormant: '算力耗尽,宠物睡着了,需要治疗/充值才能继续行动',
+    busy: '宠物正在忙,等它做完上一个动作再点',
     adoptOk: '领养成功!你的宠物已经住进房间了',
     adoptFail: '领养失败,请稍后再试',
     allocPartial: '部分资金分配失败,已记录,管理员可重试',

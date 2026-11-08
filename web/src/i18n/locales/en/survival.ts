@@ -91,6 +91,7 @@ const survival: Record<string, unknown> = {
     rejected: 'This action was rejected',
     actionFail: 'Action failed, please try again later',
     dormant: 'Compute exhausted — your pet is asleep. Heal it or top up credits to continue',
+    busy: 'Your pet is busy — wait for the current action to finish',
     adoptOk: 'Adopted! Your pet has moved into the room',
     adoptFail: 'Adoption failed, please try again later',
     allocPartial: 'Some fund allocations failed and were logged; an admin can retry them',

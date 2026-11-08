@@ -31,6 +31,8 @@ interface SurvivalRoomProps {
   labels: Record<HotspotKind, string>
   onAction: (kind: SurvivalActionKind) => void
   onDormantClick: () => void
+  /** 动作进行中(busy)又点了热点时的提示(缺省静默) */
+  onBusyClick?: () => void
 }
 
 // 逻辑坐标(固定 3:2,容器用 aspect-[3/2] 锁定比例后等比缩放)
@@ -129,6 +131,7 @@ export default function SurvivalRoom({
   labels,
   onAction,
   onDormantClick,
+  onBusyClick,
 }: SurvivalRoomProps) {
   const boxRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -151,6 +154,7 @@ export default function SurvivalRoom({
   const petNameRef = useRef(petName)
   const onActionRef = useRef(onAction)
   const onDormantRef = useRef(onDormantClick)
+  const onBusyRef = useRef(onBusyClick)
 
   // props ref 化:RAF 主循环里读最新值,避免闭包过期
   useEffect(() => { statusRef.current = status }, [status])
@@ -160,6 +164,7 @@ export default function SurvivalRoom({
   useEffect(() => { labelsRef.current = labels }, [labels])
   useEffect(() => { petNameRef.current = petName }, [petName])
   useEffect(() => { onActionRef.current = onAction }, [onAction])
+  useEffect(() => { onBusyRef.current = onBusyClick }, [onBusyClick])
   useEffect(() => { onDormantRef.current = onDormantClick }, [onDormantClick])
 
   // 像素宠物:装备变化才重新像素化(head/body 决定像素小人,accessory/pet 不参与)
@@ -264,7 +269,10 @@ export default function SurvivalRoom({
       onDormantRef.current()
       return
     }
-    if (busyRef.current || pet.mode !== 'idle') return // 动作期间锁交互
+    if (busyRef.current || pet.mode !== 'idle') {
+      onBusyRef.current?.()
+      return // 动作期间锁交互(画布上有动画,这里给提示)
+    }
     if (hs.kind !== 'heal') {
       const remain = cooldownsRef.current[hs.kind] - Date.now() / 1000
       if (remain > 0) return // 冷却中(画布上有灰色罩),不触发
@@ -429,6 +437,13 @@ export default function SurvivalRoom({
             } else {
               pet.bubble = { text: '?', born: t, ttl: 1.6 }
             }
+          } else if (pet.actT > 60) {
+            // 看门狗:接口异常(网关超时/页面失焦导致 outcome 丢失)时强制收尾,状态机永不卡死
+            pet.outcome = null
+            pet.finaleOk = false
+            pet.mode = 'finale'
+            pet.finaleT = 0
+            pet.bubble = { text: '…', born: t, ttl: 1.6 }
           }
           break
         }
