@@ -278,10 +278,13 @@ export const config = {
   survivalEnabled: env('SURVIVAL_ENABLED', 'true') === 'true',
   survivalTickSeconds: Number(env('SURVIVAL_TICK_SECONDS', '60')),
   survivalPrincipalChoices: [1, 2, 5] as const, // 可选本金档位(NEAR)
-  // survival 专用 LLM 源(缺省回落全局 LLM 配置)
+  // survival 专用 LLM 源(缺省回落全局 LLM 配置;模型默认跟随全局 LLM_MODEL,
+  // 因为默认网关是全局 LLM——只有显式配 NEAR AI 通道时才用 NEAR AI 模型 ID)
   survivalLlmBaseUrl: env('SURVIVAL_LLM_BASE_URL') || env('LLM_BASE_URL', 'https://aiping.cn/api/v1'),
   survivalLlmApiKey: env('SURVIVAL_LLM_API_KEY') || env('LLM_API_KEY'),
-  survivalLlmModel: env('SURVIVAL_LLM_MODEL', 'z-ai/glm-5.3-flash'),
+  survivalLlmModel: env('SURVIVAL_LLM_MODEL') || env('LLM_MODEL', 'gpt-4o-mini'),
+  // 领养即赠送的启动算力(USD,账本制;glm-5.3-flash 约 $0.00041/次决策,0.05 ≈ 120 次)
+  survivalStarterCreditsUsd: env('SURVIVAL_STARTER_CREDITS_USD', '0.05'),
   // NEAR AI 云(查模型定价/credits 计价用)
   survivalNearaiBaseUrl: env('SURVIVAL_NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1'),
   // Meta Pool 流动质押合约(仅 near-mainnet;near-testnet 用 Burrow supply wNEAR 替身)

@@ -269,16 +269,21 @@ export async function adoptPet(chainKey: string, tokenId: number, owner: string,
     throw new SurvivalError(`质押交易执行失败(${chainKey}): ${msg.slice(0, 200)}`, 502)
   }
   const nowSec = Math.floor(Date.now() / 1000)
+  const starterUsd = config.survivalStarterCreditsUsd
   await insertPet({
     chain_key: chainKey, token_id: String(tokenId), owner, status: 'alive',
     satiety: 80, cleanliness: 80, mood: 80, vitality: 100,
     weak_since: null, principal_yocto: yocto, earnings_yocto: '0', yield_yocto: '0',
-    credits_usd: '0', credits_burned_usd: '0', death_count: 0, revive_count: 0, revive_fee_yocto: '0',
+    credits_usd: starterUsd, credits_burned_usd: '0', death_count: 0, revive_count: 0, revive_fee_yocto: '0',
     born_at: nowSec, last_action_at: null, last_decay_at: nowSec, stake_tx: txHash, settings: {},
   })
   await insertLedger({
     chain_key: chainKey, token_id: String(tokenId), kind: 'stake', amount_yocto: yocto,
     credits_delta: '0', tx_hash: txHash, note: `adopt: 平台垫资 ${principalNear} NEAR 流动质押`, ts: nowSec,
+  })
+  await insertLedger({
+    chain_key: chainKey, token_id: String(tokenId), kind: 'topup', amount_yocto: '0',
+    credits_delta: starterUsd, tx_hash: '', note: '领养启动算力赠送', ts: nowSec,
   })
   return toDto((await getPet(chainKey, tokenId))!)
 }
@@ -364,9 +369,10 @@ export async function doAction(chainKey: string, tokenId: number, kind: string):
     txHash = outcome.txHash || null
     execStatus = outcome.status === 'executed' ? 'executed' : outcome.status
   } catch (err) {
-    // LLM 失败 / 扣费失败 → dormant(credits 不足已是事实),动作记 failed
-    await updatePet(chainKey, tokenId, { status: 'dormant' }).catch(() => {})
+    // credits 类失败(余额不足/扣费失败)→ dormant 是事实,置状态;
+    // 其余失败(LLM 网关故障/链上错误等)只是本次动作没成,不能把宠物打进 dormant(否则一次故障就锁死)
     const msg = err instanceof Error ? err.message : String(err)
+    if (/credits/i.test(msg)) await updatePet(chainKey, tokenId, { status: 'dormant' }).catch(() => {})
     await updateAction(actionId, { status: 'failed', result: { error: msg.slice(0, 300) } })
     throw err instanceof SurvivalError ? err : new SurvivalError(`决策执行失败: ${msg.slice(0, 200)}`, 502)
   }
@@ -409,7 +415,10 @@ async function runHeal(chainKey: string, pet: SurvivalPetRow): Promise<SurvivalA
   })
   await updateAction(actionId, {
     status: 'executed',
-    result: { convertedUsd: convertedUsd.toFixed(6), note: '收益折算 credits,恢复精力/饱食' },
+    result: {
+      convertedUsd: convertedUsd.toFixed(6),
+      note: convertedUsd > 0 ? '收益折算 credits,恢复精力/饱食' : '暂无收益可折算(质押收益每小时快照一次,先打点工攒收益;本次仅恢复精力/饱食)',
+    },
   })
   return actionToDto((await getAction(actionId))!)
 }
