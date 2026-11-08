@@ -69,15 +69,28 @@ interface RefPool {
 // 池列表缓存(60s;测试网 2892 个池全量扫一遍要半分钟,不能每次报价都扫)
 const poolListCache = new Map<string, { at: number; pools: RefPool[] }>()
 const POOL_CACHE_TTL_MS = 60_000
-const MAX_POOL_PAGES = 100 // 每页 100,最多扫 10000 个池(主网 9000+,原生 USDC 池在 4000+ 之外)
+const MAX_POOL_PAGES = 60 // 每页 100,最多扫 6000 池(主网 9000+;wNEAR↔stNEAR 深池在 500~2000 号段,USDC 储备已改 stNEAR)
 
-/** 拉取交易对池列表(带 60s 缓存;测试网规模小,上限 3000 个足够) */
+/** 拉取交易对池列表(带 60s 缓存;页级 429 退避重试,防免费档 RPM 打满导致整轮失败) */
 export async function refGetPools(chainKey: string): Promise<RefPool[]> {
   const cached = poolListCache.get(chainKey)
   if (cached && Date.now() - cached.at < POOL_CACHE_TTL_MS) return cached.pools
   const all: RefPool[] = []
   for (let page = 0; page < MAX_POOL_PAGES; page++) {
-    const batch = (await nearView<RefPool[]>(chainKey, refExchange(chainKey), 'get_pools', { from_index: page * 100, limit: 100 })) ?? []
+    let batch: RefPool[] = []
+    for (let r = 0; r < 4; r++) {
+      try {
+        batch = (await nearView<RefPool[]>(chainKey, refExchange(chainKey), 'get_pools', { from_index: page * 100, limit: 100 })) ?? []
+        break
+      } catch (err) {
+        if (r === 3) throw err
+        await new Promise((s) => setTimeout(s, 1500 * (r + 1)))
+      }
+    }
+    // 池 id = from_index + 页内序号(get_pools 不返回 id 字段)
+    for (let i = 0; i < batch.length; i++) {
+      if (batch[i].pool_id === undefined) batch[i].pool_id = page * 100 + i
+    }
     all.push(...batch)
     if (batch.length < 100) break
   }

@@ -129,6 +129,13 @@ export async function nearCall(chainKey: string, contractId: string, methodName:
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
 }
 
+/** 统一请求头:fastnear 端点带 API key(免费额度提升一个量级,与 /near-rpc 中继同一 env) */
+function rpcHeaders(url: string): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (url.includes('fastnear.com') && config.fastnearApiKey) h.Authorization = `Bearer ${config.fastnearApiKey}`
+  return h
+}
+
 /** view 调用(只读;主备轮换;空结果按瞬时异常重试最多 3 次) */
 export async function nearView<T>(chainKey: string, contractId: string, methodName: string, args: Record<string, unknown>): Promise<T | null> {
   const eps = endpoints(chainKey)
@@ -138,7 +145,7 @@ export async function nearView<T>(chainKey: string, contractId: string, methodNa
       try {
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: rpcHeaders(url),
           body: JSON.stringify({
             jsonrpc: '2.0',
             id: 1,
@@ -186,7 +193,7 @@ export async function nearNativeBalance(chainKey: string): Promise<string> {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: rpcHeaders(url),
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'query', params: { request_type: 'view_account', finality: 'final', account_id: nearAgentAccountId(chainKey) } }),
         signal: AbortSignal.timeout(15_000),
       })
