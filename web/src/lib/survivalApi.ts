@@ -4,6 +4,7 @@
 import { useAppStore } from '../store/appStore'
 import { getActiveChain } from '../store/chainConfigStore'
 import { t } from '../i18n'
+import type { NearUnsignedTx } from './agentApi'
 
 const AGENT_API = (import.meta.env.VITE_AGENT_API as string | undefined) ?? ''
 
@@ -96,9 +97,37 @@ export const getSurvivalLeaderboard = (limit = 50) =>
 export const getSurvivalPet = (tokenId: number) =>
   survivalCall<{ pet: SurvivalPetDto | null }>(`/survival/pet/${tokenId}`)
 
-/** 领养:principal 为本金档位(NEAR),需登录 + owner */
-export const adoptSurvivalPet = (tokenId: number, principal: 1 | 2 | 5) =>
-  post<{ pet: SurvivalPetDto }>(`/survival/pet/${tokenId}/adopt`, { principal })
+/** 领养费分配仓位 */
+export interface SurvivalPositionDto {
+  id: string
+  kind: string // usdc_reserve / lending / nearai_farm
+  token: string // 币种符号(如 USDC / wNEAR / stNEAR)
+  amountAtomic: string // 原子单位(yoctoNEAR / USDC 最小单位)
+  txHash: string
+  note: string
+  createdAt: string
+}
+
+/** 领养费分配失败项(不阻塞领养,管理员可重试);后端返回字符串数组 */
+export type SurvivalPositionFailure = string
+
+/** 组装领养交易(用户自费):返回待签 NEAR 交易(含领养费转账),前端逐笔签广播后调 confirmAdopt */
+export const adoptSurvivalTxs = (tokenId: number, principal: 1 | 2 | 5) =>
+  post<{ txs: NearUnsignedTx[] }>(`/survival/pet/${tokenId}/adopt-txs`, { principal })
+
+/** 领养确认:txHash 为用户已广播的领养费交易哈希;返回宠物与资金分配结果 */
+export const confirmSurvivalAdopt = (
+  tokenId: number,
+  txHash: string,
+) =>
+  post<{ pet: SurvivalPetDto; positions: SurvivalPositionDto[]; failures: SurvivalPositionFailure[] }>(
+    `/survival/pet/${tokenId}/adopt-confirm`,
+    { txHash },
+  )
+
+/** 资金分配仓位(领养费去向) */
+export const getSurvivalPositions = (tokenId: number) =>
+  survivalCall<{ positions: SurvivalPositionDto[] }>(`/survival/pet/${tokenId}/positions`)
 
 /** 执行动作:同步执行可能 10-30s,调用方需挂 loading;需登录 + owner */
 export const survivalAction = (tokenId: number, kind: SurvivalActionKind) =>

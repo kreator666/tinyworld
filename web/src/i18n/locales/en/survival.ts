@@ -40,10 +40,21 @@ const survival: Record<string, unknown> = {
   },
   adopt: {
     title: 'Adopt a Survival Pet',
-    desc: 'The platform advances your principal and stakes it in Meta Pool (stNEAR). Staking yield is credited in real time as compute credits, which fuel actions like working. Principal is custodied by the platform and redeemable when the experiment ends.',
-    principal: 'Choose principal tier',
+    desc: 'The adoption fee is paid from your NEAR wallet and is non-refundable: 30% goes to compute reserves, 50% to lending yield, and 20% to NEAR AI staking. Funds are custodied and operated by agentverse; staking/lending yield is credited in real time as compute credits for actions like working.',
+    principal: 'Choose adoption fee tier',
     go: 'Adopt',
-    adopting: 'Adopting…',
+    step: {
+      build: 'Building adoption transaction…',
+      sign: 'Please confirm the signature in your wallet…',
+      confirm: 'Confirming transaction on-chain…',
+      allocate: 'Allocating funds…',
+    },
+  },
+  positions: {
+    title: 'Fund Allocation (where the fee goes)',
+    usdc_reserve: 'Compute Reserve',
+    lending: 'Lending Yield',
+    nearai_farm: 'NEAR AI Staking',
   },
   action: {
     acting: 'Pet is acting…',
@@ -82,6 +93,7 @@ const survival: Record<string, unknown> = {
     dormant: 'Compute exhausted — your pet is asleep. Heal it or top up credits to continue',
     adoptOk: 'Adopted! Your pet has moved into the room',
     adoptFail: 'Adoption failed, please try again later',
+    allocPartial: 'Some fund allocations failed and were logged; an admin can retry them',
     reviveOk: 'Revived! Your pet is alive again',
     reviveFail: 'Revival failed, please try again later',
   },

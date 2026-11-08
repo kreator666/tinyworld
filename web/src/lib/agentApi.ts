@@ -119,11 +119,16 @@ export interface SolanaUnsignedTx {
   description: string
 }
 
+/** NEAR 未签名交易动作:合约调用(functionCall,缺省)或原生转账(yoctoNEAR 字符串) */
+export type NearUnsignedTxAction =
+  | { type?: 'functionCall'; methodName: string; args: Record<string, unknown>; gas?: string; deposit?: string }
+  | { type: 'transfer'; amount: string }
+
 /** NEAR 未签名交易(用户钱包签名模式;agent 经 Ref/Burrow 组装,前端逐笔交钱包 signAndSendTransactions) */
 export interface NearUnsignedTx {
   kind: 'near'
-  receiverId: string // 交易接收合约(exchange/wrap/代币/burrow 等)
-  actions: Array<{ methodName: string; args: Record<string, unknown>; gas?: string; deposit?: string }>
+  receiverId: string // 交易接收合约(exchange/wrap/代币/burrow/收款地址 等)
+  actions: NearUnsignedTxAction[]
   description: string
 }
 

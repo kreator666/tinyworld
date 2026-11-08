@@ -1,13 +1,23 @@
 import { config } from '../config'
 import { getChainContext } from '../chain/registry'
-import { nearNativeBalance } from '../chain/nearWrite'
+import { nearNativeBalance, nearWaitTxFinal, type NearTxDetail, type NearUnsignedTx } from '../chain/nearWrite'
 import { stakeNear, totalStakedValueYocto } from '../chain/metapool'
-import { getPet, insertPet, updatePet, insertAction, updateAction, getAction, insertLedger, listRecentActions, listPets } from '../db/survival'
+import { getPet, insertPet, updatePet, insertAction, updateAction, getAction, insertLedger, listRecentActions, listPets, findPetByStakeTx } from '../db/survival'
 import { listChainIdentities } from '../db'
 import type { SurvivalPetRow, SurvivalActionRow } from '../db/survival'
 import { burnCredits, estimateDecisionCostUsd, healConvert, nearPriceUsd } from './survivalCredits'
 import { thinkSurvival } from './survivalThinker'
 import { executePlan } from './survivalExecutor'
+import {
+  allocateAdoptionFunds,
+  adoptionReceiver,
+  checkAdoptionDuplicate,
+  positionToDto,
+  principalOfDeposit,
+  transferDepositOf,
+  verifyAdoptionPayment,
+  type PositionDto,
+} from './survivalAllocate'
 
 // ============================================================
 // 生存模式服务层:领养(平台垫资质押)/ 惰性衰减结算 / 动作( LLM 决策 + 链上执行)/
@@ -235,7 +245,9 @@ export function actionToDto(row: SurvivalActionRow): SurvivalActionDto {
 }
 
 // ------------------------------------------------------------------
-// 领养:平台热钱包垫资质押(Meta Pool stNEAR;测试网 Burrow 替身)
+// 领养(legacy):平台热钱包垫资质押(Meta Pool stNEAR;测试网 Burrow 替身)。
+// 经济模型 v2 起新领养走两段式(buildAdoptionTxs/confirmAdoption,用户自费),
+// 本函数保留供测试/存量,仅由 POST /admin/survival/adopt-fund(admin)调用。
 // ------------------------------------------------------------------
 
 export async function adoptPet(chainKey: string, tokenId: number, owner: string, principalNear: number): Promise<SurvivalPetDto> {
@@ -286,6 +298,100 @@ export async function adoptPet(chainKey: string, tokenId: number, owner: string,
     credits_delta: starterUsd, tx_hash: '', note: '领养启动算力赠送', ts: nowSec,
   })
   return toDto((await getPet(chainKey, tokenId))!)
+}
+
+// ------------------------------------------------------------------
+// 领养 v2(经济模型 v2,用户自费两段式):
+// adopt-txs 只组装待签名转账(无状态、不建 intent,防重放靠链上核验);
+// adopt-confirm 核验链上交易后确权建宠物,并同步执行 30/50/20 资金分配。
+// ------------------------------------------------------------------
+
+/** 领养费支付交易组(user_wallet 模式):一笔原生 NEAR 转账,用户钱包签名广播 */
+export async function buildAdoptionTxs(chainKey: string, tokenId: number, principalNear: number): Promise<NearUnsignedTx[]> {
+  const ctx = getChainContext(chainKey)
+  if (ctx.family !== 'near') throw new SurvivalError('生存模式仅支持 NEAR 链', 400)
+  if (!validatePrincipal(principalNear)) {
+    throw new SurvivalError(`领养费档位必须是 ${PRINCIPAL_CHOICES.join('/')} NEAR`, 400)
+  }
+  // 与 adopt-confirm 的核验口径一致:未领养才可发起支付(避免用户白付)
+  if (await getPet(chainKey, tokenId)) throw new SurvivalError('该 Agent 已领养,不可重复领养', 409)
+  const yocto = (YOCTO_PER_NEAR * BigInt(principalNear)).toString()
+  let receiver: string
+  try {
+    receiver = adoptionReceiver()
+  } catch (err) {
+    throw new SurvivalError(`领养费接收账户不可用: ${err instanceof Error ? err.message : String(err)}`, 500)
+  }
+  return [{
+    kind: 'near',
+    receiverId: receiver,
+    actions: [{ type: 'transfer', amount: yocto }],
+    description: `支付领养费 ${principalNear} NEAR(不返还,30% 购算力储备 / 50% 借贷生息 / 20% NEAR AI 质押)`,
+  }]
+}
+
+export interface AdoptionConfirmResult {
+  pet: SurvivalPetDto
+  positions: PositionDto[]
+  failures: string[]
+}
+
+/**
+ * 领养确权:核验链上支付交易(signer=主人、receiver=领养费接收账户、单笔 Transfer、
+ * 金额精确等于 1/2/5 NEAR 档位)→ 建宠物 → 热钱包代收并按 30/50/20 分配。
+ * 防重放:宠物已存在(重复 confirm)或该交易已用于其他领养均拒绝。
+ */
+export async function confirmAdoption(chainKey: string, tokenId: number, owner: string, txHash: string): Promise<AdoptionConfirmResult> {
+  const ctx = getChainContext(chainKey)
+  if (ctx.family !== 'near') throw new SurvivalError('生存模式仅支持 NEAR 链', 400)
+  const dupErr = checkAdoptionDuplicate(Boolean(await getPet(chainKey, tokenId)), Boolean(await findPetByStakeTx(chainKey, txHash)))
+  if (dupErr) throw new SurvivalError(dupErr, 409)
+  let exec: NearTxDetail
+  try {
+    exec = await nearWaitTxFinal(chainKey, txHash, owner)
+  } catch (err) {
+    throw new SurvivalError(`领养费交易确认失败: ${err instanceof Error ? err.message : String(err)}`, 502)
+  }
+  const deposit = transferDepositOf(exec)
+  const principalNear = deposit !== null ? principalOfDeposit(deposit) : null
+  if (deposit === null || principalNear === null) {
+    throw new SurvivalError('领养费金额不符:链上转账必须精确等于 1/2/5 NEAR 档位', 400)
+  }
+  let receiver: string
+  try {
+    receiver = adoptionReceiver()
+  } catch (err) {
+    throw new SurvivalError(`领养费接收账户不可用: ${err instanceof Error ? err.message : String(err)}`, 500)
+  }
+  const payErr = verifyAdoptionPayment(exec, owner, receiver, deposit)
+  if (payErr) throw new SurvivalError(`领养费支付核验失败: ${payErr}`, 400)
+
+  const nowSec = Math.floor(Date.now() / 1000)
+  const starterUsd = config.survivalStarterCreditsUsd
+  try {
+    await insertPet({
+      chain_key: chainKey, token_id: String(tokenId), owner, status: 'alive',
+      satiety: 80, cleanliness: 80, mood: 80, vitality: 100,
+      weak_since: null, principal_yocto: deposit, earnings_yocto: '0', yield_yocto: '0',
+      credits_usd: starterUsd, credits_burned_usd: '0', death_count: 0, revive_count: 0, revive_fee_yocto: '0',
+      born_at: nowSec, last_action_at: null, last_decay_at: nowSec, stake_tx: txHash,
+      settings: { alloc: 'v2' },
+    })
+  } catch {
+    // 并发重复 confirm:主键 (chain_key, token_id) 冲突 → 409
+    throw new SurvivalError('该 Agent 已领养,不可重复领养', 409)
+  }
+  await insertLedger({
+    chain_key: chainKey, token_id: String(tokenId), kind: 'stake', amount_yocto: deposit,
+    credits_delta: '0', tx_hash: txHash, note: `adopt(v2): 用户自费领养费 ${principalNear} NEAR(不返还)`, ts: nowSec,
+  })
+  await insertLedger({
+    chain_key: chainKey, token_id: String(tokenId), kind: 'topup', amount_yocto: '0',
+    credits_delta: starterUsd, tx_hash: '', note: '领养启动算力赠送', ts: nowSec,
+  })
+  // 同步执行 30/50/20 分配;失败头寸已在 note/failures 记录,不阻塞确权
+  const { positions, failures } = await allocateAdoptionFunds(chainKey, tokenId, deposit)
+  return { pet: toDto((await getPet(chainKey, tokenId))!), positions: positions.map(positionToDto), failures }
 }
 
 // ------------------------------------------------------------------

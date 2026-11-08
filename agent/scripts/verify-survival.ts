@@ -6,6 +6,15 @@ import { config } from '../src/config'
 import { validatePrincipal, computeDecay, sortLeaderboard, type LeaderboardEntry } from '../src/core/survival'
 import { parsePlan, validatePlan, NOOP_PLAN, type SurvivalPlan } from '../src/core/survivalThinker'
 import { checkStepAllowed } from '../src/core/survivalExecutor'
+import {
+  splitAllocation,
+  verifyAdoptionPayment,
+  transferDepositOf,
+  principalOfDeposit,
+  checkAdoptionDuplicate,
+  type PositionKind,
+} from '../src/core/survivalAllocate'
+import type { NearTxDetail } from '../src/chain/nearWrite'
 
 const NOW = Math.floor(Date.now() / 1000)
 
@@ -137,5 +146,81 @@ const sorted = sortLeaderboard([
 ])
 eq(sorted.map((e) => e.tokenId).join(','), '2,3,1,4', 'earnings+yield 降序')
 console.log('✅ 排行榜排序(earnings+yield 降序)')
+
+// ---------- 6. 经济模型 v2:领养费 30/50/20 分配(纯函数) ----------
+eq(config.survivalAllocUsdcPct + config.survivalAllocLendingPct + config.survivalAllocNearaiPct, 100, '默认分配比例 30+50+20=100')
+
+// 精确整除:1 NEAR 按 30/50/20 → 0.3/0.5/0.2
+const YOCTO = 10n ** 24n
+let alloc = splitAllocation(YOCTO.toString(), 30, 50, 20)
+eq(alloc.usdc, (YOCTO * 30n / 100n).toString(), '1N 的 30% = 0.3N')
+eq(alloc.lending, (YOCTO * 50n / 100n).toString(), '1N 的 50% = 0.5N')
+eq(alloc.nearai, (YOCTO * 20n / 100n).toString(), '1N 的 20% = 0.2N')
+
+// 舍入余数归入 lending:total=101 → usdc=30, nearai=20, lending=51;且三段恒等式成立
+alloc = splitAllocation('101', 30, 50, 20)
+eq(alloc.usdc, '30', '101 的 30% 向下取整 = 30')
+eq(alloc.nearai, '20', '101 的 20% 向下取整 = 20')
+eq(alloc.lending, '51', '余数归入 lending = 51')
+for (const total of ['0', '1', '99', '1000000000000000000000001', YOCTO.toString()]) {
+  const a = splitAllocation(total, 30, 50, 20)
+  eq((BigInt(a.usdc) + BigInt(a.lending) + BigInt(a.nearai)).toString(), total, `分配恒等式 ${total}`)
+  assert(BigInt(a.usdc) >= 0n && BigInt(a.lending) >= 0n && BigInt(a.nearai) >= 0n, `分配非负 ${total}`)
+}
+// 零总额 → 全 0
+alloc = splitAllocation('0', 30, 50, 20)
+eq(alloc.usdc + alloc.lending + alloc.nearai, '000', '零总额全 0')
+console.log('✅ splitAllocation(30/50/20 取整、余数归 lending、恒等式)')
+
+// 档位反推:仅精确 1/2/5 NEAR 合法
+eq(principalOfDeposit(YOCTO.toString()), 1, '1N 档位识别')
+eq(principalOfDeposit((YOCTO * 2n).toString()), 2, '2N 档位识别')
+eq(principalOfDeposit((YOCTO * 5n).toString()), 5, '5N 档位识别')
+eq(principalOfDeposit((YOCTO + 1n).toString()), null, '非整档位拒绝')
+eq(principalOfDeposit((YOCTO * 3n).toString()), null, '3N 非法档位拒绝')
+
+// ---------- 7. 领养费支付核验(纯函数;四种拒绝 + 一种通过) ----------
+const OWNER = 'alice.testnet'
+const RECEIVER = 'hot-wallet.testnet'
+const PAY_YOCTO = YOCTO.toString()
+const okTx: NearTxDetail = {
+  status: { SuccessValue: '' },
+  transaction: { signer_id: OWNER, receiver_id: RECEIVER, actions: [{ Transfer: { deposit: PAY_YOCTO } }] },
+}
+eq(verifyAdoptionPayment(okTx, OWNER, RECEIVER, PAY_YOCTO), null, '合法支付通过')
+eq(transferDepositOf(okTx), PAY_YOCTO, 'transferDepositOf 取到 deposit')
+
+// 拒绝 1:金额不符
+const wrongAmount: NearTxDetail = {
+  status: { SuccessValue: '' },
+  transaction: { signer_id: OWNER, receiver_id: RECEIVER, actions: [{ Transfer: { deposit: (YOCTO * 2n).toString() } }] },
+}
+assert(verifyAdoptionPayment(wrongAmount, OWNER, RECEIVER, PAY_YOCTO) !== null, '金额不符拒绝')
+// 拒绝 2:接收人不符
+const wrongReceiver: NearTxDetail = {
+  status: { SuccessValue: '' },
+  transaction: { signer_id: OWNER, receiver_id: 'eve.testnet', actions: [{ Transfer: { deposit: PAY_YOCTO } }] },
+}
+assert(verifyAdoptionPayment(wrongReceiver, OWNER, RECEIVER, PAY_YOCTO) !== null, '接收人不符拒绝')
+// 拒绝 3:非 transfer(FunctionCall 冒充)
+const fnCall: NearTxDetail = {
+  status: { SuccessValue: '' },
+  transaction: { signer_id: OWNER, receiver_id: RECEIVER, actions: [{ FunctionCall: { method_name: 'ft_transfer', args: '' } }] },
+}
+assert(verifyAdoptionPayment(fnCall, OWNER, RECEIVER, PAY_YOCTO) !== null, '非 Transfer 拒绝')
+// 拒绝 4:重复 confirm(防重放:宠物已存在或交易已被使用)
+eq(checkAdoptionDuplicate(true, false) !== null, true, '已领养重复 confirm 拒绝')
+eq(checkAdoptionDuplicate(false, true) !== null, true, '交易已被使用(重放)拒绝')
+eq(checkAdoptionDuplicate(false, false), null, '未领养且交易未用 → 通过')
+// 附加:签名人不符 / 交易失败 / 多动作 也拒绝
+const wrongSigner: NearTxDetail = { ...okTx, transaction: { ...okTx.transaction!, signer_id: 'bob.testnet' } }
+assert(verifyAdoptionPayment(wrongSigner, OWNER, RECEIVER, PAY_YOCTO) !== null, '签名人不符拒绝')
+const failed: NearTxDetail = { status: { Failure: {} }, transaction: okTx.transaction }
+assert(verifyAdoptionPayment(failed, OWNER, RECEIVER, PAY_YOCTO) !== null, '链上 Failure 拒绝')
+const multi: NearTxDetail = { ...okTx, transaction: { ...okTx.transaction!, actions: [{ Transfer: { deposit: PAY_YOCTO } }, { Transfer: { deposit: '1' } }] } }
+assert(verifyAdoptionPayment(multi, OWNER, RECEIVER, PAY_YOCTO) !== null, '多动作拒绝')
+const kinds: PositionKind[] = ['usdc_reserve', 'lending', 'nearai_farm']
+eq(kinds.join(','), 'usdc_reserve,lending,nearai_farm', '头寸 kind 枚举')
+console.log('✅ verifyAdoptionPayment(金额/接收人/非 transfer/重复 confirm 拒绝 + 合法通过)')
 
 console.log('生存模式离线验证全部通过 ✅')

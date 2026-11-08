@@ -16,13 +16,17 @@ const GAS = 100n * 10n ** 12n // 100 Tgas
 /** 存储押金标准额:Ref/Burrow 注册通常 ~0.1N,0.25N 留余量(可退还) */
 export const DEFAULT_STORAGE_DEPOSIT = utils.format.parseNearAmount('0.25')!
 
+/** 未签名交易动作:缺省 type 即 functionCall(向后兼容);transfer = 原生 NEAR 转账(yoctoNEAR 字符串) */
+export type NearTxAction =
+  | { type?: 'functionCall'; methodName: string; args: Record<string, unknown>; gas?: string; deposit?: string }
+  | { type: 'transfer'; amount: string }
+
 /** NEAR 未签名交易(user_wallet 模式;kind='near',前端逐笔交钱包 signAndSendTransactions) */
 export interface NearUnsignedTx {
   kind: 'near'
-  /** 交易接收合约(exchange/wrap/代币/burrow 等) */
+  /** 交易接收合约(exchange/wrap/代币/burrow/收款账户 等) */
   receiverId: string
-  /** FunctionCall 动作(gas/yoctoNEAR 单位的字符串,省略时前端按默认值) */
-  actions: Array<{ methodName: string; args: Record<string, unknown>; gas?: string; deposit?: string }>
+  actions: NearTxAction[]
   description: string
 }
 
@@ -179,6 +183,15 @@ export async function nearNativeBalance(chainKey: string): Promise<string> {
 export interface NearTxExecution {
   status?: Record<string, unknown>
   receipts_outcome?: Array<{ outcome?: { logs?: string[] } }>
+}
+
+/** 'tx' RPC 结果里的交易头(sign-confirm 核验签名人与动作用;actions 为 NEAR 原生形状 {Transfer:{deposit}}/{FunctionCall:{...}}) */
+export interface NearTxDetail extends NearTxExecution {
+  transaction?: {
+    signer_id?: string
+    receiver_id?: string
+    actions?: Array<Record<string, unknown>>
+  }
 }
 
 /** 单笔 'tx' 查询(主备轮换);"交易不存在"视为尚未达最终性,返回 null 由调用方继续轮询 */

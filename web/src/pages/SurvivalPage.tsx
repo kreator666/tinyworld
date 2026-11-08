@@ -5,11 +5,13 @@ import { useAppStore } from '../store/appStore'
 import { useChainStore } from '../store/chainStore'
 import { useChainConfig, explorerTx } from '../store/chainConfigStore'
 import {
-  adoptSurvivalPet,
+  adoptSurvivalTxs,
+  confirmSurvivalAdopt,
   formatNear,
   getSurvivalActions,
   getSurvivalLeaderboard,
   getSurvivalPet,
+  getSurvivalPositions,
   reviveSurvivalPet,
   survivalAction,
   SurvivalApiError,
@@ -18,7 +20,9 @@ import {
   type SurvivalLeaderboardEntry,
   type SurvivalPetDto,
   type SurvivalPetStatus,
+  type SurvivalPositionDto,
 } from '../lib/survivalApi'
+import { sendTransactions } from '../lib/chainDispatch'
 import SurvivalRoom, { type HotspotKind, type SurvivalOutcome } from '../components/SurvivalRoom'
 
 // ============================================================
@@ -32,6 +36,8 @@ const POLL_MS = 15_000
 const PRINCIPAL_OPTIONS = [1, 2, 5] as const
 
 const KIND_ICON: Record<SurvivalActionKind, string> = { feed: '🍖', clean: '🧹', work: '💻', heal: '💊' }
+/** 资金分配仓位 kind → 图标(默认 💰) */
+const POSITION_ICON: Record<string, string> = { usdc_reserve: '💵', lending: '🏦', nearai_farm: '🌾' }
 const STATUS_DOT: Record<SurvivalActionDto['status'], string> = {
   executed: 'bg-emerald-400',
   rejected: 'bg-amber-400',
@@ -47,6 +53,16 @@ const PET_STATUS_CLS: Record<SurvivalPetStatus, string> = {
 
 const fmtTime = (ts: number) =>
   new Date(ts * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+/** 仓位金额展示:原子单位按 token 精度换算(NEAR 系 1e24,USDC 1e6) */
+const fmtAmount = (atomic: string, token: string) => {
+  const decimals = token === 'USDC' ? 6 : 24
+  const n = Number(BigInt(atomic) / 10n ** BigInt(decimals - 4)) / 10 ** 4
+  if (!Number.isFinite(n)) return atomic
+  if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  if (Math.abs(n) >= 1) return n.toFixed(2)
+  return n.toPrecision(3)
+}
 
 /** 状态条配色:饱食/清洁/心情/生命 */
 const STAT_BARS: { key: keyof SurvivalPetDto['stats']; cls: string }[] = [
@@ -65,7 +81,7 @@ function useAgeLabel() {
 
 export default function SurvivalPage() {
   const { t } = useI18n()
-  const { showToast } = useAppStore()
+  const { showToast, address } = useAppStore()
   const { active } = useChainConfig()
   const { tokenId, didName, equipped } = useChainStore()
   const isNear = active.family === 'near'
@@ -73,10 +89,11 @@ export default function SurvivalPage() {
   const [pet, setPet] = useState<SurvivalPetDto | null>(null)
   const [petChecked, setPetChecked] = useState(false) // 首屏拉取完成(区分加载中与未领养)
   const [actions, setActions] = useState<SurvivalActionDto[]>([])
+  const [positions, setPositions] = useState<SurvivalPositionDto[]>([])
   const [board, setBoard] = useState<SurvivalLeaderboardEntry[]>([])
   const [boardOpen, setBoardOpen] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [adopting, setAdopting] = useState(false)
+  const [adoptStage, setAdoptStage] = useState<'build' | 'sign' | 'confirm' | 'allocate' | null>(null)
   const [reviving, setReviving] = useState(false)
   const [principal, setPrincipal] = useState<1 | 2 | 5>(1)
   const [outcome, setOutcome] = useState<SurvivalOutcome | null>(null)
@@ -94,17 +111,28 @@ export default function SurvivalPage() {
     [t],
   )
 
+  const refreshPositions = useCallback(async () => {
+    if (tokenId <= 0) return
+    try {
+      const r = await getSurvivalPositions(tokenId)
+      setPositions(r.positions)
+    } catch {
+      // 仓位拉取失败静默:下一轮轮询补齐
+    }
+  }, [tokenId])
+
   const refreshPet = useCallback(async () => {
     if (tokenId <= 0) return
     try {
       const r = await getSurvivalPet(tokenId)
       setPet(r.pet)
+      if (r.pet) refreshPositions()
     } catch {
       // 服务不可达/接口未上线:保持现状,不打断页面
     } finally {
       setPetChecked(true)
     }
-  }, [tokenId])
+  }, [tokenId, refreshPositions])
 
   const refreshActions = useCallback(async () => {
     if (tokenId <= 0) return
@@ -171,17 +199,31 @@ export default function SurvivalPage() {
   const onDormantClick = useCallback(() => showToast(t('survival.toast.dormant')), [showToast, t])
 
   const onAdopt = async () => {
-    if (adopting || tokenId <= 0) return
-    setAdopting(true)
+    if (adoptStage || tokenId <= 0 || !address) return
+    setAdoptStage('build')
     try {
-      const r = await adoptSurvivalPet(tokenId, principal)
-      setPet(r.pet)
+      // 1) 后端组装领养交易(含用户自费的领养费转账)
+      const r = await adoptSurvivalTxs(tokenId, principal)
+      if (!r.txs.length) throw new Error(t('survival.toast.adoptFail'))
+      // 2) 逐笔交钱包签名自广播(会弹 Meteor 等钱包;网页重定向钱包不支持,sendTransactions 抛中文错)
+      setAdoptStage('sign')
+      const hashes = await sendTransactions(address, r.txs)
+      if (!hashes.length) throw new Error(t('chainMsg.near.noTxHash'))
+      // 3) 确认上链 + 后端登记宠物并分配领养费
+      setAdoptStage('confirm')
+      const c = await confirmSurvivalAdopt(tokenId, hashes[0])
+      setAdoptStage('allocate')
+      setPet(c.pet)
+      setPositions(c.positions)
+      await refreshPet() // 重新拉取宠物与仓位,确认分配落库后再放开按钮
       showToast(t('survival.toast.adoptOk'))
+      if (c.failures.length > 0) showToast(t('survival.toast.allocPartial'))
+      refreshActions()
     } catch (err) {
       if (err instanceof SurvivalApiError && err.status === 401) showToast(t('survival.toast.needLogin'))
       else showToast(err instanceof Error ? err.message : t('survival.toast.adoptFail'))
     } finally {
-      setAdopting(false)
+      setAdoptStage(null)
     }
   }
 
@@ -285,8 +327,8 @@ export default function SurvivalPage() {
                   </button>
                 ))}
               </div>
-              <button onClick={onAdopt} disabled={adopting} className="btn-primary w-full">
-                {adopting ? t('survival.adopt.adopting') : t('survival.adopt.go')}
+              <button onClick={onAdopt} disabled={!!adoptStage} className="btn-primary w-full">
+                {adoptStage ? t(`survival.adopt.step.${adoptStage}`) : t('survival.adopt.go')}
               </button>
             </div>
           ) : (
@@ -354,6 +396,24 @@ export default function SurvivalPage() {
                       <p className="text-slate-200 font-mono">{pet.deathCount}</p>
                     </div>
                   </div>
+                  {positions.length > 0 && (
+                    <div className="border-t border-white/10 pt-3">
+                      <p className="text-slate-500 text-xs mb-2">{t('survival.positions.title')}</p>
+                      <ul className="space-y-1.5">
+                        {positions.map((p, i) => (
+                          <li key={`${p.kind}-${i}`} className="flex items-center gap-2 text-xs" title={p.note}>
+                            <span>{POSITION_ICON[p.kind] ?? '💰'}</span>
+                            <span className="text-slate-300">
+                              {POSITION_ICON[p.kind] != null ? t(`survival.positions.${p.kind}`) : p.kind}
+                            </span>
+                            <span className="ml-auto text-slate-200 font-mono">
+                              {fmtAmount(p.amountAtomic, p.token)} {p.token}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {pet.stakeTx && (
                     <a
                       href={explorerTx(pet.stakeTx)}

@@ -59,9 +59,12 @@ import {
   leaderboard,
   revivePet,
   actionToDto,
+  buildAdoptionTxs,
+  confirmAdoption,
 } from './core/survival'
 import { topupCredits } from './core/survivalCredits'
-import { listRecentActions, getPet, updatePet } from './db/survival'
+import { positionToDto } from './core/survivalAllocate'
+import { listRecentActions, getPet, updatePet, listPositions } from './db/survival'
 import { buildDeployTxs, buildWhitelistTx, resolveDeployReceipts, whitelistTemplate } from './core/arenaDeploy'
 import { buildSettleTxs, confirmSettleTxs } from './core/arenaSettlement'
 import { getPublicClient, getWalletClient } from './chain/clients'
@@ -1912,8 +1915,9 @@ app.get('/survival/pet/:tokenId', async (c) => {
   }
 })
 
-// 领养(authRequired + owner 校验):平台热钱包垫资质押,本金档位 1/2/5 NEAR
-app.post('/survival/pet/:tokenId/adopt', authRequired, async (c) => {
+// 领养费支付交易组(authRequired + owner):组装一笔原生 NEAR 转账,用户钱包签名广播;
+// 无状态、不建 intent,防重放靠 adopt-confirm 的链上核验
+app.post('/survival/pet/:tokenId/adopt-txs', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
@@ -1921,8 +1925,40 @@ app.post('/survival/pet/:tokenId/adopt', authRequired, async (c) => {
     if (!body) return c.json({ error: '请求体必须是 JSON' }, 400)
     const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
     await assertAgentOwnership(c, chainKey, tokenId)
-    const pet = await adoptPet(chainKey, tokenId, c.get('address'), body.principal ?? NaN)
-    return c.json({ pet })
+    const txs = await buildAdoptionTxs(chainKey, tokenId, body.principal ?? NaN)
+    return c.json({ txs })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 领养确权(authRequired + owner):核验链上支付交易(signer/收款人/单笔 Transfer/档位金额)
+// 后建宠物并同步执行 30/50/20 资金分配;重复 confirm 或交易已被使用 → 409
+app.post('/survival/pet/:tokenId/adopt-confirm', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ txHash?: string }>().catch(() => null)
+    if (!body?.txHash || !/^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(body.txHash)) {
+      return c.json({ error: 'txHash 必须是 NEAR 交易哈希(base58, 43-44 位)' }, 400)
+    }
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const result = await confirmAdoption(chainKey, tokenId, c.get('address'), body.txHash)
+    return c.json(result)
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 领养费分配头寸(公开):经济模型 v2 的 30/50/20 逐头寸记账
+app.get('/survival/pet/:tokenId/positions', async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    const positions = await listPositions(chainKey, tokenId)
+    return c.json({ positions: positions.map(positionToDto) })
   } catch (err) {
     return handleErr(c, err)
   }
@@ -1999,6 +2035,23 @@ app.put('/survival/pet/:tokenId/settings', authRequired, async (c) => {
     }
     await updatePet(chainKey, tokenId, { settings })
     return c.json({ settings })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// legacy 平台垫资领养(chainAdminRequired):经济模型 v2 起新领养走 adopt-txs/adopt-confirm,
+// 本路由保留 adoptPet 供测试/存量(admin 热钱包垫资质押)
+app.post('/admin/survival/adopt-fund', chainAdminRequired, async (c) => {
+  try {
+    const body = await c.req.json<{ chain_key?: string; chainKey?: string; tokenId?: number; principal?: number }>().catch(() => null)
+    if (!body) return c.json({ error: '请求体必须是 JSON' }, 400)
+    const chainKey = body.chain_key ?? body.chainKey ?? resolveChainKey(c.req.header('X-Chain-Key'))
+    const tokenId = typeof body.tokenId === 'number' && Number.isInteger(body.tokenId) && body.tokenId > 0 ? body.tokenId : null
+    if (tokenId === null) return c.json({ error: 'tokenId 不合法' }, 400)
+    const pet = await adoptPet(chainKey, tokenId, c.get('address'), body.principal ?? NaN)
+    await insertAudit({ adminAddress: c.get('address'), action: 'survival_adopt_fund', target: `${chainKey}/${tokenId}`, payload: body })
+    return c.json({ pet })
   } catch (err) {
     return handleErr(c, err)
   }

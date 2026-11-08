@@ -13,7 +13,7 @@ import type { ChainContracts } from './contracts'
 import { t } from '../i18n'
 import type { ChainIdentityState, ChainPartAsset, ChainPartState, MintedAgent } from './chain'
 import { isValidSolanaAddress } from './chainSolana'
-import { isValidNearAddress, getActiveNearAccount, nearFunctionCall, nearSignAndSend } from './walletNear'
+import { isValidNearAddress, getActiveNearAccount, nearFunctionCall, nearTransfer, nearSignAndSend } from './walletNear'
 import {
   SolanaWalletError,
   getActiveSolanaAddress,
@@ -272,9 +272,10 @@ async function sendSolanaTransactions(unsignedTxs: UnsignedTx[], tokenId: number
 
 /**
  * NEAR 用户钱包签名模式:
- * Agent 组装的是 NearUnsignedTx(receiverId + FunctionCall 动作),前端逐笔交 wallet-selector
- * signAndSendTransactions 签名自广播;交易由 Agent 按链上人格 owner 组装,签名账户必须与
- * 当前连接钱包一致。网页重定向钱包签名后整页跳转、无法回传结果(返回 void),报中文错误引导用扩展钱包。
+ * Agent 组装的是 NearUnsignedTx(receiverId + 动作联合:FunctionCall / Transfer),前端逐笔交
+ * wallet-selector signAndSendTransactions 签名自广播;交易由 Agent 按链上人格 owner 组装,
+ * 签名账户必须与当前连接钱包一致。网页重定向钱包签名后整页跳转、无法回传结果(返回 void),
+ * 报中文错误引导用扩展钱包。
  */
 async function sendNearTransactions(unsignedTxs: UnsignedTx[], owner: string): Promise<string[]> {
   const walletAddr = getActiveNearAccount()
@@ -286,10 +287,10 @@ async function sendNearTransactions(unsignedTxs: UnsignedTx[], owner: string): P
   for (const item of unsignedTxs) {
     if (!isNearUnsignedTx(item)) throw new Error(t('chainMsg.tx.notNearFormat'))
     try {
-      const hash = await nearSignAndSend(
-        item.actions.map((a) => nearFunctionCall(a.methodName, a.args, a.gas ?? '100000000000000', a.deposit ?? '0')),
-        item.receiverId,
+      const actions = item.actions.map((a) =>
+        a.type === 'transfer' ? nearTransfer(a.amount) : nearFunctionCall(a.methodName, a.args, a.gas ?? '100000000000000', a.deposit ?? '0'),
       )
+      const hash = await nearSignAndSend(actions, item.receiverId)
       hashes.push(hash)
     } catch (err) {
       // 网页版重定向钱包(如 Meteor Web)返回 void,表现为"未返回哈希",引导改用扩展钱包

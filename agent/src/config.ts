@@ -298,4 +298,20 @@ export const config = {
   survivalCooldownCleanSec: Number(env('SURVIVAL_COOLDOWN_CLEAN_SEC', '300')),
   survivalCooldownWorkSec: Number(env('SURVIVAL_COOLDOWN_WORK_SEC', '900')),
   survivalReviveFeeNear: env('SURVIVAL_REVIVE_FEE_NEAR', '0.5'), // 复活费(NEAR,从收益扣,不足则 demo 豁免)
+  // ============================================================
+  // 经济模型 v2(用户自费领养):领养费 30% 购算力储备 / 50% 借贷生息 / 20% NEAR AI 质押
+  // ============================================================
+  survivalAllocUsdcPct: Number(env('SURVIVAL_ALLOC_USDC_PCT', '30')),
+  survivalAllocLendingPct: Number(env('SURVIVAL_ALLOC_LENDING_PCT', '50')),
+  survivalAllocNearaiPct: Number(env('SURVIVAL_ALLOC_NEARAI_PCT', '20')),
+  // 领养费接收账户(缺省回落 NEAR 热钱包账户,见 core/survivalAllocate.adoptionReceiver)
+  survivalAdoptionReceiver: env('SURVIVAL_ADOPTION_RECEIVER', ''),
 } as const
+
+// 领养费分配比例 fast-fail:三者之和必须等于 100(启动即抛错,不带到运行期)
+{
+  const sum = config.survivalAllocUsdcPct + config.survivalAllocLendingPct + config.survivalAllocNearaiPct
+  if (sum !== 100) {
+    throw new Error(`SURVIVAL_ALLOC_* 分配比例之和必须等于 100(当前 usdc=${config.survivalAllocUsdcPct} lending=${config.survivalAllocLendingPct} nearai=${config.survivalAllocNearaiPct},合计 ${sum})`)
+  }
+}

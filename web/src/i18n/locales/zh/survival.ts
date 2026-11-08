@@ -40,10 +40,21 @@ const survival: Record<string, unknown> = {
   },
   adopt: {
     title: '领养生存宠物',
-    desc: '平台垫资将本金质押到 Meta Pool(stNEAR),质押收益实时折算为算力 credits,供宠物打工等行动消耗。本金由平台托管,实验结束后可赎回。',
-    principal: '选择本金档位',
+    desc: '领养费从你的 NEAR 钱包转出,一经支付不返还:30% 计入算力储备,50% 进入借贷生息,20% 用于 NEAR AI 质押。资金由 agentverse 托管运营,质押/借贷收益实时折算为算力 credits,供宠物打工等行动消耗。',
+    principal: '选择领养费档位',
     go: '领养',
-    adopting: '领养中…',
+    step: {
+      build: '组装领养交易…',
+      sign: '请在钱包中签名确认…',
+      confirm: '确认交易上链…',
+      allocate: '资金分配中…',
+    },
+  },
+  positions: {
+    title: '资金分配(领养费去向)',
+    usdc_reserve: '算力储备',
+    lending: '借贷生息',
+    nearai_farm: 'NEAR AI 质押',
   },
   action: {
     acting: '宠物行动中…',
@@ -82,6 +93,7 @@ const survival: Record<string, unknown> = {
     dormant: '算力耗尽,宠物睡着了,需要治疗/充值才能继续行动',
     adoptOk: '领养成功!你的宠物已经住进房间了',
     adoptFail: '领养失败,请稍后再试',
+    allocPartial: '部分资金分配失败,已记录,管理员可重试',
     reviveOk: '复活成功,宠物重新活过来了',
     reviveFail: '复活失败,请稍后再试',
   },

@@ -5,6 +5,7 @@ import {
   type WalletSelector,
   type Network,
   type FunctionCallAction,
+  type TransferAction,
   type InternalAction,
 } from '@near-wallet-selector/core'
 import { setupModal, type WalletSelectorModal } from '@near-wallet-selector/modal-ui'
@@ -423,6 +424,14 @@ export function nearFunctionCall(methodName: string, args: Record<string, unknow
   return {
     type: 'FunctionCall',
     params: { methodName, args, gas, deposit },
+  }
+}
+
+/** 原生转账动作构造辅助(amount 为 yoctoNEAR 字符串;内部枚举形状见 internalActionToNaj 对 Transfer 的处理) */
+export function nearTransfer(amount: string): TransferAction {
+  return {
+    type: 'Transfer',
+    params: { deposit: amount },
   }
 }
 

@@ -540,6 +540,25 @@ export async function initSchema(): Promise<void> {
       ts BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS survival_ledger_idx ON survival_ledger (chain_key, token_id, ts);
+
+    -- 经济模型 v2 头寸:领养费按 30/50/20 分配后的逐头寸记账(kind: usdc_reserve | lending | nearai_farm)
+    CREATE TABLE IF NOT EXISTS survival_positions (
+      id TEXT PRIMARY KEY,
+      chain_key TEXT NOT NULL,
+      token_id NUMERIC(20,0) NOT NULL,
+      kind TEXT NOT NULL, -- usdc_reserve | lending | nearai_farm
+      token TEXT NOT NULL DEFAULT '',
+      amount_atomic NUMERIC(39,0) NOT NULL DEFAULT 0,
+      tx_hash TEXT NOT NULL DEFAULT '',
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS survival_positions_idx ON survival_positions (chain_key, token_id, created_at);
+
+    -- ledger kind 扩展 alloc(v2 领养费分配留痕):重建 CHECK 约束(幂等,兼容已存在的库)
+    ALTER TABLE survival_ledger DROP CONSTRAINT IF EXISTS survival_ledger_kind_check;
+    ALTER TABLE survival_ledger ADD CONSTRAINT survival_ledger_kind_check
+      CHECK (kind IN ('stake', 'yield', 'topup', 'credit_burn', 'revive_fee', 'defi', 'alloc'));
   `)
 }
 

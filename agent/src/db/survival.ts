@@ -52,12 +52,24 @@ export interface SurvivalLedgerRow {
   id: string
   chain_key: string
   token_id: string
-  kind: string // stake | yield | topup | credit_burn | revive_fee | defi
+  kind: string // stake | yield | topup | credit_burn | revive_fee | defi | alloc
   amount_yocto: string
   credits_delta: string
   tx_hash: string
   note: string
   ts: number
+}
+
+export interface SurvivalPositionRow {
+  id: string
+  chain_key: string
+  token_id: string
+  kind: string // usdc_reserve | lending | nearai_farm
+  token: string // 头寸代币符号(如 wNEAR/USDC);空串 = 失败/未确定
+  amount_atomic: string // 原子单位字符串
+  tx_hash: string
+  note: string
+  created_at: string
 }
 
 // ------------------------------------------------------------------
@@ -225,4 +237,38 @@ export async function sumEarningsPlusYield(chainKey: string): Promise<Array<{ to
     [chainKey],
   )
   return res.rows
+}
+
+// ------------------------------------------------------------------
+// 经济模型 v2 头寸(领养费 30/50/20 分配结果)
+// ------------------------------------------------------------------
+
+export async function insertPosition(row: Omit<SurvivalPositionRow, 'id' | 'created_at'>): Promise<string> {
+  const db = await getDb()
+  const id = randomUUID()
+  await db.query(
+    `INSERT INTO survival_positions (id, chain_key, token_id, kind, token, amount_atomic, tx_hash, note)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, row.chain_key, row.token_id, row.kind, row.token, row.amount_atomic, row.tx_hash, row.note],
+  )
+  return id
+}
+
+export async function listPositions(chainKey: string, tokenId: number): Promise<SurvivalPositionRow[]> {
+  const db = await getDb()
+  const res = await db.query<SurvivalPositionRow>(
+    'SELECT * FROM survival_positions WHERE chain_key = $1 AND token_id = $2 ORDER BY created_at',
+    [chainKey, tokenId],
+  )
+  return res.rows
+}
+
+/** 按 stake_tx 反查宠物(领养费支付交易防重放:同一笔交易不可领养第二只) */
+export async function findPetByStakeTx(chainKey: string, stakeTx: string): Promise<SurvivalPetRow | null> {
+  const db = await getDb()
+  const res = await db.query<SurvivalPetRow>(
+    'SELECT * FROM survival_pets WHERE chain_key = $1 AND stake_tx = $2 LIMIT 1',
+    [chainKey, stakeTx],
+  )
+  return res.rows[0] ?? null
 }
