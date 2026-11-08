@@ -106,6 +106,7 @@ POST /survival/pet/:tokenId/adopt-txs {principal:1|2|5}
 
 ## 6. 已知限制 / TODO
 
+- **主网生存热钱包(2026-11 已配)**:账户 `agentverse-survival.near`,服务器持**专用 FullAccess 子密钥**(`AGENT_NEAR_MAINNET_ACCOUNT_ID`/`AGENT_NEAR_MAINNET_KEYS`,主私钥不上服务器,可 delete-key 吊销;轮换脚本 `agent/scripts/near-mainnet-subkey.ts`)。⚠️ 教训:本来想用按合约受限的 FunctionCall 子密钥,但 **NEAR 协议禁止 FunctionCall 钥匙附带押金**(`InvalidAccessKeyError::DepositWithFunctionCall`),而生存模式所有调用(near_deposit/deposit_and_stake/ft_transfer_call/storage_deposit)都要附押金 —— FC 钥匙对此场景无解。
 - **远期扩展(用户定调,2026-11)**:NEAR AI 官方若开放 API key 管理接口,让每个宠物创建自己的 NEAR AI key、自托管算力(自充值/自结算),彻底去平台化。当前阶段由 agentverse 统一持有 key、统一承担调用费用,按账本把成本记到每个宠物头上。
 - credits 是平台账本,与 NEAR AI org 真实余额的对账靠人工(充值后记账);无自动对账脚本。
 - work 的 pnl 用执行前后热钱包总价值快照差(含 stNEAR 价格波动噪声),精确归因需头寸级记账(二期)。
