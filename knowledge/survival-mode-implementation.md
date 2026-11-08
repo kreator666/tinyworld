@@ -67,43 +67,42 @@ owner 校验走 `assertAgentOwnership`;cooldowns 为 ms epoch(0=可执行);yocto
 4. **credits 充值闭环**:NEAR AI 真实充值(仪表盘,无 API)→ `POST /admin/survival/credits` 记账;宠物也可 heal 把质押收益折算进 credits。
 5. (可选)切 NEAR 链登录后运行:测得 farm 可用则进 M4(自动收益转 credits),见 near-ai-cloud-notes §12。
 
-## 5. 下一阶段 TODO:经济模型 v2 + 用户自费领养(用户定调,2026-11,未实施)
+## 5. 经济模型 v2:用户自费领养 + 30/50/20 分配(2026-11 已实施)
 
-> 当前阶段(2026-11)维持 agentverse 托管运营:平台垫资本金、统一持有 NEAR AI key(`SURVIVAL_LLM_*`)、账本制 credits。
-> 本节整块是下一个阶段的改造清单,避免遗忘。
+> v1(agentverse 托管垫资)保留为 `POST /admin/survival/adopt-fund`(admin-only,测试/存量用);线上领养一律走 v2 两段式。
 
-### 6.1 领养改为用户付费(不再平台垫资)
+### 5.1 领养流程(两段式)
 
-- 前端弹用户钱包签名广播(NEAR `user_wallet` 模式,基建已有:`buildRefSwapTxs`/`buildBurrow*Txs`/`NearUnsignedTx` → wallet-selector 签名链路)
-- 用户支付领养费(1/2/5 NEAR 档位),**该费用用户取不回**(不是托管本金,无退款承诺——这是平台收入)
-- 链上动作:资金按 §6.2 分配执行,全程用户钱包签名,agentverse 只组装交易
+```
+POST /survival/pet/:tokenId/adopt-txs {principal:1|2|5}
+  → 返回单笔 NearUnsignedTx:Transfer principal NEAR → 领养费接收账户(=热钱包,SURVIVAL_ADOPTION_RECEIVER 可改)
+用户钱包签名广播 → POST /survival/pet/:tokenId/adopt-confirm {txHash}
+  → 链上核验(signer=owner、receiver=接收账户、恰好一笔 Transfer、deposit 精确等于档位 yoctor、Failure 拒绝;
+     三重防重放:宠物已存在 / findPetByStakeTx 反查 / PK 冲突)
+  → 建宠物(赠 $0.05 启动算力)→ 热钱包执行 30/50/20 分配(同步,逐头寸独立容错)
+  → 返回 {pet, positions, failures}
+```
 
-### 6.2 领养费分配比例(以 1 NEAR 为例)
+### 5.2 分配比例(env 可调,fast-fail 校验和=100)
 
-| 比例 | 去向 | 用途 |
-|------|------|------|
-| **30%** | 经 Ref 换成 USDC | **直接购 NEAR AI credits**,作为宠物初期算力(覆盖启动期高频互动) |
-| **50%** | 存入 Burrow 借贷 | 持续生息,利息每小时折算 credits(长期口粮) |
-| **20%** | NEAR AI 质押(House of Stake farm) | 收益自动变成 NEAR AI token/credits |
+| 比例 | env | 测试网 | 主网 | position kind |
+|------|-----|--------|------|---------------|
+| 30% | SURVIVAL_ALLOC_USDC_PCT | Burrow 存 wNEAR(测试网无 USDC 池流动性,暂存生息,note 注明) | refSwap WNEAR→USDC 作 credits 储备 | usdc_reserve |
+| 50% | SURVIVAL_ALLOC_LENDING_PCT | Burrow supply wNEAR | Meta Pool deposit_and_stake | lending |
+| 20% | SURVIVAL_ALLOC_NEARAI_PCT | Burrow supply wNEAR | Meta Pool(unwrap 后 stake) | nearai_farm(House of Stake 占位,接入 farm 后替换 executePosition 分支) |
 
-- 收益统一**每小时折算**进宠物 credits(延续现有快照机制,只是资金来源从"单一质押池"变三个头寸)
-- 头寸级记账:现有"全局池子观"分摊不够,需按 30/50/20 三个头寸分别记收益(依赖 §5 的 pnl 精确归因)
+- 全量先包裹 wNEAR 再分头寸;舍入余数归 lending;头寸落 `survival_positions` 表 + ledger
+- 资金安全:分配目标合约全部硬编码映射(refToken/burrowContract/metaPool),LLM/外部无法指定地址
 
-### 6.3 配套改造清单
+### 5.3 代码地图
 
-1. 领养 API 改造:`POST /survival/pet/:tokenId/adopt` 返回待签名交易组(Ref swap + Burrow supply + farm deposit),用户签名后 `/survival/pet/:tokenId/adopt-confirm` 回执确权(仿竞技场 register/register-confirm 两段式)
-2. 前端领养卡:签名校验流程(仿现有 SignTxAction 交互)
-3. 三个头寸的部署/记账:`survival_positions` 表(kind: usdc_reserve/burrow_lending/nearai_farm)替代单一 `stake_tx`
-4. House of Stake farm 接入(M4,前置:NEAR 登录 cloud.near.ai 绑定 org,见 near-ai-cloud-notes §12);在 farm 可用前,20% 那部分暂存 Meta Pool stNEAR 或 Burrow
-5. USDC 购 credits:NEAR AI 无公开购买 API,维持"人工仪表盘充值 + `POST /admin/survival/credits` 记账",账本轮询 NEAR AI org 余额做对账
-6. 启动算力 $0.05 保留(有 30% 预购 credits 后不构成亏损)
-7. 平台垫资保险丝仍保留(全局未结算垫资 > $X 暂停兑换)
+`src/core/survivalAllocate.ts`(splitAllocation/verifyAdoptionPayment/allocateAdoptionFunds/positionToDto)、`survival.ts` 的 buildAdoptionTxs/confirmAdoption、`nearWrite.ts` NearTxAction 联合(加 transfer)、`db/survival.ts` positions CRUD。前端:SurvivalPage 领养 4 步状态机、walletNear.nearTransfer、chainDispatch 联合分派。
 
-### 6.4 远期(再下一阶段)
+### 5.4 仍未实施(下一阶段)
 
-- **宠物自托管算力**:NEAR AI 官方若开放 API key 管理接口,每个宠物创建自己的 key、自充值/自结算,彻底去平台化(见 §5)
-- 收益提现(本金不可动的前提已随"领养费"模式消解;未花完的 credits 提现规则待定义)
-- 排行榜/链上存证/玩具系统
+- House of Stake farm 真实接入(前置:NEAR 登录 cloud.near.ai 绑定 org,near-ai-cloud-notes §12)
+- NEAR AI 开放 key 管理后宠物自托管(§6)
+- 收益提现规则、玩家充值 credits(非领养费)
 
 ## 6. 已知限制 / TODO
 
