@@ -34,8 +34,8 @@ export const NOOP_PLAN: SurvivalPlan = {
 
 const PROTOCOLS = ['ref', 'burrow', 'metapool', 'none'] as const
 const ACTIONS = ['swap', 'supply', 'withdraw', 'stake', 'harvest', 'noop'] as const
-/** 白名单代币(与 executor 校验同源) */
-const TOKENS = ['NEAR', 'wNEAR', 'USDC', 'stNEAR'] as const
+/** 白名单代币(与 executor 校验同源;USDT/DAI 供打工方向对的测试网稳定币腿) */
+const TOKENS = ['NEAR', 'wNEAR', 'USDC', 'USDT', 'DAI', 'stNEAR'] as const
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -130,9 +130,7 @@ export interface ThinkInput {
 }
 
 const ACTION_SEMANTICS: Record<string, string> = {
-  feed: '喂食 = 稳健生息(优先低风险质押/存款类动作)',
-  clean: '打扫 = 收割整理(收获/整理头寸,落袋收益)',
-  work: '打工 = 激进可亏(允许兑换等主动交易,盈亏计入 earnings,可以为负)',
+  work: '打工 = 高风险方向性策略(押注 NEAR 涨跌,可能亏损,pnl 计入收益)',
   heal: '治疗 = 把质押收益折算为 credits 恢复状态(不需要链上动作)',
 }
 
@@ -144,6 +142,9 @@ function buildSystemPrompt(input: ThinkInput): string {
     : `- ref(Ref Finance AMM,方法:swap){tokenIn,tokenOut,amountYocto,slippageBps}
 - metapool(Meta Pool 流动质押,方法:stake/harvest){amountYocto}
 - burrow(仅测试网,本链不可用)`
+  const directionPairs = input.isTestnet
+    ? '测试网方向对:wNEAR↔USDT、wNEAR↔DAI'
+    : '主网方向对:wNEAR↔USDC、wNEAR↔USDT'
   return `你是 TinyWorld 生存模式里的一只电子宠物(每个 NEAR DID agent 一只宠物),由主人点动作触发决策。
 当前宠物状态:
 - 四维:饱食 ${input.stats.satiety}/100,清洁 ${input.stats.cleanliness}/100,心情 ${input.stats.mood}/100,精力 ${input.stats.vitality}/100
@@ -153,16 +154,22 @@ function buildSystemPrompt(input: ThinkInput): string {
 
 可选协议(白名单,只能从这里选,不得出现其他目标合约或裸转账):
 ${protocols}
-代币白名单: NEAR / wNEAR / USDC / stNEAR
+代币白名单: NEAR / wNEAR / USDC / USDT / DAI / stNEAR
+
+方向性押注(高风险,可能亏损,pnl 计入收益):
+- ${directionPairs}
+- long(做多 NEAR):卖出 USDC/USDT/DAI 买入 wNEAR
+- short(做空 NEAR):卖出 wNEAR 买入 USDC/USDT/DAI
+- neutral(不押方向):用 { "protocol": "none", "action": "noop" }
 
 硬性约束:
 1. 单笔 amountYocto ≤ ${input.maxSingleYocto}(单笔上限,默认本金的 10%),必须是正整数字符串
 2. swap 必须给 slippageBps(0-1000);tokenIn/tokenOut 必须不同且都在白名单
-3. 不确定或状态不佳时用 { "protocol": "none", "action": "noop" },不要硬编动作
-4. 最多 5 步,每步必须有 reason(一句话)
+3. 每个 swap 步必须给出方向:reason 以 "direction=long|short|neutral;" 开头,再用一句话说明理由
+4. 最多 5 步,每步必须有 reason(一句话);不确定或状态不佳时用 noop,不要硬编动作
 
 只输出 JSON,不要输出任何其他文字,schema:
-{"steps":[{"protocol":"ref|burrow|metapool|none","action":"swap|supply|withdraw|stake|harvest|noop","tokenIn":"...","tokenOut":"...","amountYocto":"...","slippageBps":100,"reason":"..."}],"moodNote":"一句话心情"}`
+{"steps":[{"protocol":"ref|burrow|metapool|none","action":"swap|supply|withdraw|stake|harvest|noop","tokenIn":"...","tokenOut":"...","amountYocto":"...","slippageBps":100,"reason":"direction=long;..."}],"moodNote":"一句话心情"}`
 }
 
 function buildUserPrompt(input: ThinkInput): string {
@@ -172,7 +179,7 @@ function buildUserPrompt(input: ThinkInput): string {
   return `当前 NEAR 价格: $${input.nearPriceUsd.toFixed(4)}
 近期动作结果:
 ${recent}
-请为本轮「${input.kind}」输出决策 JSON。`
+请为本轮「${input.kind}」给出方向性押注决策(direction=long/short/neutral),输出决策 JSON。`
 }
 
 /** 无状态一次性决策:LLM 输出非法时降级 NOOP_PLAN;meter 抛错(扣费失败)向上传播 */

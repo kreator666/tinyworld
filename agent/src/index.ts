@@ -57,7 +57,11 @@ import {
   doAction,
   getState,
   leaderboard,
-  revivePet,
+  buildFeedTxs,
+  confirmFeed,
+  cleanPet,
+  buildReviveTxs,
+  confirmRevive,
   actionToDto,
   buildAdoptionTxs,
   confirmAdoption,
@@ -1978,13 +1982,14 @@ app.post('/survival/pet/:tokenId/retry-alloc', authRequired, async (c) => {
   }
 })
 
-// 点动作(authRequired + owner):同步执行(LLM 决策 + 链上执行),前端转 loading
+// 点动作(authRequired + owner,语义 v2):work 走 LLM 决策(唯一烧 credits 的动作);
+// heal 走确定性收益折算;feed/clean 请走下方专用路由
 app.post('/survival/pet/:tokenId/action', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
     const body = await c.req.json<{ kind?: string }>().catch(() => null)
-    if (!body?.kind) return c.json({ error: 'kind 必填(feed/clean/work/heal)' }, 400)
+    if (!body?.kind) return c.json({ error: 'kind 必填(work/heal;feed/clean 请走专用路由)' }, 400)
     const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
     await assertAgentOwnership(c, chainKey, tokenId)
     const action = await doAction(chainKey, tokenId, body.kind)
@@ -1994,14 +1999,85 @@ app.post('/survival/pet/:tokenId/action', authRequired, async (c) => {
   }
 })
 
-// 复活(authRequired + owner):dead 才可,0.5 NEAR 从收益扣(不足 demo 豁免)
-app.post('/survival/pet/:tokenId/revive', authRequired, async (c) => {
+// 喂食支付交易组(authRequired + owner,语义 v2):组装一笔 0.1/0.2/0.5 NEAR 原生转账,
+// 用户钱包签名广播;pet 必须 alive/weak(dead/dormant 拒绝 409);不走 LLM、不烧 credits
+app.post('/survival/pet/:tokenId/feed-txs', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ amount?: number }>().catch(() => null)
+    if (!body) return c.json({ error: '请求体必须是 JSON' }, 400)
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const txs = await buildFeedTxs(chainKey, tokenId, body.amount ?? NaN)
+    return c.json({ txs })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 喂食确权(authRequired + owner):核验链上支付(signer/收款人/单笔 Transfer/0.1-0.5 档位)
+// 后存入借贷协议(增加生息本金)并记账;交易哈希已被使用 → 409
+app.post('/survival/pet/:tokenId/feed-confirm', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ txHash?: string }>().catch(() => null)
+    if (!body?.txHash || !/^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(body.txHash)) {
+      return c.json({ error: 'txHash 必须是 NEAR 交易哈希(base58, 43-44 位)' }, 400)
+    }
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const result = await confirmFeed(chainKey, tokenId, c.get('address'), body.txHash)
+    return c.json(result)
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 打扫(authRequired + owner,语义 v2):提取收益(含利息)入 earnings,本金不可动;
+// 确定性金融操作,不走 LLM、不烧 credits;无可提取收益 → 409
+app.post('/survival/pet/:tokenId/clean', authRequired, async (c) => {
   const tokenId = parseTokenId(c)
   if (tokenId === null) return
   try {
     const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
     await assertAgentOwnership(c, chainKey, tokenId)
-    const pet = await revivePet(chainKey, tokenId)
+    const result = await cleanPet(chainKey, tokenId)
+    return c.json(result)
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 复活费支付交易组(authRequired + owner,语义 v2):组装一笔 0.5 NEAR 原生转账
+// (用于为宠物充值 NEAR AI 算力);pet 必须 dead
+app.post('/survival/pet/:tokenId/revive-txs', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const txs = await buildReviveTxs(chainKey, tokenId)
+    return c.json({ txs })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 复活确权(authRequired + owner):核验链上支付(金额必须精确 0.5 NEAR)后复活;
+// 四维重置 60,不再扣 earnings;交易哈希已被使用 → 409
+app.post('/survival/pet/:tokenId/revive-confirm', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const body = await c.req.json<{ txHash?: string }>().catch(() => null)
+    if (!body?.txHash || !/^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(body.txHash)) {
+      return c.json({ error: 'txHash 必须是 NEAR 交易哈希(base58, 43-44 位)' }, 400)
+    }
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const pet = await confirmRevive(chainKey, tokenId, c.get('address'), body.txHash)
     return c.json({ pet })
   } catch (err) {
     return handleErr(c, err)

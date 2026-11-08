@@ -28,8 +28,8 @@ export interface ExecutionOutcome {
   pnlYocto: string // 打工场景下的头寸价值变化(best-effort,由调用方快照差值得出)
 }
 
-/** 白名单代币(与 thinker prompt 同源) */
-const TOKEN_WHITELIST = ['NEAR', 'WNEAR', 'USDC', 'STNEAR']
+/** 白名单代币(与 thinker prompt 同源;USDT/DAI 供打工方向对的测试网稳定币腿) */
+const TOKEN_WHITELIST = ['NEAR', 'WNEAR', 'USDC', 'USDT', 'DAI', 'STNEAR']
 
 /**
  * 单步白名单校验:返回 null 表示合法,否则返回拒绝原因(纯函数,可离线验证)。

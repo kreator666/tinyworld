@@ -302,7 +302,8 @@ export const config = {
   survivalCooldownFeedSec: Number(env('SURVIVAL_COOLDOWN_FEED_SEC', '300')),
   survivalCooldownCleanSec: Number(env('SURVIVAL_COOLDOWN_CLEAN_SEC', '300')),
   survivalCooldownWorkSec: Number(env('SURVIVAL_COOLDOWN_WORK_SEC', '900')),
-  survivalReviveFeeNear: env('SURVIVAL_REVIVE_FEE_NEAR', '0.5'), // 复活费(NEAR,从收益扣,不足则 demo 豁免)
+  // 复活费语义 v2 起固定 0.5 NEAR 且由用户钱包链上支付(见 core/survival.ts REVIVE_FEE_YOCTO),
+  // 不再从收益扣款、不可配置(档位校验要求精确 0.5N)
   // ============================================================
   // 经济模型 v2(用户自费领养):领养费 30% 购算力储备 / 50% 借贷生息 / 20% NEAR AI 质押
   // ============================================================

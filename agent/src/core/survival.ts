@@ -2,10 +2,10 @@ import { config } from '../config'
 import { getChainContext } from '../chain/registry'
 import { nearNativeBalance, nearWaitTxFinal, type NearTxDetail, type NearUnsignedTx } from '../chain/nearWrite'
 import { stakeNear, totalStakedValueYocto } from '../chain/metapool'
-import { getPet, insertPet, updatePet, insertAction, updateAction, getAction, insertLedger, listRecentActions, listPets, findPetByStakeTx } from '../db/survival'
+import { getPet, insertPet, updatePet, insertAction, updateAction, getAction, insertLedger, insertPosition, listRecentActions, listPets, findPetByStakeTx, findLedgerByTxHash, claimYieldYocto } from '../db/survival'
 import { listChainIdentities } from '../db'
 import type { SurvivalPetRow, SurvivalActionRow } from '../db/survival'
-import { burnCredits, estimateDecisionCostUsd, healConvert, nearPriceUsd } from './survivalCredits'
+import { burnCredits, estimateDecisionCostUsd, healConvert, nearAiLivePricing, nearPriceUsd } from './survivalCredits'
 import { thinkSurvival } from './survivalThinker'
 import { executePlan } from './survivalExecutor'
 import {
@@ -16,12 +16,18 @@ import {
   principalOfDeposit,
   transferDepositOf,
   verifyAdoptionPayment,
+  feedAmountOfDeposit,
+  FEED_CHOICES,
+  supplyFeedPrincipal,
+  withdrawYieldFromLending,
   type PositionDto,
 } from './survivalAllocate'
 
 // ============================================================
-// 生存模式服务层:领养(平台垫资质押)/ 惰性衰减结算 / 动作( LLM 决策 + 链上执行)/
-// 复活 / 状态 DTO / 排行榜。仿竞技场服务层的错误风格(SurvivalError 带 HTTP status)
+// 生存模式服务层:领养(平台垫资质押)/ 领养 v2(用户自费两段式)/ 惰性衰减结算 /
+// 动作(动作语义 v2:feed=用户新存入借贷加金、clean=提取收益、work=LLM 高风险方向性策略(唯一烧 credits)、
+// heal=收益折算 NEAR AI 算力、revive=用户钱包付 0.5N 两段式)/ 状态 DTO / 排行榜。
+// 仿竞技场服务层的错误风格(SurvivalError 带 HTTP status)
 // ============================================================
 
 export class SurvivalError extends Error {
@@ -45,6 +51,33 @@ export const PRINCIPAL_CHOICES: readonly number[] = config.survivalPrincipalChoi
 /** 领养本金档位校验(纯函数,verify 用) */
 export function validatePrincipal(p: unknown): p is number {
   return typeof p === 'number' && Number.isInteger(p) && (PRINCIPAL_CHOICES as readonly number[]).includes(p)
+}
+
+/** 喂食金额档位校验(纯函数,verify 用):0.1/0.2/0.5 NEAR */
+export function validateFeedAmount(a: unknown): a is number {
+  return typeof a === 'number' && (FEED_CHOICES as readonly number[]).includes(a)
+}
+
+/** 喂食金额 → yocto(纯函数):仅 0.1/0.2/0.5 档,精确十分位 */
+export function feedYoctoOf(amount: number): string {
+  return (YOCTO_PER_NEAR * BigInt(Math.round(amount * 10)) / 10n).toString()
+}
+
+/** 复活费固定 0.5 NEAR(纯常量,verify 用) */
+export const REVIVE_FEE_YOCTO: string = (YOCTO_PER_NEAR * 5n / 10n).toString()
+
+/** 复活费档位校验(纯函数,verify 用):deposit 必须精确等于 0.5 NEAR */
+export function reviveFeeOfDeposit(depositYocto: string): boolean {
+  return BigInt(depositYocto) === BigInt(REVIVE_FEE_YOCTO)
+}
+
+/**
+ * clean 可提取额(纯函数,本金保护,verify 用):恒等于 max(0, yield),即提取额 ≤ yield、
+ * 本金(principal)永远不参与提取;非正收益返回 0(不可提取)。
+ */
+export function cleanClaimableYocto(yieldYocto: string): bigint {
+  const y = BigInt(yieldYocto || '0')
+  return y > 0n ? y : 0n
 }
 
 // ------------------------------------------------------------------
@@ -395,7 +428,11 @@ export async function confirmAdoption(chainKey: string, tokenId: number, owner: 
 }
 
 // ------------------------------------------------------------------
-// 动作:冷却检查 → 衰减结算 → LLM 决策(按实际用量烧 credits)→ 白名单执行 → 状态加成
+// 动作(语义 v2):
+// - feed  喂食 = 用户新存入借贷协议(确定性金融操作,两段式 feed-txs/feed-confirm,不走 LLM、不烧 credits)
+// - clean 打扫 = 提取收益含利息(确定性,本金不可动,不走 LLM、不烧 credits)
+// - work  打工 = 高风险方向性策略(唯一保留 LLM 决策 + 按实际用量烧 credits 的动作)
+// - heal  治疗 = 收益折算 NEAR AI 算力(确定性折算,不烧 credits;折算前探测 NEAR AI 实时价)
 // ------------------------------------------------------------------
 
 const STAT_EFFECTS: Record<string, (s: { satiety: number; cleanliness: number; mood: number; vitality: number }) => void> = {
@@ -405,11 +442,17 @@ const STAT_EFFECTS: Record<string, (s: { satiety: number; cleanliness: number; m
   heal: (s) => { s.vitality = Math.min(100, s.vitality + 20); s.satiety = Math.min(100, s.satiety + 15) },
 }
 
+/**
+ * 点动作(语义 v2):work 走 LLM 决策(烧 credits),heal 走确定性折算;
+ * feed/clean 已改为独立确定性路径,请走 feed-txs/feed-confirm/clean 路由。
+ */
 export async function doAction(chainKey: string, tokenId: number, kind: string): Promise<SurvivalActionDto> {
-  if (!['feed', 'clean', 'work', 'heal'].includes(kind)) throw new SurvivalError(`未知动作: ${kind}`, 400)
+  if (kind === 'feed' || kind === 'clean') {
+    throw new SurvivalError(`「${kind}」已改为独立确定性路径,请使用 /survival/pet/:tokenId/${kind === 'feed' ? 'feed-txs|feed-confirm' : 'clean'}`, 400)
+  }
+  if (!['work', 'heal'].includes(kind)) throw new SurvivalError(`未知动作: ${kind}`, 400)
   let pet = await getOrThrowPet(chainKey, tokenId)
   if (pet.status === 'dead') throw new SurvivalError('宠物已死亡,请先复活', 409)
-  const nowSec = Math.floor(Date.now() / 1000)
   const nowMs = Date.now()
   // 冷却:读 settings.lastActionAt(分动作),未到点返回 409 并给出下次可执行时间
   const nextAt = cooldownNextAt(pet, kind, nowMs)
@@ -425,7 +468,7 @@ export async function doAction(chainKey: string, tokenId: number, kind: string):
   const nowSec2 = Math.floor(Date.now() / 1000)
   if (kind === 'heal') return runHeal(chainKey, pet)
 
-  // feed/clean/work:LLM 决策 + 链上执行,按实际用量烧 credits
+  // work:LLM 决策 + 链上执行,按实际用量烧 credits
   const estimate = await estimateDecisionCostUsd()
   if (Number(pet.credits_usd) < estimate) {
     await updatePet(chainKey, tokenId, { status: 'dormant' })
@@ -463,11 +506,10 @@ export async function doAction(chainKey: string, tokenId: number, kind: string):
       },
     })
     plan = thought.plan as unknown as Record<string, unknown>
-    // 打工:执行前后头寸价值快照差值记 pnl(允许为负);其余动作 pnl 记 0
-    let before: bigint | null = null
-    if (kind === 'work') before = await totalStakedValueYocto(chainKey).catch(() => null)
+    // 打工:执行前后头寸价值快照差值记 pnl(允许为负)
+    const before = await totalStakedValueYocto(chainKey).catch(() => null)
     const outcome = await executePlan(chainKey, thought.plan, maxSingle)
-    if (kind === 'work' && before !== null) {
+    if (before !== null) {
       const after = await totalStakedValueYocto(chainKey).catch(() => null)
       if (after !== null) pnlYocto = after - before
     }
@@ -484,29 +526,215 @@ export async function doAction(chainKey: string, tokenId: number, kind: string):
   }
   // 状态加成 + 时间戳(分动作 cooldown 记 settings.lastActionAt)
   const stats = { satiety: pet.satiety, cleanliness: pet.cleanliness, mood: pet.mood, vitality: pet.vitality }
-  STAT_EFFECTS[kind](stats)
-  const lastActionAt = { ...lastActionAtOf(pet), [kind]: nowSec2 }
+  STAT_EFFECTS.work(stats)
+  const lastActionAt = { ...lastActionAtOf(pet), work: nowSec2 }
   const patch: Parameters<typeof updatePet>[2] = {
     ...stats,
     earnings_yocto: (BigInt(pet.earnings_yocto) + pnlYocto).toString(),
     last_action_at: nowSec2,
     settings: { ...settingsOf(pet), lastActionAt },
   }
-  // 打工掉 vitality 到 0 不致死;喂食/打扫若把饱食拉回 0 以上,weak 自动恢复(下次 applyDecay)
+  // 打工掉 vitality 到 0 不致死
   await updatePet(chainKey, tokenId, patch)
   await updateAction(actionId, {
     status: execStatus, plan, result, tx_hash: txHash,
-    credit_cost_usd: creditCost.toFixed(6), pnl_yocto: kind === 'work' ? pnlYocto.toString() : null,
+    credit_cost_usd: creditCost.toFixed(6), pnl_yocto: pnlYocto.toString(),
   })
   return actionToDto((await getAction(actionId))!)
 }
 
-/** 治疗:收益折算 credits + 状态恢复;折算后 credits 够决策费则脱离 dormant */
+// ------------------------------------------------------------------
+// 喂食(feed,语义 v2):用户钱包新存入借贷协议,增加生息本金。
+// 两段式:feed-txs 只组装转账(无状态);feed-confirm 核验链上交易后记账并存入。
+// 确定性金融操作:不走 LLM、不烧 credits。
+// ------------------------------------------------------------------
+
+/** 喂食支付交易组(user_wallet 模式):一笔原生 NEAR 转账,用户钱包签名广播 */
+export async function buildFeedTxs(chainKey: string, tokenId: number, amount: number): Promise<NearUnsignedTx[]> {
+  const ctx = getChainContext(chainKey)
+  if (ctx.family !== 'near') throw new SurvivalError('生存模式仅支持 NEAR 链', 400)
+  const pet = await getOrThrowPet(chainKey, tokenId)
+  if (pet.status !== 'alive' && pet.status !== 'weak') {
+    throw new SurvivalError(`当前状态(${pet.status})不可喂食:dead 请先复活,dormant 请先治疗`, 409)
+  }
+  if (!validateFeedAmount(amount)) {
+    throw new SurvivalError(`喂食金额必须是 ${FEED_CHOICES.join('/')} NEAR`, 400)
+  }
+  let receiver: string
+  try {
+    receiver = adoptionReceiver(chainKey)
+  } catch (err) {
+    throw new SurvivalError(`喂食金接收账户不可用: ${err instanceof Error ? err.message : String(err)}`, 500)
+  }
+  return [{
+    kind: 'near',
+    receiverId: receiver,
+    actions: [{ type: 'transfer', amount: feedYoctoOf(amount) }],
+    description: `喂食加金 ${amount} NEAR(存入借贷协议,增加生息本金)`,
+  }]
+}
+
+export interface FeedConfirmResult {
+  pet: SurvivalPetDto
+  position: PositionDto | null
+  failures: string[]
+}
+
+/**
+ * 喂食确权:核验链上支付(signer=主人、receiver=接收账户、单笔 Transfer、金额精确等于
+ * 0.1/0.2/0.5 NEAR 档)→ 存入借贷协议(增加生息本金)→ 记账。
+ * 防重放:该交易哈希已出现在账本(adopt/feed/revive 任一支付)即拒绝。
+ * 链上存入失败不阻塞记账(资金语义上本金已增加),失败记 failures + position note。
+ */
+export async function confirmFeed(chainKey: string, tokenId: number, owner: string, txHash: string): Promise<FeedConfirmResult> {
+  const ctx = getChainContext(chainKey)
+  if (ctx.family !== 'near') throw new SurvivalError('生存模式仅支持 NEAR 链', 400)
+  let pet = await getOrThrowPet(chainKey, tokenId)
+  if (pet.status !== 'alive' && pet.status !== 'weak') {
+    throw new SurvivalError(`当前状态(${pet.status})不可喂食:dead 请先复活,dormant 请先治疗`, 409)
+  }
+  const nowMs = Date.now()
+  const nextAt = cooldownNextAt(pet, 'feed', nowMs)
+  if (nextAt > 0) throw new SurvivalError(`动作冷却中,${new Date(nextAt).toISOString()} 后可执行`, 409)
+  if (await findLedgerByTxHash(chainKey, txHash)) {
+    throw new SurvivalError('该交易已被使用(防重放拒绝)', 409)
+  }
+  let exec: NearTxDetail
+  try {
+    exec = await nearWaitTxFinal(chainKey, txHash, owner)
+  } catch (err) {
+    throw new SurvivalError(`喂食金交易确认失败: ${err instanceof Error ? err.message : String(err)}`, 502)
+  }
+  const deposit = transferDepositOf(exec)
+  const amount = deposit !== null ? feedAmountOfDeposit(deposit) : null
+  if (deposit === null || amount === null) {
+    throw new SurvivalError('喂食金额不符:链上转账必须精确等于 0.1/0.2/0.5 NEAR 档位', 400)
+  }
+  let receiver: string
+  try {
+    receiver = adoptionReceiver(chainKey)
+  } catch (err) {
+    throw new SurvivalError(`喂食金接收账户不可用: ${err instanceof Error ? err.message : String(err)}`, 500)
+  }
+  const payErr = verifyAdoptionPayment(exec, owner, receiver, deposit)
+  if (payErr) throw new SurvivalError(`喂食金支付核验失败: ${payErr}`, 400)
+
+  const nowSec = Math.floor(Date.now() / 1000)
+  const failures: string[] = []
+  // 链上存入借贷协议(增加生息本金);失败不阻塞记账,记 failures + 失败头寸
+  let position: PositionDto | null = null
+  try {
+    const out = await supplyFeedPrincipal(chainKey, deposit)
+    const id = await insertPosition({
+      chain_key: chainKey, token_id: String(tokenId), kind: 'lending', token: out.token,
+      amount_atomic: out.amountAtomic, tx_hash: out.txHash, note: '喂食加金:生息本金增加',
+    })
+    position = { id, kind: 'lending', token: out.token, amountAtomic: out.amountAtomic, txHash: out.txHash, note: '喂食加金:生息本金增加', createdAt: new Date().toISOString() }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const note = `喂食加金: 链上存入失败(${msg.slice(0, 200)})`
+    const id = await insertPosition({
+      chain_key: chainKey, token_id: String(tokenId), kind: 'lending', token: '',
+      amount_atomic: '0', tx_hash: '', note,
+    }).catch(() => '')
+    if (id) position = { id, kind: 'lending', token: '', amountAtomic: '0', txHash: '', note, createdAt: new Date().toISOString() }
+    failures.push(`feed: ${msg.slice(0, 120)}`)
+  }
+  // 记账:principal 增加 + 状态加成 + 冷却;账本留痕(tx_hash 供防重放)
+  pet = await getOrThrowPet(chainKey, tokenId) // 链上等待期间可能已发生衰减结算
+  const stats = { satiety: pet.satiety, cleanliness: pet.cleanliness, mood: pet.mood, vitality: pet.vitality }
+  STAT_EFFECTS.feed(stats)
+  await updatePet(chainKey, tokenId, {
+    ...stats,
+    principal_yocto: (BigInt(pet.principal_yocto) + BigInt(deposit)).toString(),
+    last_action_at: nowSec,
+    settings: { ...settingsOf(pet), lastActionAt: { ...lastActionAtOf(pet), feed: nowSec } },
+  })
+  await insertLedger({
+    chain_key: chainKey, token_id: String(tokenId), kind: 'stake', amount_yocto: deposit,
+    credits_delta: '0', tx_hash: txHash, note: `feed: 喂食加金 ${amount} NEAR`, ts: nowSec,
+  }).catch(() => {}) // 账本失败不影响主流程
+  return { pet: toDto((await getPet(chainKey, tokenId))!), position, failures }
+}
+
+// ------------------------------------------------------------------
+// 打扫(clean,语义 v2):提取收益(含利息),本金不可动。
+// 确定性金融操作:不走 LLM、不烧 credits。
+// ------------------------------------------------------------------
+
+export interface CleanResult {
+  action: SurvivalActionDto
+  claimedYocto: string
+}
+
+/**
+ * 打扫:提取 yield(含利息)入 earnings,本金(principal)永不触碰。
+ * 链上提取成功才记账(原子 UPDATE RETURNING 防并发);收益每小时快照一次,无可提取额给 409。
+ */
+export async function cleanPet(chainKey: string, tokenId: number): Promise<CleanResult> {
+  let pet = await getOrThrowPet(chainKey, tokenId)
+  if (pet.status === 'dead') throw new SurvivalError('宠物已死亡,请先复活', 409)
+  if (pet.status === 'dormant') {
+    throw new SurvivalError('宠物处于 dormant(credits 不足),请先治疗(heal)折算收益或请管理员充值', 409)
+  }
+  let claimable = cleanClaimableYocto(pet.yield_yocto)
+  if (claimable <= 0n) {
+    throw new SurvivalError('暂无可提取的收益(收益每小时快照一次,可先喂食/等待)', 409)
+  }
+  const nowMs = Date.now()
+  const nextAt = cooldownNextAt(pet, 'clean', nowMs)
+  if (nextAt > 0) throw new SurvivalError(`动作冷却中,${new Date(nextAt).toISOString()} 后可执行`, 409)
+  pet = await applyDecay(chainKey, tokenId)
+  if (pet.status === 'dead') throw new SurvivalError('宠物已死亡,请先复活', 409)
+  claimable = cleanClaimableYocto(pet.yield_yocto)
+  if (claimable <= 0n) throw new SurvivalError('暂无可提取的收益(收益每小时快照一次,可先喂食/等待)', 409)
+
+  // 链上提取(本金保护:提取额 ≤ claimable ≤ yield,principal 不动);失败给 502 不记账
+  let txHash: string
+  try {
+    txHash = await withdrawYieldFromLending(chainKey, claimable.toString())
+  } catch (err) {
+    throw new SurvivalError(`收益提取失败: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`, 502)
+  }
+  // 原子记账:earnings += yield、yield 清零(RETURNING 防并发;快照期间新增的 yield 一并入账)
+  const claimed = await claimYieldYocto(chainKey, tokenId)
+  if (claimed === null) throw new SurvivalError(`宠物不存在(chain=${chainKey}, token=${tokenId})`, 404)
+  const claimedBig = BigInt(claimed || '0')
+  if (claimedBig <= 0n) throw new SurvivalError('收益已被并发提取,请刷新后重试', 409)
+
+  const nowSec = Math.floor(Date.now() / 1000)
+  const claimedNear = Number(claimedBig) / 1e24
+  await insertLedger({
+    chain_key: chainKey, token_id: String(tokenId), kind: 'yield', amount_yocto: claimedBig.toString(),
+    credits_delta: '0', tx_hash: txHash, note: `clean: 提取收益 ${claimedNear} NEAR(含利息)`, ts: nowSec,
+  }).catch(() => {})
+  const stats = { satiety: pet.satiety, cleanliness: pet.cleanliness, mood: pet.mood, vitality: pet.vitality }
+  STAT_EFFECTS.clean(stats)
+  await updatePet(chainKey, tokenId, {
+    ...stats,
+    last_action_at: nowSec,
+    settings: { ...settingsOf(pet), lastActionAt: { ...lastActionAtOf(pet), clean: nowSec } },
+  })
+  const actionId = await insertAction({
+    chain_key: chainKey, token_id: String(tokenId), kind: 'clean', status: 'executed',
+    plan: { claimableYocto: claimable.toString() },
+    result: { claimedYocto: claimedBig.toString(), txHash },
+    tx_hash: txHash, credit_cost_usd: '0', pnl_yocto: null,
+  })
+  return { action: actionToDto((await getAction(actionId))!), claimedYocto: claimedBig.toString() }
+}
+
+/** 治疗:收益折算 credits + 状态恢复;折算后 credits 够决策费则脱离 dormant。不烧 credits。 */
 async function runHeal(chainKey: string, pet: SurvivalPetRow): Promise<SurvivalActionDto> {
   const actionId = await insertAction({
     chain_key: chainKey, token_id: pet.token_id, kind: 'heal', status: 'planned',
     plan: {}, result: {}, tx_hash: null, credit_cost_usd: '0', pnl_yocto: null,
   })
+  // 折算前探测 NEAR AI 在线与实时价:可达则 note 带实时价,不可达不阻塞(按回落价折算)
+  const pricing = await nearAiLivePricing().catch(() => null)
+  const nearAiNote = pricing
+    ? `NEAR AI 实时价 $${(pricing.promptPerToken * 1e6).toFixed(4)}/1M prompt、$${(pricing.completionPerToken * 1e6).toFixed(4)}/1M completion`
+    : 'NEAR AI 报价不可用,按回落价折算'
   const { convertedUsd } = await healConvert(chainKey, Number(pet.token_id))
   const stats = { satiety: pet.satiety, cleanliness: pet.cleanliness, mood: pet.mood, vitality: pet.vitality }
   STAT_EFFECTS.heal(stats)
@@ -523,6 +751,7 @@ async function runHeal(chainKey: string, pet: SurvivalPetRow): Promise<SurvivalA
     status: 'executed',
     result: {
       convertedUsd: convertedUsd.toFixed(6),
+      nearAi: nearAiNote,
       note: convertedUsd > 0 ? '收益折算 credits,恢复精力/饱食' : '暂无收益可折算(质押收益每小时快照一次,先打点工攒收益;本次仅恢复精力/饱食)',
     },
   })
@@ -530,32 +759,72 @@ async function runHeal(chainKey: string, pet: SurvivalPetRow): Promise<SurvivalA
 }
 
 // ------------------------------------------------------------------
-// 复活:dead 才可;0.5 NEAR 从收益扣(不足则 demo 豁免),四维重置 60,死亡记录保留
+// 复活(revive,语义 v2):用户钱包支付 0.5 NEAR 充值 NEAR AI 算力(两段式)。
+// dead 才可;不再从 earnings 扣款;四维重置 60,死亡记录保留。
 // ------------------------------------------------------------------
 
-export async function revivePet(chainKey: string, tokenId: number): Promise<SurvivalPetDto> {
+/** 复活费支付交易组(user_wallet 模式):一笔 0.5 NEAR 原生转账,用户钱包签名广播 */
+export async function buildReviveTxs(chainKey: string, tokenId: number): Promise<NearUnsignedTx[]> {
+  const ctx = getChainContext(chainKey)
+  if (ctx.family !== 'near') throw new SurvivalError('生存模式仅支持 NEAR 链', 400)
   const pet = await getOrThrowPet(chainKey, tokenId)
   if (pet.status !== 'dead') throw new SurvivalError(`当前状态(${pet.status})不可复活`, 409)
-  const nowSec = Math.floor(Date.now() / 1000)
-  const feeYocto = BigInt(Math.round(Number(config.survivalReviveFeeNear) * 1e24))
-  const earnings = BigInt(pet.earnings_yocto)
-  let fee = feeYocto
-  let note = 'revive fee'
-  if (earnings < feeYocto) {
-    fee = 0n
-    note = 'revive fee (demo-waived: 收益不足,免费复活)'
+  let receiver: string
+  try {
+    receiver = adoptionReceiver(chainKey)
+  } catch (err) {
+    throw new SurvivalError(`复活费接收账户不可用: ${err instanceof Error ? err.message : String(err)}`, 500)
   }
+  return [{
+    kind: 'near',
+    receiverId: receiver,
+    actions: [{ type: 'transfer', amount: REVIVE_FEE_YOCTO }],
+    description: '复活费 0.5 NEAR(用于为宠物充值 NEAR AI 算力)',
+  }]
+}
+
+/**
+ * 复活确权:核验链上支付(同领养核验口径,金额必须精确 0.5 NEAR)→ 复活。
+ * 防重放:该交易哈希已出现在账本即拒绝;不再扣 earnings。
+ */
+export async function confirmRevive(chainKey: string, tokenId: number, owner: string, txHash: string): Promise<SurvivalPetDto> {
+  const ctx = getChainContext(chainKey)
+  if (ctx.family !== 'near') throw new SurvivalError('生存模式仅支持 NEAR 链', 400)
+  const pet = await getOrThrowPet(chainKey, tokenId)
+  if (pet.status !== 'dead') throw new SurvivalError(`当前状态(${pet.status})不可复活`, 409)
+  if (await findLedgerByTxHash(chainKey, txHash)) {
+    throw new SurvivalError('该交易已被使用(防重放拒绝)', 409)
+  }
+  let exec: NearTxDetail
+  try {
+    exec = await nearWaitTxFinal(chainKey, txHash, owner)
+  } catch (err) {
+    throw new SurvivalError(`复活费交易确认失败: ${err instanceof Error ? err.message : String(err)}`, 502)
+  }
+  const deposit = transferDepositOf(exec)
+  if (deposit === null || !reviveFeeOfDeposit(deposit)) {
+    throw new SurvivalError('复活费金额不符:链上转账必须精确等于 0.5 NEAR', 400)
+  }
+  let receiver: string
+  try {
+    receiver = adoptionReceiver(chainKey)
+  } catch (err) {
+    throw new SurvivalError(`复活费接收账户不可用: ${err instanceof Error ? err.message : String(err)}`, 500)
+  }
+  const payErr = verifyAdoptionPayment(exec, owner, receiver, deposit)
+  if (payErr) throw new SurvivalError(`复活费支付核验失败: ${payErr}`, 400)
+
+  const nowSec = Math.floor(Date.now() / 1000)
   await updatePet(chainKey, tokenId, {
     status: 'alive', satiety: 60, cleanliness: 60, mood: 60, vitality: 60,
-    weak_since: null, last_decay_at: nowSec,
-    earnings_yocto: (earnings - fee).toString(),
+    weak_since: null, last_decay_at: nowSec, last_action_at: nowSec,
     revive_count: pet.revive_count + 1,
-    revive_fee_yocto: (BigInt(pet.revive_fee_yocto) + fee).toString(),
+    revive_fee_yocto: (BigInt(pet.revive_fee_yocto) + BigInt(deposit)).toString(),
   })
   await insertLedger({
-    chain_key: chainKey, token_id: String(tokenId), kind: 'revive_fee', amount_yocto: fee.toString(),
-    credits_delta: '0', tx_hash: '', note, ts: nowSec,
-  })
+    chain_key: chainKey, token_id: String(tokenId), kind: 'revive_fee', amount_yocto: deposit,
+    credits_delta: '0', tx_hash: txHash, note: '用户支付:充值 NEAR AI 算力', ts: nowSec,
+  }).catch(() => {}) // 账本失败不影响主流程
   return toDto((await getPet(chainKey, tokenId))!)
 }
 

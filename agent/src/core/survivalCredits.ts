@@ -65,7 +65,7 @@ export async function topupCredits(chainKey: string, tokenId: number, usd: numbe
 // NEAR AI 模型定价(5min TTL 缓存)
 // ------------------------------------------------------------------
 
-interface ModelPricing { promptPerToken: number; completionPerToken: number } // USD / token
+export interface ModelPricing { promptPerToken: number; completionPerToken: number } // USD / token
 
 let pricingCache: { at: number; pricing: ModelPricing | null } = { at: 0, pricing: null }
 const PRICING_TTL_MS = 5 * 60_000
@@ -105,6 +105,14 @@ export async function estimateDecisionCostUsd(): Promise<number> {
   const pricing = await fetchPricing()
   if (!pricing) return FALLBACK_ESTIMATE_USD
   return pricing.promptPerToken * ESTIMATE_INPUT_TOKENS + pricing.completionPerToken * ESTIMATE_OUTPUT_TOKENS
+}
+
+/**
+ * NEAR AI 实时定价探测(heal 折算前调用):在线返回 glm 等模型的 prompt/completion 单价(USD/token),
+ * 不可达返回 null(调用方按回落价折算,不阻塞)。5min TTL 缓存,与计费同源。
+ */
+export async function nearAiLivePricing(): Promise<ModelPricing | null> {
+  return fetchPricing()
 }
 
 /** 按实际 token 用量计费(USD);定价源不可用时回落固定 $0.001 */

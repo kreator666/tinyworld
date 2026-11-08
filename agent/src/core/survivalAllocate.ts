@@ -8,7 +8,8 @@ import {
   type NearTxDetail,
 } from '../chain/nearWrite'
 import { refToken, refSwap } from '../chain/ref'
-import { burrowSupply } from '../chain/burrow'
+import { burrowSupply, burrowWithdraw, burrowToHuman } from '../chain/burrow'
+import { stNearPrice } from '../chain/metapool'
 import { insertPosition, listPositions, insertLedger, type SurvivalPositionRow } from '../db/survival'
 
 // ============================================================
@@ -20,6 +21,9 @@ import { insertPosition, listPositions, insertLedger, type SurvivalPositionRow }
 // - 资金安全:wrap/ref/burrow/metapool 目标合约全部硬编码映射(refToken/burrowContract/
 //   config.survivalMetaPoolContract),不允许 LLM/外部传入地址
 // - 每个头寸独立 try/catch:失败记 failures + position note('分配失败: xxx'),不中断其余头寸
+// - 动作语义 v2:喂食(feed)= 用户新存入借贷协议加金(supplyFeedPrincipal);
+//   打扫(clean)= 提取收益、本金不可动(withdrawYieldFromLending,主网 80% 滑点重试)
+// - 包裹 helper(wrapNearVisible)供领养分配与喂食加金共用:幂等注册 + 差额包裹 + 视图可见轮询
 // ============================================================
 
 const YOCTO_PER_NEAR = 10n ** 24n
@@ -109,6 +113,19 @@ export function principalOfDeposit(depositYocto: string): number | null {
   return null
 }
 
+/** 喂食金额档位(NEAR):用户新存入借贷协议的小额加金档 */
+export const FEED_CHOICES: readonly number[] = [0.1, 0.2, 0.5]
+
+/** 喂食档位反推(纯函数,verify 用):deposit yocto 必须精确等于 0.1/0.2/0.5 NEAR 之一 */
+export function feedAmountOfDeposit(depositYocto: string): number | null {
+  const deposit = BigInt(depositYocto)
+  for (const n of FEED_CHOICES) {
+    // 十分位档位:deposit × 10 == n × 1N
+    if (deposit * 10n === YOCTO_PER_NEAR * BigInt(Math.round(n * 10))) return n
+  }
+  return null
+}
+
 function isTestnet(chainKey: string): boolean {
   return getChainContext(chainKey).cfg.chainId === 398
 }
@@ -145,6 +162,70 @@ async function executePosition(chainKey: string, kind: PositionKind, amountYocto
 }
 
 /**
+ * 包裹原生 NEAR → wNEAR(幂等:storage 未注册先注册,只包裹差额),
+ * 并轮询等 wrap 视图可见(视图有数秒滞后,曾导致后续读不到 wNEAR 余额)。
+ * 资金安全:wrap 合约固定取自 refToken(chainKey,'WNEAR'),不允许外部传入地址。
+ */
+async function wrapNearVisible(chainKey: string, yocto: string): Promise<void> {
+  const wrap = refToken(chainKey, 'WNEAR').contractId
+  const me = nearAgentAccountId(chainKey)
+  const storage = await nearStorageBalance(chainKey, wrap, me)
+  if (!storage || BigInt(storage.total) === 0n) {
+    await nearCall(chainKey, wrap, 'storage_deposit', {}, WNEAR_STORAGE_DEPOSIT)
+  }
+  const bal = BigInt(((await nearView<string>(chainKey, wrap, 'ft_balance_of', { account_id: me }).catch(() => null)) ?? '0'))
+  if (bal < BigInt(yocto)) await nearCall(chainKey, wrap, 'near_deposit', {}, BigInt(yocto) - bal)
+  for (let i = 0; i < 10; i++) {
+    const wb = await nearView<string>(chainKey, wrap, 'ft_balance_of', { account_id: me }).catch(() => null)
+    if (wb !== null && BigInt(wb) >= BigInt(yocto)) return
+    await new Promise((r) => setTimeout(r, 3000))
+  }
+}
+
+/**
+ * 喂食加金的链上执行:先包裹 wNEAR,再存入借贷协议(增加生息本金)。
+ * 测试网 Burrow supply wNEAR;主网 Ref 换 stNEAR(质押息,同 lending 头寸路径)。
+ * 目标合约全部硬编码(refToken/burrow 链配置),LLM/外部传参无法引入新地址。
+ */
+export async function supplyFeedPrincipal(
+  chainKey: string,
+  yocto: string,
+): Promise<{ txHash: string; token: string; amountAtomic: string }> {
+  await wrapNearVisible(chainKey, yocto)
+  if (isTestnet(chainKey)) {
+    const txHash = await burrowSupply(chainKey, 'WNEAR', yocto)
+    return { txHash, token: 'wNEAR', amountAtomic: yocto }
+  }
+  const { txHash, amountOut } = await refSwap(chainKey, 'WNEAR', 'STNEAR', yocto)
+  return { txHash, token: 'stNEAR', amountAtomic: amountOut }
+}
+
+/**
+ * 打扫(clean)的链上提取:只动收益,本金(principal)永不触碰。
+ * 测试网 Burrow withdraw wNEAR(人类单位);主网按 stNEAR 现价折算数量后经 Ref 换回 wNEAR,
+ * 失败按 80% 重试一次(滑点缓冲)。返回交易哈希。
+ */
+export async function withdrawYieldFromLending(chainKey: string, claimableYocto: string): Promise<string> {
+  if (isTestnet(chainKey)) {
+    const human = await burrowToHuman(chainKey, 'WNEAR', claimableYocto)
+    return burrowWithdraw(chainKey, 'WNEAR', human)
+  }
+  const price = await stNearPrice(chainKey) // 每 1 stNEAR 值多少 yocto NEAR(1e24 定点)
+  const amountStNear = (BigInt(claimableYocto) * (10n ** 24n)) / BigInt(price)
+  if (amountStNear <= 0n) throw new Error('收益折算 stNEAR 数量为 0(价格异常)')
+  try {
+    const { txHash } = await refSwap(chainKey, 'STNEAR', 'WNEAR', amountStNear.toString())
+    return txHash
+  } catch {
+    // 滑点缓冲:按 80% 重试一次
+    const retried = (amountStNear * 80n) / 100n
+    if (retried <= 0n) throw new Error('80% 滑点缓冲后数量仍为 0')
+    const { txHash } = await refSwap(chainKey, 'STNEAR', 'WNEAR', retried.toString())
+    return txHash
+  }
+}
+
+/**
  * 执行领养费分配(热钱包签名):全量包裹 wNEAR → 30% usdc_reserve / 50% lending / 20% nearai_farm。
  * 每个头寸独立 try/catch,结果全部落 survival_positions + survival_ledger(kind='alloc');
  * 失败头寸记 failures + position note,不阻塞其余头寸。
@@ -160,21 +241,10 @@ export async function allocateAdoptionFunds(chainKey: string, tokenId: number, t
   const failures: string[] = []
   const nowSec = Math.floor(Date.now() / 1000)
 
-  // 0) 全量包裹:native NEAR → wNEAR(payable near_deposit);顺带幂等注册 wNEAR storage
-  const wrap = refToken(chainKey, 'WNEAR').contractId
+  // 0) 全量包裹:native NEAR → wNEAR(payable near_deposit);顺带幂等注册 wNEAR storage,
+  //    并等 wrap 视图可见再往下走(视图有数秒滞后,曾导致后续头寸读不到 wNEAR 余额)
   try {
-    const me = nearAgentAccountId(chainKey)
-    const storage = await nearStorageBalance(chainKey, wrap, me)
-    if (!storage || BigInt(storage.total) === 0n) {
-      await nearCall(chainKey, wrap, 'storage_deposit', {}, WNEAR_STORAGE_DEPOSIT)
-    }
-    await nearCall(chainKey, wrap, 'near_deposit', {}, BigInt(totalYocto))
-    // 0.5) 等包裹在 RPC 视图可见再往下走(视图有数秒滞后,曾导致后续头寸读不到 wNEAR 余额)
-    for (let i = 0; i < 10; i++) {
-      const wb = await nearView<string>(chainKey, wrap, 'ft_balance_of', { account_id: me }).catch(() => null)
-      if (wb !== null && BigInt(wb) >= BigInt(totalYocto)) break
-      await new Promise((r) => setTimeout(r, 3000))
-    }
+    await wrapNearVisible(chainKey, totalYocto)
   } catch (err) {
     // 包裹失败则三个头寸全部失败(资金未动,热钱包仍持原生 NEAR)
     const msg = err instanceof Error ? err.message : String(err)

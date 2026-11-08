@@ -228,6 +228,35 @@ export async function listLedger(chainKey: string, tokenId: number, limit = 100)
   return res.rows
 }
 
+/** 按 tx_hash 反查账本(feed/revive 支付防重放:同一笔链上交易不可重复使用) */
+export async function findLedgerByTxHash(chainKey: string, txHash: string): Promise<SurvivalLedgerRow | null> {
+  const db = await getDb()
+  const res = await db.query<SurvivalLedgerRow>(
+    'SELECT * FROM survival_ledger WHERE chain_key = $1 AND tx_hash = $2 LIMIT 1',
+    [chainKey, txHash],
+  )
+  return res.rows[0] ?? null
+}
+
+/**
+ * 原子提取收益(clean):earnings += yield、yield 清零,RETURNING 返回提取额(yocto 字符串)。
+ * CTE 取 UPDATE 前的 yield_yocto,并发下只会有一个调用方拿到正数;宠物不存在返回 null。
+ */
+export async function claimYieldYocto(chainKey: string, tokenId: number): Promise<string | null> {
+  const db = await getDb()
+  const res = await db.query<{ claimed: string }>(
+    `WITH old AS (SELECT yield_yocto FROM survival_pets WHERE chain_key = $1 AND token_id = $2)
+     UPDATE survival_pets
+        SET earnings_yocto = earnings_yocto + yield_yocto,
+            yield_yocto = 0,
+            updated_at = now()
+      WHERE chain_key = $1 AND token_id = $2
+      RETURNING (SELECT yield_yocto FROM old)::text AS claimed`,
+    [chainKey, tokenId],
+  )
+  return res.rows[0]?.claimed ?? null
+}
+
 /** 累计收益合计(排行榜排序键:earnings + yield) */
 export async function sumEarningsPlusYield(chainKey: string): Promise<Array<{ token_id: string; total: string }>> {
   const db = await getDb()

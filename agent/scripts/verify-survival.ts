@@ -1,9 +1,11 @@
 // 一次性验证:生存模式(Survival Mode)核心逻辑 —— 纯离线,不依赖链/LLM
 //   领养参数校验 / 衰减计算(48h 饱食归零、72h 清洁归零、weak 24h 死亡、vitality=0 加速)/
-//   thinker 输出校验器(合法 / 非法 JSON 降级 no-op)/ executor 白名单拒绝 / 排行榜排序
+//   thinker 输出校验器(合法 / 非法 JSON 降级 no-op)/ executor 白名单拒绝 / 排行榜排序 /
+//   经济模型 v2(30/50/20 分配、领养费支付核验)/ 动作语义 v2
+//   (喂食 0.1/0.2/0.5 档、clean 本金保护 claimable ≤ yield、复活费精确 0.5N、打工方向对白名单)
 // 运行:AGENT_DATA_DIR=<空目录> npx tsx scripts/verify-survival.ts
 import { config } from '../src/config'
-import { validatePrincipal, computeDecay, sortLeaderboard, type LeaderboardEntry } from '../src/core/survival'
+import { validatePrincipal, computeDecay, sortLeaderboard, cleanClaimableYocto, reviveFeeOfDeposit, REVIVE_FEE_YOCTO, validateFeedAmount, feedYoctoOf, type LeaderboardEntry } from '../src/core/survival'
 import { parsePlan, validatePlan, NOOP_PLAN, type SurvivalPlan } from '../src/core/survivalThinker'
 import { checkStepAllowed } from '../src/core/survivalExecutor'
 import {
@@ -11,6 +13,7 @@ import {
   verifyAdoptionPayment,
   transferDepositOf,
   principalOfDeposit,
+  feedAmountOfDeposit,
   checkAdoptionDuplicate,
   type PositionKind,
 } from '../src/core/survivalAllocate'
@@ -222,5 +225,51 @@ assert(verifyAdoptionPayment(multi, OWNER, RECEIVER, PAY_YOCTO) !== null, '多�
 const kinds: PositionKind[] = ['usdc_reserve', 'lending', 'nearai_farm']
 eq(kinds.join(','), 'usdc_reserve,lending,nearai_farm', '头寸 kind 枚举')
 console.log('✅ verifyAdoptionPayment(金额/接收人/非 transfer/重复 confirm 拒绝 + 合法通过)')
+
+// ---------- 8. 动作语义 v2:喂食档位 / clean 本金保护 / 复活费 0.5N ----------
+// 喂食档位:仅 0.1/0.2/0.5 NEAR 精确档(用户新存入借贷协议的加金)
+const TENTH_N = YOCTO / 10n
+eq(feedAmountOfDeposit(TENTH_N.toString()), 0.1, '0.1N 喂食档位识别')
+eq(feedAmountOfDeposit((TENTH_N * 2n).toString()), 0.2, '0.2N 喂食档位识别')
+eq(feedAmountOfDeposit((TENTH_N * 5n).toString()), 0.5, '0.5N 喂食档位识别')
+eq(feedAmountOfDeposit(YOCTO.toString()), null, '1N 不是喂食档(属领养档)拒绝')
+eq(feedAmountOfDeposit((TENTH_N * 3n).toString()), null, '0.3N 非法喂食档拒绝')
+eq(feedAmountOfDeposit((TENTH_N + 1n).toString()), null, '非精确 0.1N(多 1 yocto)拒绝')
+eq(feedAmountOfDeposit('0'), null, '0 喂食档拒绝')
+assert(validateFeedAmount(0.1) && validateFeedAmount(0.2) && validateFeedAmount(0.5), '0.1/0.2/0.5 合法')
+assert(!validateFeedAmount(1) && !validateFeedAmount(0.3) && !validateFeedAmount('0.1') && !validateFeedAmount(NaN), '1/0.3/字符串/NaN 非法')
+eq(feedYoctoOf(0.1), TENTH_N.toString(), 'feedYoctoOf(0.1) 精确 0.1N')
+eq(feedYoctoOf(0.5), (TENTH_N * 5n).toString(), 'feedYoctoOf(0.5) 精确 0.5N')
+
+// clean 本金保护:claimable 恒 ≤ yield 且非负(本金 principal 永不参与提取)
+for (const y of ['0', '1', '1000000000000000000000000', '999999999999999999999999999999999999999']) {
+  const c = cleanClaimableYocto(y)
+  assert(c <= BigInt(y), `claimable ≤ yield (${y})`)
+  assert(c >= 0n, `claimable 非负 (${y})`)
+}
+eq(cleanClaimableYocto('0'), 0n, '零收益不可提取')
+eq(cleanClaimableYocto('-5'), 0n, '负收益钳制为 0(不侵吞本金)')
+
+// 复活费:固定 0.5N,链上 deposit 必须精确匹配
+eq(REVIVE_FEE_YOCTO, '500000000000000000000000', '复活费 = 0.5N yocto')
+assert(reviveFeeOfDeposit(REVIVE_FEE_YOCTO), '0.5N 精确通过')
+assert(!reviveFeeOfDeposit(YOCTO.toString()) && !reviveFeeOfDeposit((TENTH_N * 6n).toString()) && !reviveFeeOfDeposit((TENTH_N + 1n).toString()), '非精确 0.5N 拒绝')
+const reviveOkTx: NearTxDetail = {
+  status: { SuccessValue: '' },
+  transaction: { signer_id: OWNER, receiver_id: RECEIVER, actions: [{ Transfer: { deposit: REVIVE_FEE_YOCTO } }] },
+}
+eq(verifyAdoptionPayment(reviveOkTx, OWNER, RECEIVER, REVIVE_FEE_YOCTO), null, '复活费支付核验通过')
+const reviveOverTx: NearTxDetail = {
+  status: { SuccessValue: '' },
+  transaction: { signer_id: OWNER, receiver_id: RECEIVER, actions: [{ Transfer: { deposit: YOCTO.toString() } }] },
+}
+assert(verifyAdoptionPayment(reviveOverTx, OWNER, RECEIVER, REVIVE_FEE_YOCTO) !== null, '复活费多付(1N)拒绝')
+
+// 打工方向对(语义 v2):测试网 wNEAR↔USDT / wNEAR↔DAI 在白名单内
+eq(checkStepAllowed('near-testnet', { protocol: 'ref', action: 'swap', tokenIn: 'wNEAR', tokenOut: 'USDT', amountYocto: '1000', slippageBps: 100 }, CAP), null, '测试网 wNEAR↔USDT 方向对合法')
+eq(checkStepAllowed('near-testnet', { protocol: 'ref', action: 'swap', tokenIn: 'DAI', tokenOut: 'wNEAR', amountYocto: '1000', slippageBps: 100 }, CAP), null, '测试网 DAI→wNEAR 做多合法')
+eq(checkStepAllowed('near-mainnet', { protocol: 'ref', action: 'swap', tokenIn: 'wNEAR', tokenOut: 'USDT', amountYocto: '1000', slippageBps: 100 }, CAP), null, '主网 wNEAR↔USDT 方向对合法')
+assert(checkStepAllowed('near-testnet', { protocol: 'ref', action: 'swap', tokenIn: 'wNEAR', tokenOut: 'BANANA', amountYocto: '1000' }, CAP) !== null, '白名单外代币仍拒绝')
+console.log('✅ 动作语义 v2(喂食 0.1/0.2/0.5 档、clean 本金保护、复活费 0.5N、打工方向对白名单)')
 
 console.log('生存模式离线验证全部通过 ✅')
