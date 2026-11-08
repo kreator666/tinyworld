@@ -4,6 +4,7 @@ import {
   nearAgentAccountId,
   nearCall,
   nearStorageBalance,
+  nearView,
   type NearTxDetail,
 } from '../chain/nearWrite'
 import { refToken, refSwap } from '../chain/ref'
@@ -122,25 +123,25 @@ interface PositionOutcome {
 
 /** 单头寸执行包装:成功返回结果,失败抛错由调用方记 failures */
 async function executePosition(chainKey: string, kind: PositionKind, amountYocto: string, testnet: boolean): Promise<PositionOutcome> {
-  const wrap = refToken(chainKey, 'WNEAR').contractId
   if (kind === 'usdc_reserve') {
     if (testnet) {
       // 测试网无 USDC 池流动性,暂存 Burrow 生息;主网将真实兑换 USDC
       const txHash = await burrowSupply(chainKey, 'WNEAR', amountYocto)
       return { kind, token: 'wNEAR', amountAtomic: amountYocto, txHash, note: '测试网无 USDC 池流动性,暂存生息;主网将真实兑换 USDC' }
     }
-    const { txHash, amountOut } = await refSwap(chainKey, 'WNEAR', 'USDC', amountYocto)
-    return { kind, token: 'USDC', amountAtomic: amountOut, txHash, note: '经 Ref 兑换 USDC,作为 NEAR AI credits 储备(购算力)' }
+    // 主网:储备头寸以 stNEAR 持有(生息)。原生 USDC 池少且薄(实测 28 个、多在 4000+ 号段、深度差),
+    // 而 NEAR AI credits 本来就要法币在仪表盘购买 —— 届时把 stNEAR 手工兑成 USDC 即可
+    const { txHash, amountOut } = await refSwap(chainKey, 'WNEAR', 'STNEAR', amountYocto)
+    return { kind, token: 'stNEAR', amountAtomic: amountOut, txHash, note: '算力储备以 stNEAR 持有(生息);购 NEAR AI credits 时手工兑 USDC' }
   }
-  // lending / nearai_farm:测试网 Burrow supply wNEAR;主网 Meta Pool deposit_and_stake(原生币,payable)
   if (testnet) {
     const txHash = await burrowSupply(chainKey, 'WNEAR', amountYocto)
     return { kind, token: 'wNEAR', amountAtomic: amountYocto, txHash, note: '' }
   }
-  // 全量包裹后主钱包原生币不足:先按份额解包,再 deposit_and_stake
-  await nearCall(chainKey, wrap, 'near_withdraw', { amount: amountYocto }, 1n)
-  const txHash = await nearCall(chainKey, config.survivalMetaPoolContract, 'deposit_and_stake', {}, BigInt(amountYocto))
-  return { kind, token: 'stNEAR', amountAtomic: amountYocto, txHash, note: kind === 'nearai_farm' ? 'House of Stake farm 占位:接入前暂存生息' : '' }
+  // 主网 lending / nearai_farm:Ref 买 stNEAR。Meta Pool deposit_and_stake 有 1 NEAR 最低额
+  // (实测 0.5/0.2 份均报 minimum deposit),DEX 买入无门槛,收益同为质押息
+  const { txHash, amountOut } = await refSwap(chainKey, 'WNEAR', 'STNEAR', amountYocto)
+  return { kind, token: 'stNEAR', amountAtomic: amountOut, txHash, note: kind === 'nearai_farm' ? 'House of Stake farm 占位:接入前以 stNEAR 生息' : '' }
 }
 
 /**
@@ -168,6 +169,12 @@ export async function allocateAdoptionFunds(chainKey: string, tokenId: number, t
       await nearCall(chainKey, wrap, 'storage_deposit', {}, WNEAR_STORAGE_DEPOSIT)
     }
     await nearCall(chainKey, wrap, 'near_deposit', {}, BigInt(totalYocto))
+    // 0.5) 等包裹在 RPC 视图可见再往下走(视图有数秒滞后,曾导致后续头寸读不到 wNEAR 余额)
+    for (let i = 0; i < 10; i++) {
+      const wb = await nearView<string>(chainKey, wrap, 'ft_balance_of', { account_id: me }).catch(() => null)
+      if (wb !== null && BigInt(wb) >= BigInt(totalYocto)) break
+      await new Promise((r) => setTimeout(r, 3000))
+    }
   } catch (err) {
     // 包裹失败则三个头寸全部失败(资金未动,热钱包仍持原生 NEAR)
     const msg = err instanceof Error ? err.message : String(err)
@@ -204,4 +211,66 @@ export async function allocateAdoptionFunds(chainKey: string, tokenId: number, t
     }).catch(() => {})
   }
   return { positions: await listPositions(chainKey, tokenId), failures }
+}
+
+/**
+ * 重试失败头寸(领养后分配部分失败时,主人可自助重试;也可由 admin 触发):
+ * 只重跑 note 以「分配失败」开头或缺失的头寸;wNEAR 不足时只包裹差额。
+ */
+export async function retryAllocation(chainKey: string, tokenId: number): Promise<{ positions: SurvivalPositionRow[]; retried: string[]; failures: string[] }> {
+  const { getPet } = await import('../db/survival')
+  const pet = await getPet(chainKey, tokenId)
+  if (!pet) throw new Error(`宠物不存在(chain=${chainKey}, token=${tokenId})`)
+  const testnet = isTestnet(chainKey)
+  const { usdc, lending, nearai } = splitAllocation(pet.principal_yocto, config.survivalAllocUsdcPct, config.survivalAllocLendingPct, config.survivalAllocNearaiPct)
+  const portions: Array<{ kind: PositionKind; amount: string }> = [
+    { kind: 'usdc_reserve', amount: usdc },
+    { kind: 'lending', amount: lending },
+    { kind: 'nearai_farm', amount: nearai },
+  ]
+  const existing = await listPositions(chainKey, tokenId)
+  const isFailed = (kind: PositionKind) => {
+    const rows = existing.filter((x) => x.kind === kind)
+    if (rows.length === 0) return true
+    const last = rows[rows.length - 1]
+    return (last.note ?? '').startsWith('分配失败') || last.amount_atomic === '0'
+  }
+  const todo = portions.filter((p) => BigInt(p.amount) > 0n && isFailed(p.kind))
+  if (todo.length === 0) return { positions: existing, retried: [], failures: [] }
+
+  const wrap = refToken(chainKey, 'WNEAR').contractId
+  const me = nearAgentAccountId(chainKey)
+  const need = todo.reduce((a, p) => a + BigInt(p.amount), 0n)
+  const bal = BigInt(((await nearView<string>(chainKey, wrap, 'ft_balance_of', { account_id: me }).catch(() => null)) ?? '0'))
+  if (bal < need) {
+    await nearCall(chainKey, wrap, 'near_deposit', {}, need - bal)
+    for (let i = 0; i < 10; i++) {
+      const wb = await nearView<string>(chainKey, wrap, 'ft_balance_of', { account_id: me }).catch(() => null)
+      if (wb !== null && BigInt(wb) >= need) break
+      await new Promise((r) => setTimeout(r, 3000))
+    }
+  }
+
+  const retried: string[] = []
+  const failures: string[] = []
+  const nowSec = Math.floor(Date.now() / 1000)
+  const { updatePosition } = await import('../db/survival')
+  for (const p of todo) {
+    try {
+      const outcome = await executePosition(chainKey, p.kind, p.amount, testnet)
+      await updatePosition(chainKey, String(tokenId), p.kind, {
+        token: outcome.token, amount_atomic: outcome.amountAtomic, tx_hash: outcome.txHash, note: outcome.note,
+      })
+      await insertLedger({
+        chain_key: chainKey, token_id: String(tokenId), kind: 'alloc', amount_yocto: p.amount, credits_delta: '0',
+        tx_hash: outcome.txHash, note: `retry ${outcome.kind}: ${outcome.note || '成功'}`, ts: nowSec,
+      }).catch(() => {})
+      retried.push(p.kind)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await updatePosition(chainKey, String(tokenId), p.kind, { note: `分配失败: ${msg.slice(0, 200)}` }).catch(() => {})
+      failures.push(`${p.kind}: ${msg.slice(0, 120)}`)
+    }
+  }
+  return { positions: await listPositions(chainKey, tokenId), retried, failures }
 }

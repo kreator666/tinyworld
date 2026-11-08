@@ -63,7 +63,7 @@ import {
   confirmAdoption,
 } from './core/survival'
 import { topupCredits } from './core/survivalCredits'
-import { positionToDto } from './core/survivalAllocate'
+import { positionToDto, retryAllocation } from './core/survivalAllocate'
 import { listRecentActions, getPet, updatePet, listPositions } from './db/survival'
 import { buildDeployTxs, buildWhitelistTx, resolveDeployReceipts, whitelistTemplate } from './core/arenaDeploy'
 import { buildSettleTxs, confirmSettleTxs } from './core/arenaSettlement'
@@ -1959,6 +1959,20 @@ app.get('/survival/pet/:tokenId/positions', async (c) => {
     const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
     const positions = await listPositions(chainKey, tokenId)
     return c.json({ positions: positions.map(positionToDto) })
+  } catch (err) {
+    return handleErr(c, err)
+  }
+})
+
+// 重试失败的资金分配(authRequired + owner):只重跑 note 以「分配失败」开头或缺失的头寸
+app.post('/survival/pet/:tokenId/retry-alloc', authRequired, async (c) => {
+  const tokenId = parseTokenId(c)
+  if (tokenId === null) return
+  try {
+    const chainKey = resolveChainKey(c.req.header('X-Chain-Key'))
+    await assertAgentOwnership(c, chainKey, tokenId)
+    const result = await retryAllocation(chainKey, tokenId)
+    return c.json(result)
   } catch (err) {
     return handleErr(c, err)
   }

@@ -181,6 +181,7 @@ export async function thinkSurvival(input: ThinkInput): Promise<{ plan: Survival
   const text = await complete(buildSystemPrompt(input), buildUserPrompt(input), {
     model: config.survivalLlmModel,
     temperature: 0.4,
+    maxTokens: 900, // 结构化决策 JSON;NEAR AI 等网关默认 max_tokens 偏小,不给足会被截断成非法 JSON
     baseUrl: config.survivalLlmBaseUrl,
     apiKey: config.survivalLlmApiKey,
     onUsage: async (u) => {

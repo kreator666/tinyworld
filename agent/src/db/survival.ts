@@ -254,6 +254,32 @@ export async function insertPosition(row: Omit<SurvivalPositionRow, 'id' | 'crea
   return id
 }
 
+/** 更新该宠物某 kind 的最新一条 position(重试分配时用;同 kind 历史行保留) */
+export async function updatePosition(
+  chainKey: string,
+  tokenId: string,
+  kind: string,
+  patch: Partial<Pick<SurvivalPositionRow, 'token' | 'amount_atomic' | 'tx_hash' | 'note'>>,
+): Promise<boolean> {
+  const db = await getDb()
+  const sets: string[] = []
+  const vals: unknown[] = []
+  let i = 1
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) continue
+    sets.push(`${k} = $${i++}`)
+    vals.push(v)
+  }
+  if (sets.length === 0) return false
+  vals.push(chainKey, tokenId, kind)
+  const res = await db.query(
+    `UPDATE survival_positions SET ${sets.join(', ')}
+      WHERE id = (SELECT id FROM survival_positions WHERE chain_key = $${i++} AND token_id = $${i++} AND kind = $${i++} ORDER BY created_at DESC LIMIT 1)`,
+    vals,
+  )
+  return (res.affectedRows ?? 0) > 0
+}
+
 export async function listPositions(chainKey: string, tokenId: number): Promise<SurvivalPositionRow[]> {
   const db = await getDb()
   const res = await db.query<SurvivalPositionRow>(

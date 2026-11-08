@@ -24,6 +24,7 @@ export const REF_MAINNET_TOKENS: Record<string, { contractId: string; symbol: st
   WNEAR: { contractId: 'wrap.near', symbol: 'wNEAR' },
   USDC: { contractId: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', symbol: 'USDC' }, // 原生 USDC
   USDT: { contractId: 'dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near', symbol: 'USDT' }, // 桥接 USDT
+  STNEAR: { contractId: 'meta-pool.near', symbol: 'stNEAR' }, // Meta Pool 流动质押凭证
 }
 
 /** 按链取代币表(以 ChainConfig.chainId 哨兵区分:398=testnet,其余视为 mainnet) */
@@ -68,7 +69,7 @@ interface RefPool {
 // 池列表缓存(60s;测试网 2892 个池全量扫一遍要半分钟,不能每次报价都扫)
 const poolListCache = new Map<string, { at: number; pools: RefPool[] }>()
 const POOL_CACHE_TTL_MS = 60_000
-const MAX_POOL_PAGES = 30 // 每页 100,最多扫 3000 个池
+const MAX_POOL_PAGES = 100 // 每页 100,最多扫 10000 个池(主网 9000+,原生 USDC 池在 4000+ 之外)
 
 /** 拉取交易对池列表(带 60s 缓存;测试网规模小,上限 3000 个足够) */
 export async function refGetPools(chainKey: string): Promise<RefPool[]> {
@@ -98,7 +99,7 @@ export async function refFindPool(chainKey: string, tokenIn: string, tokenOut: s
       best = { poolId: pools[i].pool_id ?? i, tokens: ids, liquidity }
     }
   }
-  if (!best) throw new Error(`Ref 测试网无 ${tokenIn} ↔ ${tokenOut} 的非空流动性池`)
+  if (!best) throw new Error(`Ref(${getChainContext(chainKey).cfg.name})无 ${tokenIn} ↔ ${tokenOut} 的非空流动性池(已扫 ${pools.length} 个)`)
   return { poolId: best.poolId, tokens: best.tokens }
 }
 

@@ -14,6 +14,8 @@ export interface CompleteOptions {
   baseUrl?: string
   /** 覆盖默认 API Key;缺省回落 config.llmApiKey */
   apiKey?: string
+  /** 最大输出 token(缺省由网关决定;部分网关默认上限很小,结构化输出务必显式给足) */
+  maxTokens?: number
   /** 调用成功后回传实际 token 用量(竞技场燃料计费消费);抛错则向上传播,不允许静默跳过计费 */
   onUsage?: (usage: LlmUsage) => void | Promise<void>
 }
@@ -44,6 +46,7 @@ export async function complete(
         { role: 'user', content: user },
       ],
       temperature: opts.temperature ?? 0.7,
+      ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
     }),
   })
   if (!res.ok) throw new Error(`LLM 网关错误: HTTP ${res.status}`)
