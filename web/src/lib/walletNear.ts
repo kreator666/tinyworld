@@ -424,10 +424,17 @@ export function takeNearLoginReturn():
   return { kind: 'success', txHash, pending }
 }
 
-/** 签名并发送交易(FunctionCall 单合约动作);返回 NEAR tx hash */
+/** 签名并发送交易(FunctionCall 单合约动作);返回 NEAR tx hash。
+ *  签名人双重校验:Meteor 等扩展用"钱包自己当前选中的账户"签名,可能与页面连接账户漂移,
+ *  签名前比对 selector 状态、签名后比对交易实际 signerId,不一致即报错中止(宁可不弹窗) */
 export async function nearSignAndSend(actions: InternalAction[], receiverId?: string): Promise<string> {
   const selector = await ensureSelector()
   const wallet = await selector.wallet()
+  const expected = getActiveNearAccount()
+  const stateAccount = selector.store.getState().accounts[0]?.accountId
+  if (expected && stateAccount && stateAccount !== expected) {
+    throw signerMismatchError(stateAccount, expected)
+  }
   try {
     // v10 的 signAndSendTransactions 收 @near-js 枚举式 Action(浏览器钱包可能走重定向返回 void)
     const outcomes = (await wallet.signAndSendTransactions({
@@ -437,14 +444,25 @@ export async function nearSignAndSend(actions: InternalAction[], receiverId?: st
           actions: actions.map(internalActionToNaj),
         },
       ],
-    })) as Array<{ transaction_outcome?: { id?: string }; transaction?: { hash?: string } }> | void
+    })) as Array<{
+      transaction_outcome?: { id?: string; outcome?: { signer_id?: string } }
+      transaction?: { hash?: string; signerId?: string }
+    }> | void
     const outcome = Array.isArray(outcomes) ? outcomes[0] : undefined
     const hash = outcome?.transaction_outcome?.id ?? outcome?.transaction?.hash ?? ''
     if (!hash) throw new Error(t('chainMsg.near.noTxHash'))
+    const signer = outcome?.transaction?.signerId ?? outcome?.transaction_outcome?.outcome?.signer_id
+    if (signer && expected && signer !== expected) {
+      throw signerMismatchError(signer, expected)
+    }
     return hash
   } catch (err) {
     throw normalizeNearError(err)
   }
+}
+
+function signerMismatchError(signer: string, expected: string): NearWalletError {
+  return new NearWalletError('SIGNER_MISMATCH', t('chainMsg.near.signerMismatch', { signer, expected }))
 }
 
 /** FunctionCall 动作构造辅助(gas/deposit 均为字符串:gas/yoctoNEAR 单位原样上链) */
