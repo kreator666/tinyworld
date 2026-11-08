@@ -318,7 +318,7 @@ export async function buildAdoptionTxs(chainKey: string, tokenId: number, princi
   const yocto = (YOCTO_PER_NEAR * BigInt(principalNear)).toString()
   let receiver: string
   try {
-    receiver = adoptionReceiver()
+    receiver = adoptionReceiver(chainKey)
   } catch (err) {
     throw new SurvivalError(`领养费接收账户不可用: ${err instanceof Error ? err.message : String(err)}`, 500)
   }
@@ -359,7 +359,7 @@ export async function confirmAdoption(chainKey: string, tokenId: number, owner: 
   }
   let receiver: string
   try {
-    receiver = adoptionReceiver()
+    receiver = adoptionReceiver(chainKey)
   } catch (err) {
     throw new SurvivalError(`领养费接收账户不可用: ${err instanceof Error ? err.message : String(err)}`, 500)
   }

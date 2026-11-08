@@ -33,7 +33,7 @@ export async function stakeNear(chainKey: string, yoctoAmount: string): Promise<
     // 测试网替身:Burrow supply wNEAR。wNEAR 是 FT,得先把 native NEAR 包裹进来
     // (wrap.testnet near_deposit,payable),否则 ft_transfer_call 报 "account doesn't have enough balance"
     const wrap = refToken(chainKey, 'WNEAR').contractId
-    const me = nearAgentAccountId()
+    const me = nearAgentAccountId(chainKey)
     const storage = await nearStorageBalance(chainKey, wrap, me)
     if (!storage || BigInt(storage.total) === 0n) {
       await nearCall(chainKey, wrap, 'storage_deposit', {}, 1250000000000000000000n) // wNEAR 注册费 0.00125N
@@ -48,7 +48,7 @@ export async function stakeNear(chainKey: string, yoctoAmount: string): Promise<
 
 /** stNEAR 余额(最小单位字符串);测试网替身返回 Burrow 已存 wNEAR 余额 */
 export async function stNearBalance(chainKey: string, accountId?: string): Promise<string> {
-  const me = accountId ?? nearAgentAccountId()
+  const me = accountId ?? nearAgentAccountId(chainKey)
   if (isTestnet(chainKey)) {
     const acct = await burrowGetAccount(chainKey, me)
     const wnear = acct?.supplied?.find((a) => a.token_id === 'wrap.testnet')

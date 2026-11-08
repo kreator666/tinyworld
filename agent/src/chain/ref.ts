@@ -136,7 +136,7 @@ export async function refSwap(
   slippageBps = 100,
 ): Promise<{ txHash: string; amountOut: string }> {
   const exchange = refExchange(chainKey)
-  const me = nearAgentAccountId()
+  const me = nearAgentAccountId(chainKey)
   const tin = refToken(chainKey, tokenInSymbol)
   const tout = refToken(chainKey, tokenOutSymbol)
   if (tin.contractId === tout.contractId) throw new Error('兑入兑出不能是同一代币')

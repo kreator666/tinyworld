@@ -38,7 +38,7 @@ export interface BurrowAccountView {
 
 /** 账户仓位视图(未注册返回 null) */
 export async function burrowGetAccount(chainKey: string, accountId?: string): Promise<BurrowAccountView | null> {
-  return nearView<BurrowAccountView>(chainKey, burrowContract(chainKey), 'get_account', { account_id: accountId ?? nearAgentAccountId() })
+  return nearView<BurrowAccountView>(chainKey, burrowContract(chainKey), 'get_account', { account_id: accountId ?? nearAgentAccountId(chainKey) })
 }
 
 /** 存款:ft_transfer_call(空 msg = 存入生息);测试网 fakes 用原子单位字符串金额 */

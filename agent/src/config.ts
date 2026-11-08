@@ -257,6 +257,11 @@ export const config = {
   agentSolanaKey: env('AGENT_SOLANA_PRIVATE_KEY', ''),
   agentNearKey: env('AGENT_NEAR_PRIVATE_KEY', ''), // ed25519:... 私钥;账户 = AGENT_NEAR_ACCOUNT_ID 或公钥隐式地址
   agentNearAccountId: env('AGENT_NEAR_ACCOUNT_ID', ''),
+  // 主网专用热钱包(生存模式):账户 + 按目标合约映射的受限 FunctionCall 子密钥 JSON
+  // {"wrap.near":"ed25519:...","v2.ref-finance.near":"ed25519:...","meta-pool.near":"ed25519:...","default":"ed25519:..."}
+  // 主私钥永不上服务器;子密钥泄露也转不走钱(不支持 Transfer),可 delete-key 吊销
+  agentNearMainnetAccountId: env('AGENT_NEAR_MAINNET_ACCOUNT_ID', ''),
+  agentNearMainnetKeys: env('AGENT_NEAR_MAINNET_KEYS', ''),
   fastnearApiKey: env('FASTNEAR_API_KEY', ''), // NEAR RPC 中继的 fastnear 认证(Authorization: Bearer),提高免费档限额
   // 价格源 URL(可用 env 覆盖;策略引擎熔断验证时故意改错)
   priceCoingeckoUrl: env('PRICE_COINGECKO_URL', 'https://api.coingecko.com/api/v3/simple/price?ids=avalanche-2&vs_currencies=usd'),

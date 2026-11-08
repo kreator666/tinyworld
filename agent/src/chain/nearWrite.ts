@@ -45,8 +45,12 @@ export function isNearWriteReady(): boolean {
   return Boolean(config.agentNearKey)
 }
 
-/** 热钱包账户 id:显式配置优先,缺省公钥隐式地址 */
-export function nearAgentAccountId(): string {
+/** 热钱包账户 id:显式配置优先,缺省公钥隐式地址。
+ *  传 chainKey 时:near-mainnet 且配了主网专用账户 → 返回主网账户(生存模式收款/分配用) */
+export function nearAgentAccountId(chainKey?: string): string {
+  if (chainKey && getChainContext(chainKey).cfg.chainId !== 398 && config.agentNearMainnetAccountId) {
+    return config.agentNearMainnetAccountId
+  }
   if (config.agentNearAccountId) return config.agentNearAccountId
   if (!config.agentNearKey) throw new Error('未配置 AGENT_NEAR_PRIVATE_KEY')
   const hex = Buffer.from(KeyPair.fromString(config.agentNearKey as `ed25519:${string}`).getPublicKey().data).toString('hex')
@@ -56,6 +60,33 @@ export function nearAgentAccountId(): string {
 function keyPair(): KeyPair {
   if (!config.agentNearKey) throw new Error('未配置 AGENT_NEAR_PRIVATE_KEY')
   return KeyPair.fromString(config.agentNearKey as `ed25519:${string}`)
+}
+
+/** 主网专用热钱包(生存模式):AGENT_NEAR_MAINNET_KEYS 是 {"<receiverId>": "ed25519:...", "default": ...} JSON。
+ *  每个 receiver 一把受限 FunctionCall 子密钥(NEAR 协议一把函数调用钥匙只限一个合约),
+ *  按交易目标合约选钥匙;泄露也转不走钱(不支持 Transfer),可在线 delete-key 吊销。 */
+function mainnetKeyFor(receiverId?: string): string | null {
+  const raw = config.agentNearMainnetKeys
+  if (!raw) return null
+  try {
+    const map = JSON.parse(raw) as Record<string, string>
+    return (receiverId && map[receiverId]) || map.default || null
+  } catch {
+    return null
+  }
+}
+
+/** 用给定端点构建 Account;receiverId 用于主网按合约选受限子密钥 */
+async function accountAt(chainKey: string, nodeUrl: string, receiverId?: string): Promise<import('near-api-js').Account> {
+  const cfg = getChainContext(chainKey).cfg
+  const keyStore = new keyStores.InMemoryKeyStore()
+  const networkId = cfg.chainId === 398 ? 'testnet' : 'mainnet'
+  const mainnetSecret = networkId === 'mainnet' ? mainnetKeyFor(receiverId) : null
+  const id = nearAgentAccountId(chainKey)
+  const kp = mainnetSecret ? KeyPair.fromString(mainnetSecret as `ed25519:${string}`) : keyPair()
+  await keyStore.setKey(networkId, id, kp)
+  const near = await connect({ networkId, nodeUrl, keyStore, headers: {} })
+  return near.account(id)
 }
 
 function endpoints(chainKey: string): string[] {
@@ -69,16 +100,6 @@ function isRetryable(err: unknown): boolean {
   return /failed to fetch|fetch failed|timeout|econn|socket|network/i.test(msg) && !/account|balance|gas|wasm|panic|execution|insufficient|denied|key/i.test(msg)
 }
 
-/** 用给定端点构建 Account */
-async function accountAt(chainKey: string, nodeUrl: string): Promise<import('near-api-js').Account> {
-  const cfg = getChainContext(chainKey).cfg
-  const keyStore = new keyStores.InMemoryKeyStore()
-  const id = nearAgentAccountId()
-  await keyStore.setKey(cfg.chainId === 398 ? 'testnet' : 'mainnet', id, keyPair())
-  const near = await connect({ networkId: cfg.chainId === 398 ? 'testnet' : 'mainnet', nodeUrl, keyStore, headers: {} })
-  return near.account(id)
-}
-
 /**
  * 热钱包发起一笔 FunctionCall,返回交易哈希。
  * 主端点连接失败时按 rpcFallbacks 轮换重试;执行错误原样抛出。
@@ -88,7 +109,7 @@ export async function nearCall(chainKey: string, contractId: string, methodName:
   let lastErr: unknown = null
   for (const url of eps) {
     try {
-      const account = await accountAt(chainKey, url)
+      const account = await accountAt(chainKey, url, contractId)
       const outcome = await account.functionCall({
         contractId,
         methodName,
@@ -150,7 +171,7 @@ export async function nearStorageBalance(chainKey: string, contractId: string, a
  * 已注册返回 false;未注册发一笔 storage_deposit(可退还)返回 true。
  */
 export async function ensureStorageDeposit(chainKey: string, contractId: string): Promise<boolean> {
-  const me = nearAgentAccountId()
+  const me = nearAgentAccountId(chainKey)
   const bal = await nearStorageBalance(chainKey, contractId, me)
   if (bal && BigInt(bal.total) > 0n) return false
   await nearCall(chainKey, contractId, 'storage_deposit', {}, DEFAULT_STORAGE_DEPOSIT)
@@ -166,7 +187,7 @@ export async function nearNativeBalance(chainKey: string): Promise<string> {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'query', params: { request_type: 'view_account', finality: 'final', account_id: nearAgentAccountId() } }),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'query', params: { request_type: 'view_account', finality: 'final', account_id: nearAgentAccountId(chainKey) } }),
         signal: AbortSignal.timeout(15_000),
       })
       const data = (await res.json()) as { error?: { message?: string }; result?: { amount?: string } }

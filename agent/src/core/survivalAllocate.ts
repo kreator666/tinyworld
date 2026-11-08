@@ -49,10 +49,10 @@ export function positionToDto(row: SurvivalPositionRow): PositionDto {
   }
 }
 
-/** 领养费接收账户:显式配置优先,缺省回落 NEAR 热钱包账户 */
-export function adoptionReceiver(): string {
+/** 领养费接收账户:显式配置优先;缺省按链解析热钱包(mainnet 用主网专用账户,若已配置) */
+export function adoptionReceiver(chainKey: string): string {
   if (config.survivalAdoptionReceiver) return config.survivalAdoptionReceiver
-  return nearAgentAccountId()
+  return nearAgentAccountId(chainKey)
 }
 
 /**
@@ -162,7 +162,7 @@ export async function allocateAdoptionFunds(chainKey: string, tokenId: number, t
   // 0) 全量包裹:native NEAR → wNEAR(payable near_deposit);顺带幂等注册 wNEAR storage
   const wrap = refToken(chainKey, 'WNEAR').contractId
   try {
-    const me = nearAgentAccountId()
+    const me = nearAgentAccountId(chainKey)
     const storage = await nearStorageBalance(chainKey, wrap, me)
     if (!storage || BigInt(storage.total) === 0n) {
       await nearCall(chainKey, wrap, 'storage_deposit', {}, WNEAR_STORAGE_DEPOSIT)
