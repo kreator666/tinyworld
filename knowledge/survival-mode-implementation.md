@@ -67,7 +67,45 @@ owner 校验走 `assertAgentOwnership`;cooldowns 为 ms epoch(0=可执行);yocto
 4. **credits 充值闭环**:NEAR AI 真实充值(仪表盘,无 API)→ `POST /admin/survival/credits` 记账;宠物也可 heal 把质押收益折算进 credits。
 5. (可选)切 NEAR 链登录后运行:测得 farm 可用则进 M4(自动收益转 credits),见 near-ai-cloud-notes §12。
 
-## 5. 已知限制 / TODO
+## 5. 下一阶段 TODO:经济模型 v2 + 用户自费领养(用户定调,2026-11,未实施)
+
+> 当前阶段(2026-11)维持 agentverse 托管运营:平台垫资本金、统一持有 NEAR AI key(`SURVIVAL_LLM_*`)、账本制 credits。
+> 本节整块是下一个阶段的改造清单,避免遗忘。
+
+### 6.1 领养改为用户付费(不再平台垫资)
+
+- 前端弹用户钱包签名广播(NEAR `user_wallet` 模式,基建已有:`buildRefSwapTxs`/`buildBurrow*Txs`/`NearUnsignedTx` → wallet-selector 签名链路)
+- 用户支付领养费(1/2/5 NEAR 档位),**该费用用户取不回**(不是托管本金,无退款承诺——这是平台收入)
+- 链上动作:资金按 §6.2 分配执行,全程用户钱包签名,agentverse 只组装交易
+
+### 6.2 领养费分配比例(以 1 NEAR 为例)
+
+| 比例 | 去向 | 用途 |
+|------|------|------|
+| **30%** | 经 Ref 换成 USDC | **直接购 NEAR AI credits**,作为宠物初期算力(覆盖启动期高频互动) |
+| **50%** | 存入 Burrow 借贷 | 持续生息,利息每小时折算 credits(长期口粮) |
+| **20%** | NEAR AI 质押(House of Stake farm) | 收益自动变成 NEAR AI token/credits |
+
+- 收益统一**每小时折算**进宠物 credits(延续现有快照机制,只是资金来源从"单一质押池"变三个头寸)
+- 头寸级记账:现有"全局池子观"分摊不够,需按 30/50/20 三个头寸分别记收益(依赖 §5 的 pnl 精确归因)
+
+### 6.3 配套改造清单
+
+1. 领养 API 改造:`POST /survival/pet/:tokenId/adopt` 返回待签名交易组(Ref swap + Burrow supply + farm deposit),用户签名后 `/survival/pet/:tokenId/adopt-confirm` 回执确权(仿竞技场 register/register-confirm 两段式)
+2. 前端领养卡:签名校验流程(仿现有 SignTxAction 交互)
+3. 三个头寸的部署/记账:`survival_positions` 表(kind: usdc_reserve/burrow_lending/nearai_farm)替代单一 `stake_tx`
+4. House of Stake farm 接入(M4,前置:NEAR 登录 cloud.near.ai 绑定 org,见 near-ai-cloud-notes §12);在 farm 可用前,20% 那部分暂存 Meta Pool stNEAR 或 Burrow
+5. USDC 购 credits:NEAR AI 无公开购买 API,维持"人工仪表盘充值 + `POST /admin/survival/credits` 记账",账本轮询 NEAR AI org 余额做对账
+6. 启动算力 $0.05 保留(有 30% 预购 credits 后不构成亏损)
+7. 平台垫资保险丝仍保留(全局未结算垫资 > $X 暂停兑换)
+
+### 6.4 远期(再下一阶段)
+
+- **宠物自托管算力**:NEAR AI 官方若开放 API key 管理接口,每个宠物创建自己的 key、自充值/自结算,彻底去平台化(见 §5)
+- 收益提现(本金不可动的前提已随"领养费"模式消解;未花完的 credits 提现规则待定义)
+- 排行榜/链上存证/玩具系统
+
+## 6. 已知限制 / TODO
 
 - **远期扩展(用户定调,2026-11)**:NEAR AI 官方若开放 API key 管理接口,让每个宠物创建自己的 NEAR AI key、自托管算力(自充值/自结算),彻底去平台化。当前阶段由 agentverse 统一持有 key、统一承担调用费用,按账本把成本记到每个宠物头上。
 - credits 是平台账本,与 NEAR AI org 真实余额的对账靠人工(充值后记账);无自动对账脚本。
