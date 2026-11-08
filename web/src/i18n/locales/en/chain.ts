@@ -87,6 +87,7 @@ const chain: Record<string, unknown> = {
       accountSwitched: 'The active NEAR account has changed and no longer matches the login identity. Please reconnect your wallet and try again',
       networkMismatch: 'Wallet returned account {account}, which does not match the selected chain ({network}): the wallet itself is set to a different network. Switch the network in Meteor and reconnect',
       signerMismatch: 'Signer mismatch: the wallet actually signed with {signer}, but the connected account is {expected}. Switch back to {expected} in Meteor (or reconnect) and try again; any signed transaction did not take effect',
+      accessKeyMissing: "The wallet's access key is not registered on the current account (the account may have been recreated, or the wallet is on the wrong network). Remove this site's connection in your wallet and reconnect so the key is re-registered; if it still fails, check the wallet network matches the selected chain",
       connectTimeout: 'Connecting to NEAR wallet timed out. Please try again',
       invalidReceiver: 'The recipient address is not a valid NEAR account ID',
       rpcFailed: 'NEAR RPC request failed ({status})',

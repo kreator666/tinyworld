@@ -87,6 +87,7 @@ const chain: Record<string, unknown> = {
       accountSwitched: '当前 NEAR 账户已切换,与登录身份不一致,请重新连接钱包后再试',
       networkMismatch: '钱包返回的账户 {account} 与当前链({network})不匹配:Meteor 钱包自身网络设置与所选链不一致,请在 Meteor 里切换网络后重新连接',
       signerMismatch: '签名账户不匹配:钱包实际用 {signer} 签名,但页面连接的是 {expected}。请在 Meteor 里切回账户 {expected}(或断开重连)后再试;已签名的交易未生效,无需担心',
+      accessKeyMissing: '钱包的访问密钥未注册到当前账户(账户可能被回收重建过,或钱包网络不对)。请在钱包中移除本站的连接后重新连接,让钱包重新注册密钥;若仍失败,请检查钱包所选网络与页面链一致',
       connectTimeout: '连接 NEAR 钱包超时,请重试',
       invalidReceiver: '接收地址不是有效的 NEAR 账户 id',
       rpcFailed: 'NEAR RPC 请求失败({status})',

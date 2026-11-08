@@ -486,6 +486,10 @@ function normalizeNearError(err: unknown): Error {
   if (/reject|denied|declined|cancel|closed|dismiss/i.test(msg)) {
     return new NearWalletError('SIGN_REJECTED', t('chainMsg.error.userRejected'))
   }
+  // 访问密钥未注册到账户:多为账户被回收重建(测试网常见)/钱包网络错/旧会话密钥被删
+  if (/access key .+ (?:doesn't|does not) exist|accessKeyNotFound|key .+ not found|doesn't exist/i.test(msg)) {
+    return new NearWalletError('ACCESS_KEY_MISSING', t('chainMsg.near.accessKeyMissing'))
+  }
   return err instanceof Error ? err : new Error(msg)
 }
 
