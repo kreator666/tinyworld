@@ -36,8 +36,16 @@ console.log(`交易哈希: ${txHash}`)
 console.log(`浏览器: https://nearblocks.io/txns/${txHash}`)
 
 // 3) 质押后快照对账:stNEAR 增量 ≈ 1/价格,总价值增量 ≈ 1 NEAR(允许少量滑点/gas)
-const stAfter = await stNearBalance(CHAIN, accountId)
-const valueAfter = await totalStakedValueYocto(CHAIN, accountId)
+//    RPC 视图有短暂延迟,重试最多 6 次
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+let stAfter = '0'
+let valueAfter = 0n
+for (let i = 0; i < 6; i++) {
+  await sleep(3000)
+  stAfter = await stNearBalance(CHAIN, accountId)
+  valueAfter = await totalStakedValueYocto(CHAIN, accountId)
+  if (BigInt(stAfter) > BigInt(stBefore)) break
+}
 const stDelta = BigInt(stAfter) - BigInt(stBefore)
 const valueDelta = valueAfter - valueBefore
 console.log(`\n质押后:stNEAR 余额 ${stAfter}(增量 ${stDelta})`)
