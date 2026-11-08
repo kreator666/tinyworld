@@ -69,6 +69,7 @@ owner 校验走 `assertAgentOwnership`;cooldowns 为 ms epoch(0=可执行);yocto
 
 ## 5. 已知限制 / TODO
 
+- **远期扩展(用户定调,2026-11)**:NEAR AI 官方若开放 API key 管理接口,让每个宠物创建自己的 NEAR AI key、自托管算力(自充值/自结算),彻底去平台化。当前阶段由 agentverse 统一持有 key、统一承担调用费用,按账本把成本记到每个宠物头上。
 - credits 是平台账本,与 NEAR AI org 真实余额的对账靠人工(充值后记账);无自动对账脚本。
 - work 的 pnl 用执行前后热钱包总价值快照差(含 stNEAR 价格波动噪声),精确归因需头寸级记账(二期)。
 - 收益快照是"全局池子观"(热钱包总价值 − Σ本金)按本金比例分摊,不是逐头寸精确归因。
