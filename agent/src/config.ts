@@ -282,7 +282,8 @@ export const config = {
   // ============================================================
   survivalEnabled: env('SURVIVAL_ENABLED', 'true') === 'true',
   survivalTickSeconds: Number(env('SURVIVAL_TICK_SECONDS', '60')),
-  survivalPrincipalChoices: [1, 2, 5] as const, // 可选本金档位(NEAR)
+  survivalPrincipalChoices: env('SURVIVAL_PRINCIPAL_CHOICES', '1,2,5').split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0), // 可选本金档位(NEAR,可小数;测试期可整体调小)
+  survivalFeedChoices: env('SURVIVAL_FEED_CHOICES', '0.1,0.2,0.5').split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0), // 喂食加金档位(NEAR)
   // survival 专用 LLM 源(缺省回落全局 LLM 配置;模型默认跟随全局 LLM_MODEL,
   // 因为默认网关是全局 LLM——只有显式配 NEAR AI 通道时才用 NEAR AI 模型 ID)
   survivalLlmBaseUrl: env('SURVIVAL_LLM_BASE_URL') || env('LLM_BASE_URL', 'https://aiping.cn/api/v1'),
@@ -302,8 +303,8 @@ export const config = {
   survivalCooldownFeedSec: Number(env('SURVIVAL_COOLDOWN_FEED_SEC', '300')),
   survivalCooldownCleanSec: Number(env('SURVIVAL_COOLDOWN_CLEAN_SEC', '300')),
   survivalCooldownWorkSec: Number(env('SURVIVAL_COOLDOWN_WORK_SEC', '900')),
-  // 复活费语义 v2 起固定 0.5 NEAR 且由用户钱包链上支付(见 core/survival.ts REVIVE_FEE_YOCTO),
-  // 不再从收益扣款、不可配置(档位校验要求精确 0.5N)
+  // 复活费(v2 起由用户钱包链上支付,不再从收益扣款);字符串保存保小数精度,默认 0.5 NEAR
+  survivalReviveFeeNear: env('SURVIVAL_REVIVE_FEE_NEAR', '0.5'),
   // ============================================================
   // 经济模型 v2(用户自费领养):领养费 30% 购算力储备 / 50% 借贷生息 / 20% NEAR AI 质押
   // ============================================================

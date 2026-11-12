@@ -111,8 +111,9 @@ export interface SurvivalPositionDto {
 /** 领养费分配失败项(不阻塞领养,管理员可重试);后端返回字符串数组 */
 export type SurvivalPositionFailure = string
 
-/** 组装领养交易(用户自费):返回待签 NEAR 交易(含领养费转账),前端逐笔签广播后调 confirmAdopt */
-export const adoptSurvivalTxs = (tokenId: number, principal: 1 | 2 | 5) =>
+/** 组装领养交易(用户自费):返回待签 NEAR 交易(含领养费转账),前端逐笔签广播后调 confirmAdopt。
+ *  档位由 /survival/config 下发(env 可调,测试期可为原值的 1/10) */
+export const adoptSurvivalTxs = (tokenId: number, principal: number) =>
   post<{ txs: NearUnsignedTx[] }>(`/survival/pet/${tokenId}/adopt-txs`, { principal })
 
 /** 领养确认:txHash 为用户已广播的领养费交易哈希;返回宠物与资金分配结果 */
@@ -133,8 +134,17 @@ export const getSurvivalPositions = (tokenId: number) =>
 export const survivalAction = (tokenId: number, kind: Extract<SurvivalActionKind, 'work' | 'heal'>) =>
   post<{ action: SurvivalActionDto }>(`/survival/pet/${tokenId}/action`, { kind })
 
-/** 喂食金额档位(NEAR) */
-export type SurvivalFeedAmount = 0.1 | 0.2 | 0.5
+/** 档位/费用公开配置(后端 env 驱动) */
+export interface SurvivalConfig {
+  principalChoices: number[]
+  feedChoices: number[]
+  reviveFeeNear: string
+}
+
+export const getSurvivalConfig = () => survivalCall<SurvivalConfig>('/survival/config')
+
+/** 喂食金额档位(NEAR),由 /survival/config 下发 */
+export type SurvivalFeedAmount = number
 
 /** 喂食:组装存款交易(用户自费,从钱包新存入借贷协议,生息本金变多);需登录 + owner */
 export const feedSurvivalTxs = (tokenId: number, amount: SurvivalFeedAmount) =>

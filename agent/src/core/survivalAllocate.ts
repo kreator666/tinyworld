@@ -104,24 +104,33 @@ export function checkAdoptionDuplicate(petExists: boolean, stakeTxTaken: boolean
   return null
 }
 
-/** 链上档位反推:deposit yocto 必须精确等于 1/2/5 NEAR 之一,返回 NEAR 数;不符返回 null */
+/** NEAR 数(可含小数,如 0.1)→ yocto 十进制字符串;字符串移位实现,避免浮点与 BigInt(0.1) 崩溃 */
+export function nearToYocto(amount: number | string): string {
+  const s = (typeof amount === 'number' ? amount.toString() : amount).trim()
+  const neg = s.startsWith('-') ? '-' : ''
+  const [i = '0', d = ''] = s.replace('-', '').split('.')
+  const frac = (d + '0'.repeat(24)).slice(0, 24)
+  const digits = (i + frac).replace(/^0+(?=\d)/, '')
+  return neg + digits
+}
+
+/** 链上档位反推:deposit yocto 必须精确等于配置的领养档位之一,返回 NEAR 数;不符返回 null */
 export function principalOfDeposit(depositYocto: string): number | null {
   const deposit = BigInt(depositYocto)
   for (const n of config.survivalPrincipalChoices) {
-    if (deposit === YOCTO_PER_NEAR * BigInt(n)) return n
+    if (deposit === BigInt(nearToYocto(n))) return n
   }
   return null
 }
 
-/** 喂食金额档位(NEAR):用户新存入借贷协议的小额加金档 */
-export const FEED_CHOICES: readonly number[] = [0.1, 0.2, 0.5]
+/** 喂食金额档位(NEAR):用户新存入借贷协议的小额加金档(env 可配,默认 0.1/0.2/0.5) */
+export const FEED_CHOICES: readonly number[] = config.survivalFeedChoices
 
-/** 喂食档位反推(纯函数,verify 用):deposit yocto 必须精确等于 0.1/0.2/0.5 NEAR 之一 */
+/** 喂食档位反推(纯函数,verify 用):deposit yocto 必须精确等于配置档位之一 */
 export function feedAmountOfDeposit(depositYocto: string): number | null {
   const deposit = BigInt(depositYocto)
   for (const n of FEED_CHOICES) {
-    // 十分位档位:deposit × 10 == n × 1N
-    if (deposit * 10n === YOCTO_PER_NEAR * BigInt(Math.round(n * 10))) return n
+    if (deposit === BigInt(nearToYocto(n))) return n
   }
   return null
 }

@@ -12,6 +12,7 @@ import {
   feedSurvivalTxs,
   formatNear,
   getSurvivalActions,
+  getSurvivalConfig,
   getSurvivalLeaderboard,
   getSurvivalPet,
   getSurvivalPositions,
@@ -38,8 +39,10 @@ import SurvivalRoom, { type HotspotKind, type SurvivalOutcome } from '../compone
 // ============================================================
 
 const POLL_MS = 15_000
-const PRINCIPAL_OPTIONS = [1, 2, 5] as const
-const FEED_OPTIONS: SurvivalFeedAmount[] = [0.1, 0.2, 0.5]
+
+/** 档位/费用由后端 /survival/config 下发(env 可调,测试期可为原值 1/10);这里的常量仅是加载前的兜底 */
+const FALLBACK_PRINCIPAL: number[] = [1, 2, 5]
+const FALLBACK_FEED: number[] = [0.1, 0.2, 0.5]
 
 /** 画布动作弹窗的待确认动作(heal 直走不弹窗;revive 走面板按钮的独立弹窗) */
 type PendingAction = { kind: 'feed' } | { kind: 'clean' } | { kind: 'work' } | { kind: 'revive' }
@@ -105,11 +108,26 @@ export default function SurvivalPage() {
   const [adoptStage, setAdoptStage] = useState<'build' | 'sign' | 'confirm' | 'allocate' | null>(null)
   const [reviving, setReviving] = useState(false)
   const [pending, setPending] = useState<PendingAction | null>(null)
-  const [feedAmount, setFeedAmount] = useState<SurvivalFeedAmount>(0.1)
-  const [principal, setPrincipal] = useState<1 | 2 | 5>(1)
+  const [feedAmount, setFeedAmount] = useState<number>(0.1)
+  const [principal, setPrincipal] = useState<number>(1)
+  const [svConfig, setSvConfig] = useState<{ principalChoices: number[]; feedChoices: number[]; reviveFeeNear: string }>({
+    principalChoices: FALLBACK_PRINCIPAL, feedChoices: FALLBACK_FEED, reviveFeeNear: '0.5',
+  })
   const [outcome, setOutcome] = useState<SurvivalOutcome | null>(null)
   const seqRef = useRef(0)
   const ageLabel = useAgeLabel()
+
+  // 档位/费用配置(后端 env 驱动):进入页面即拉,失败用兜底常量
+  useEffect(() => {
+    if (!isNear) return
+    getSurvivalConfig()
+      .then((cfg) => {
+        setSvConfig(cfg)
+        setPrincipal((p) => (cfg.principalChoices.includes(p) ? p : cfg.principalChoices[0]))
+        setFeedAmount((f) => (cfg.feedChoices.includes(f) ? f : cfg.feedChoices[0]))
+      })
+      .catch(() => {})
+  }, [isNear])
 
   const roomLabels = useMemo<Record<HotspotKind, string>>(
     () => ({
@@ -411,7 +429,7 @@ export default function SurvivalPage() {
                     <h3 className="font-bold mb-2">🍖 {t('survival.feed.amountTitle')}</h3>
                     <p className="text-xs text-slate-400 leading-relaxed mb-3">{t('survival.feed.desc')}</p>
                     <div className="grid grid-cols-3 gap-2 mb-4">
-                      {FEED_OPTIONS.map((a) => (
+                      {svConfig.feedChoices.map((a) => (
                         <button
                           key={a}
                           onClick={() => setFeedAmount(a)}
@@ -463,7 +481,7 @@ export default function SurvivalPage() {
               <p className="text-xs text-slate-400 leading-relaxed mb-4">{t('survival.adopt.desc')}</p>
               <p className="text-xs text-slate-300 mb-2">{t('survival.adopt.principal')}</p>
               <div className="grid grid-cols-3 gap-2 mb-4">
-                {PRINCIPAL_OPTIONS.map((p) => (
+                {svConfig.principalChoices.map((p) => (
                   <button
                     key={p}
                     onClick={() => setPrincipal(p)}
@@ -676,7 +694,7 @@ export default function SurvivalPage() {
         <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm grid place-items-center p-4">
           <div className="glass neon-border w-full max-w-xs p-5">
             <h3 className="font-bold mb-2">💫 {t('survival.revive.title')}</h3>
-            <p className="text-xs text-slate-400 leading-relaxed mb-4">{t('survival.revive.desc')}</p>
+            <p className="text-xs text-slate-400 leading-relaxed mb-4">{t('survival.revive.desc', { x: svConfig.reviveFeeNear })}</p>
             <div className="flex gap-2">
               <button onClick={() => setPending(null)} disabled={reviving} className="btn-ghost flex-1">
                 {t('survival.modal.cancel')}

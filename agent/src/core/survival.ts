@@ -18,6 +18,7 @@ import {
   verifyAdoptionPayment,
   feedAmountOfDeposit,
   FEED_CHOICES,
+  nearToYocto,
   supplyFeedPrincipal,
   withdrawYieldFromLending,
   type PositionDto,
@@ -47,26 +48,28 @@ const COOLDOWN_SEC: Record<string, number> = {
 }
 
 export const PRINCIPAL_CHOICES: readonly number[] = config.survivalPrincipalChoices
+if (PRINCIPAL_CHOICES.length === 0) throw new Error('SURVIVAL_PRINCIPAL_CHOICES 配置为空')
+if (FEED_CHOICES.length === 0) throw new Error('SURVIVAL_FEED_CHOICES 配置为空')
 
 /** 领养本金档位校验(纯函数,verify 用) */
 export function validatePrincipal(p: unknown): p is number {
-  return typeof p === 'number' && Number.isInteger(p) && (PRINCIPAL_CHOICES as readonly number[]).includes(p)
+  return typeof p === 'number' && (PRINCIPAL_CHOICES as readonly number[]).includes(p)
 }
 
-/** 喂食金额档位校验(纯函数,verify 用):0.1/0.2/0.5 NEAR */
+/** 喂食金额档位校验(纯函数,verify 用) */
 export function validateFeedAmount(a: unknown): a is number {
   return typeof a === 'number' && (FEED_CHOICES as readonly number[]).includes(a)
 }
 
-/** 喂食金额 → yocto(纯函数):仅 0.1/0.2/0.5 档,精确十分位 */
+/** 喂食金额 → yocto(纯函数):配置档位精确换算 */
 export function feedYoctoOf(amount: number): string {
-  return (YOCTO_PER_NEAR * BigInt(Math.round(amount * 10)) / 10n).toString()
+  return nearToYocto(amount)
 }
 
-/** 复活费固定 0.5 NEAR(纯常量,verify 用) */
-export const REVIVE_FEE_YOCTO: string = (YOCTO_PER_NEAR * 5n / 10n).toString()
+/** 复活费(env 可配,默认 0.5 NEAR;字符串配置保小数精度) */
+export const REVIVE_FEE_YOCTO: string = nearToYocto(config.survivalReviveFeeNear)
 
-/** 复活费档位校验(纯函数,verify 用):deposit 必须精确等于 0.5 NEAR */
+/** 复活费档位校验(纯函数,verify 用):deposit 必须精确等于配置复活费 */
 export function reviveFeeOfDeposit(depositYocto: string): boolean {
   return BigInt(depositYocto) === BigInt(REVIVE_FEE_YOCTO)
 }
@@ -290,7 +293,7 @@ export async function adoptPet(chainKey: string, tokenId: number, owner: string,
     throw new SurvivalError(`本金档位必须是 ${PRINCIPAL_CHOICES.join('/')} NEAR`, 400)
   }
   if (await getPet(chainKey, tokenId)) throw new SurvivalError('该 Agent 已领养,不可重复领养', 409)
-  const yocto = (YOCTO_PER_NEAR * BigInt(principalNear)).toString()
+  const yocto = nearToYocto(principalNear)
   // 热钱包余额预检:本金 + ~0.05N gas/storage 余量,不足给明确报错(不等到链上才失败)
   let native: bigint
   try {
@@ -348,7 +351,7 @@ export async function buildAdoptionTxs(chainKey: string, tokenId: number, princi
   }
   // 与 adopt-confirm 的核验口径一致:未领养才可发起支付(避免用户白付)
   if (await getPet(chainKey, tokenId)) throw new SurvivalError('该 Agent 已领养,不可重复领养', 409)
-  const yocto = (YOCTO_PER_NEAR * BigInt(principalNear)).toString()
+  const yocto = nearToYocto(principalNear)
   let receiver: string
   try {
     receiver = adoptionReceiver(chainKey)

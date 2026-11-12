@@ -1955,6 +1955,15 @@ app.post('/survival/pet/:tokenId/adopt-confirm', authRequired, async (c) => {
   }
 })
 
+// 档位/费用公开配置:前端据此渲染领养档位按钮、喂食金额选项与复活费文案(测试期可整体 1/10,见 env)
+app.get('/survival/config', async (c) => {
+  return c.json({
+    principalChoices: config.survivalPrincipalChoices,
+    feedChoices: config.survivalFeedChoices,
+    reviveFeeNear: config.survivalReviveFeeNear,
+  })
+})
+
 // 领养费分配头寸(公开):经济模型 v2 的 30/50/20 逐头寸记账
 app.get('/survival/pet/:tokenId/positions', async (c) => {
   const tokenId = parseTokenId(c)

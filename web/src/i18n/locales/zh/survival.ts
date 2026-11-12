@@ -89,7 +89,7 @@ const survival: Record<string, unknown> = {
   },
   revive: {
     title: '复活宠物',
-    desc: '复活 = 从钱包支付 0.5 NEAR,为宠物充值 NEAR AI 算力并复活;本金与收益保留。金额从你的钱包转出,需钱包签名。',
+    desc: '复活 = 从钱包支付 {x} NEAR,为宠物充值 NEAR AI 算力并复活;本金与收益保留。金额从你的钱包转出,需钱包签名。',
     confirm: '确认复活',
     success: '复活成功,宠物重新活过来了',
   },

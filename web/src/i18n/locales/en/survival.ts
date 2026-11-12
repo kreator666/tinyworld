@@ -89,7 +89,7 @@ const survival: Record<string, unknown> = {
   },
   revive: {
     title: 'Revive Pet',
-    desc: 'Reviving = paying 0.5 NEAR from your wallet to top up NEAR AI compute and bring your pet back; principal and earnings are kept. The amount is transferred from your wallet and requires a wallet signature.',
+    desc: 'Reviving = paying {x} NEAR from your wallet to top up NEAR AI compute and bring your pet back; principal and earnings are kept. The amount is transferred from your wallet and requires a wallet signature.',
     confirm: 'Confirm Revive',
     success: 'Revived! Your pet is alive again',
   },
